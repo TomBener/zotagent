@@ -23,14 +23,30 @@ test("help summarizes current commands and keeps config-only overrides out of th
   assert.equal(result.status, 0);
   assert.match(result.stdout, /Usage:/);
   assert.match(result.stdout, /zotlit sync \[--attachments-root <path>\]/);
+  assert.match(result.stdout, /zotlit version/);
   assert.match(result.stdout, /zotlit search "<text>" \[--exact\] \[--limit <n>\]/);
   assert.match(result.stdout, /Options:/);
+  assert.match(result.stdout, /--version\s+Print the current zotlit version\./);
   assert.match(result.stdout, /--limit <n>\s+Return up to n search results\. Default: 10\./);
   assert.match(result.stdout, /expand currently requires --file\./);
   assert.match(result.stdout, /Paths and other defaults are read from \~\/\.zotlit\/config\.json\./);
   assert.doesNotMatch(result.stdout, /--bibliography <path>/);
   assert.doesNotMatch(result.stdout, /--data-dir <path>/);
   assert.doesNotMatch(result.stdout, /--qmd-embed-model <uri>/);
+});
+
+test("version prints the current package version", () => {
+  const result = runCli(["version"]);
+
+  assert.equal(result.status, 0);
+  assert.equal(result.stdout.trim(), "0.1.0");
+});
+
+test("--version prints the current package version", () => {
+  const result = runCli(["--version"]);
+
+  assert.equal(result.status, 0);
+  assert.equal(result.stdout.trim(), "0.1.0");
 });
 
 test("sync rejects unexpected positional path and points to attachments-root", () => {

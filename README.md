@@ -118,6 +118,7 @@ node dist/cli.js help
 ```bash
 zotlit sync [--attachments-root <path>]
 zotlit status
+zotlit version
 zotlit search "<text>" [--exact] [--limit <n>] [--min-score <n>] [--rerank | --no-rerank]
 zotlit read (--file <path> | --item-key <key>) [--offset-block <n>] [--limit-blocks <n>]
 zotlit expand --file <path> --block-start <n> [--block-end <n>] [--radius <n>]

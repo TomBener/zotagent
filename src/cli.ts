@@ -6,6 +6,7 @@ import { emitError, emitOk } from "./json.js";
 import { openQmdClient } from "./qmd.js";
 import { runSync } from "./sync.js";
 import { compactHomePath } from "./utils.js";
+import { readFileSync } from "node:fs";
 
 type FlagValue = string | boolean;
 
@@ -14,7 +15,13 @@ interface ParsedArgs {
   flags: Record<string, FlagValue>;
 }
 
-const BOOLEAN_FLAGS = new Set(["exact", "help", "no-rerank", "rerank"]);
+const BOOLEAN_FLAGS = new Set(["exact", "help", "no-rerank", "rerank", "version"]);
+
+function getCliVersion(): string {
+  const packageJsonPath = new URL("../package.json", import.meta.url);
+  const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as { version: string };
+  return packageJson.version;
+}
 
 function parseArgs(argv: string[]): ParsedArgs {
   const positionals: string[] = [];
@@ -86,6 +93,7 @@ Search indexed Zotero PDFs and follow hits with read or expand.
 Usage:
   zotlit sync [--attachments-root <path>]
   zotlit status
+  zotlit version
   zotlit search "<text>" [--exact] [--limit <n>] [--min-score <n>] [--rerank|--no-rerank]
   zotlit read (--file <path> | --item-key <key>) [--offset-block <n>] [--limit-blocks <n>]
   zotlit expand --file <path> --block-start <n> [--block-end <n>] [--radius <n>]
@@ -97,6 +105,9 @@ Commands:
 
   status
     Show attachment counts, local index paths, and qmd status.
+
+  version
+    Print the current zotlit version.
 
   search
     Search indexed Zotero PDFs.
@@ -124,6 +135,7 @@ Options:
   --block-start <n>           Start block for expand.
   --block-end <n>             End block for expand. Default: block-start.
   --radius <n>                Include n blocks before and after. Default: 2.
+  --version                   Print the current zotlit version.
 
 Examples:
   zotlit search "dangwei shuji" --exact
@@ -131,6 +143,7 @@ Examples:
   zotlit expand --file "~/Library/.../paper.pdf" --block-start 10 --radius 2
   zotlit read --item-key KG326EEI
   zotlit status
+  zotlit version
   zotlit sync --attachments-root "/path/to/zotero/subfolder"
 
 Config:
@@ -154,6 +167,11 @@ async function main(): Promise<void> {
   const parsed = parseArgs(process.argv.slice(2));
   const [command] = parsed.positionals;
   const overrides = overridesFromFlags(parsed.flags);
+
+  if (!command && getBooleanFlag(parsed.flags, "version")) {
+    console.log(getCliVersion());
+    process.exit(0);
+  }
 
   if (!command || command === "help" || command === "--help") {
     printHelp();
@@ -191,6 +209,15 @@ async function main(): Promise<void> {
           },
           { elapsedMs: Date.now() - startedAt },
         );
+        return;
+      }
+
+      case "version": {
+        if (parsed.positionals.length > 1) {
+          emitError("UNEXPECTED_ARGUMENT", "version does not accept additional arguments.");
+          return;
+        }
+        console.log(getCliVersion());
         return;
       }
 
