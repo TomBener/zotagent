@@ -1,0 +1,60 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify tag matches package version
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          package_version="$(node -p "require('./package.json').version")"
+          if [ "$tag_version" != "$package_version" ]; then
+            echo "Tag version $tag_version does not match package.json version $package_version"
+            exit 1
+          fi
+
+      - name: Run checks
+        run: npm run check
+
+      - name: Build release tarball
+        id: pack
+        run: |
+          package_json="$(npm pack --json --silent)"
+          package_file="$(node -e 'const payload = JSON.parse(process.argv[1]); process.stdout.write(payload[0].filename);' "$package_json")"
+          shasum -a 256 "$package_file" | awk '{print $1}' > "$package_file.sha256"
+          echo "package_file=$package_file" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ steps.pack.outputs.package_file }}
+            ${{ steps.pack.outputs.package_file }}.sha256
+          generate_release_notes: true
