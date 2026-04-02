@@ -8,6 +8,7 @@ Core design:
 
 - internal primary key: `zotero-item-key`
 - write operations should return `itemKey` immediately when possible
+- `add` is speed-first and does not do Zotero-side duplicate checking
 - external search results primarily return `itemKey + file`
 - `citationKey` is a mutable display field only
 - current v1 scope is `PDF` only
@@ -26,6 +27,7 @@ Core design:
 - optional qmd embedding model: controlled by `qmdEmbedModel`; when unset, qmd uses its default model
 - Zotero write config for `add`: `zoteroLibraryId`, `zoteroLibraryType`, `zoteroApiKey`
 - environment overrides for `add`: `ZOTLIT_ZOTERO_LIBRARY_ID`, `ZOTLIT_ZOTERO_LIBRARY_TYPE`, `ZOTLIT_ZOTERO_API_KEY`
+- fallback environment names also accepted for `add`: `ZOTERO_LIBRARY_ID`, `ZOTERO_LIBRARY_TYPE`, `ZOTERO_API_KEY`
 
 Legacy fields `embeddingProvider`, `embeddingModel`, and `googleApiKey` may still appear in config, but they are only read for compatibility and produce deprecation warnings.
 
@@ -45,10 +47,39 @@ npm run build
 node dist/cli.js sync
 node dist/cli.js status
 node dist/cli.js add --doi "10.1016/j.econmod.2026.107590"
+node dist/cli.js add --title "Working Paper" --author "Jane Doe" --year 2026 --publication "Working Paper Series"
 node dist/cli.js search "aging in China"
 node dist/cli.js read --file "~/Library/.../paper.pdf"
 node dist/cli.js expand --file "~/Library/.../paper.pdf" --block-start 10 --block-end 12
 ```
+
+## Release Process
+
+Use the GitHub CLI for releases.
+
+Recommended release flow:
+
+1. update `package.json` and `package-lock.json` to the target version
+2. run `npm run check`
+3. commit the release prep changes
+4. create an annotated tag like `git tag -a v0.3.0 -m "v0.3.0"`
+5. push `main` and the tag: `git push origin main && git push origin v0.3.0`
+6. after the release workflow creates or updates the GitHub release, use `gh` to write the final changelog on the release page
+
+Useful commands:
+
+```bash
+gh release view v0.2.0 --json body
+gh release edit v0.3.0 --notes-file /tmp/zotlit-v0.3.0-notes.md
+```
+
+Release notes style:
+
+- use short sections, similar to `v0.2.0`
+- start with `## What's new`
+- then add 1-3 focused sections only when they help
+- keep the notes user-facing; avoid commit-by-commit changelogs
+- mention command or behavior changes that affect users directly
 
 ## Code Map
 
@@ -62,6 +93,17 @@ node dist/cli.js expand --file "~/Library/.../paper.pdf" --block-start 10 --bloc
 - `src/state.ts`: `catalog.json` reading, writing, and summary stats
 - `src/engine.ts`: main flow for `search`, `read`, and `expand`
 - `src/heuristics.ts`: reference-section and context-mapping heuristics
+- `tests/unit/`: unit tests
+- `tests/integration/`: CLI integration tests
+
+## Current Add Logic
+
+- `add --doi` fetches CSL JSON through DOI content negotiation, maps it into a Zotero item template, then creates the item through the Zotero Web API
+- `add` does not do Zotero-side duplicate checking; this is intentional for speed
+- if DOI lookup fails and manual fields are provided, `add` falls back to manual creation
+- newly created items receive the tag `Added by AI Agent`
+- `journalArticle` keeps `publicationTitle` but does not write `publisher`
+- write responses should return `itemKey`, `title`, `itemType`, `source`, and optional `warnings`
 
 ## Current Search Logic
 
@@ -126,3 +168,4 @@ If you want to improve citation-oriented usefulness, prioritize:
 ## Repository State
 
 - the repository is already based on OpenDataLoader PDF + qmd
+- the repository now includes an MIT `LICENSE` file
