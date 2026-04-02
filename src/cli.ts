@@ -111,7 +111,7 @@ Commands:
 
   search
     Search indexed Zotero PDFs.
-    --exact uses exact phrase search.
+    --exact uses Tantivy-based lexical search.
     --rerank / --no-rerank override qmd's default rerank behavior.
     --exact cannot be combined with --rerank.
 
@@ -125,7 +125,7 @@ Commands:
 
 Options:
   --attachments-root <path>   Limit sync to a Zotero subfolder.
-  --exact                     Use exact phrase search for search.
+  --exact                     Use Tantivy-based lexical search for search.
   --limit <n>                 Return up to n search results. Default: 10.
   --min-score <n>             Drop lower-scoring search hits before mapping.
   --rerank                    Force reranking for search.
@@ -156,6 +156,7 @@ function compactPathMap(paths: ReturnType<typeof getDataPaths>): ReturnType<type
     normalizedDir: compactHomePath(paths.normalizedDir),
     manifestsDir: compactHomePath(paths.manifestsDir),
     indexDir: compactHomePath(paths.indexDir),
+    tantivyDir: compactHomePath(paths.tantivyDir),
     tempDir: compactHomePath(paths.tempDir),
     qmdDbPath: compactHomePath(paths.qmdDbPath),
     catalogPath: compactHomePath(paths.catalogPath),

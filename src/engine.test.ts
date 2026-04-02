@@ -316,7 +316,7 @@ test("searchLiterature forwards explicit rerank override", async () => {
   assert.equal(result.results[0]!.itemKey, "ITEM1");
 });
 
-test("searchLiterature exact mode uses quoted lex query and disables rerank", async () => {
+test("searchLiterature exact mode uses the exact index and skips qmd", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotlit-exact-"));
   const dataDir = join(root, "data");
   const indexDir = join(dataDir, "index");
@@ -373,17 +373,9 @@ test("searchLiterature exact mode uses quoted lex query and disables rerank", as
     ],
   });
 
-  let capturedSearchOptions:
-    | {
-        query?: string;
-        queries?: Array<{ type: "lex" | "vec" | "hyde"; query: string }>;
-        limit?: number;
-        rerank?: boolean;
-        minScore?: number;
-      }
-    | undefined;
-  let capturedLexQuery: string | undefined;
-  let capturedLexLimit: number | undefined;
+  let qmdSearchCalled = false;
+  let capturedExactQuery: string | undefined;
+  let capturedExactLimit: number | undefined;
 
   const fakeFactory = async () => ({
     search: async (options: {
@@ -393,30 +385,30 @@ test("searchLiterature exact mode uses quoted lex query and disables rerank", as
       rerank?: boolean;
       minScore?: number;
     }) => {
-      capturedSearchOptions = options;
+      qmdSearchCalled = true;
       return [];
     },
-    searchLex: async (query: string, options?: { limit?: number }) => {
-      capturedLexQuery = query;
-      capturedLexLimit = options?.limit;
-      return [
-        {
-          filepath: `qmd://library/${exactDocKey}.md`,
-          displayPath: `${exactDocKey}.md`,
-          title: "Exact match",
-          body: "The top leader is the company party secretary, dangwei shuji.",
-          score: 1,
-          context: null,
-          docid: "999999",
-        },
-      ];
-    },
+    searchLex: async () => [],
     update: async () => ({}),
     embed: async () => ({}),
     getStatus: async () => ({ documents: 1, collections: [], embeddings: { total: 1, stale: 0 } }),
     listContexts: async () => [],
     addContext: async () => true,
     removeContext: async () => true,
+    close: async () => {},
+  });
+  const fakeExactFactory = async () => ({
+    rebuildExactIndex: async () => {},
+    searchExactCandidates: async (inputQuery: string, inputLimit: number) => {
+      capturedExactQuery = inputQuery;
+      capturedExactLimit = inputLimit;
+      return [
+        {
+          docKey: exactDocKey,
+          score: 1,
+        },
+      ];
+    },
     close: async () => {},
   });
 
@@ -430,11 +422,12 @@ test("searchLiterature exact mode uses quoted lex query and disables rerank", as
     },
     fakeFactory,
     { exact: true },
+    fakeExactFactory,
   );
 
-  assert.equal(capturedSearchOptions?.query, undefined);
-  assert.equal(capturedLexQuery, "\"dangwei shuji\"");
-  assert.equal(capturedLexLimit, 10);
+  assert.equal(qmdSearchCalled, false);
+  assert.equal(capturedExactQuery, "dangwei shuji");
+  assert.equal(capturedExactLimit, 10);
   assert.equal(result.results.length, 1);
   assert.equal(result.results[0]!.itemKey, "ITEM9");
   assert.match(result.results[0]!.passage, /dangwei shuji/i);

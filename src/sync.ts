@@ -17,6 +17,7 @@ import { getDataPaths, resolveConfig, type ConfigOverrides } from "./config.js";
 import { buildPdfManifest } from "./manifest.js";
 import { openQmdClient, type QmdFactory } from "./qmd.js";
 import { mapEntriesByDocKey, readCatalogFile, summarizeCatalog, writeCatalogFile } from "./state.js";
+import { openExactIndex, type ExactIndexFactory } from "./tantivy.js";
 import type { AttachmentCatalogEntry, CatalogEntry, CatalogFile, SyncStats } from "./types.js";
 import {
   chunkArray,
@@ -227,6 +228,7 @@ async function syncQmdContexts(qmd: Awaited<ReturnType<QmdFactory>>, readyEntrie
 export async function runSync(
   overrides: ConfigOverrides = {},
   qmdFactory: QmdFactory = openQmdClient,
+  exactFactory: ExactIndexFactory = openExactIndex,
 ): Promise<{
   stats: SyncStats;
   config: ReturnType<typeof resolveConfig>;
@@ -367,12 +369,21 @@ export async function runSync(
   };
   writeCatalogFile(paths.catalogPath, nextCatalog);
 
+  const readyEntries = nextEntries.filter((entry) => entry.extractStatus === "ready");
+  const exactIndex = await exactFactory(config);
+  try {
+    logSyncPhase("Sync: rebuilding exact search index...");
+    await exactIndex.rebuildExactIndex(readyEntries);
+  } finally {
+    await exactIndex.close();
+  }
+
   const qmd = await qmdFactory(config);
   try {
     logSyncPhase("Sync: updating search index...");
     await qmd.update();
-    await syncQmdContexts(qmd, nextEntries.filter((entry) => entry.extractStatus === "ready"));
-    if (nextEntries.some((entry) => entry.extractStatus === "ready")) {
+    await syncQmdContexts(qmd, readyEntries);
+    if (readyEntries.length > 0) {
       logSyncPhase("Sync: generating embeddings...");
       await qmd.embed();
     }

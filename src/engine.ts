@@ -1,8 +1,10 @@
 import { readFileSync } from "node:fs";
 
 import { getDataPaths, resolveConfig, type ConfigOverrides } from "./config.js";
+import { findExactPhraseBlockRange } from "./exact.js";
 import { openQmdClient, type QmdFactory } from "./qmd.js";
 import { getReadyEntries, readCatalogFile, summarizeCatalog } from "./state.js";
+import { openExactIndex, type ExactIndexFactory } from "./tantivy.js";
 import type { AttachmentManifest, CatalogEntry, SearchResultRow } from "./types.js";
 import { compactHomePath, exists, normalizePathForLookup, overlap } from "./utils.js";
 
@@ -129,66 +131,13 @@ function docKeyFromSearchResultPath(resultPath: string): string | undefined {
   return match?.[1];
 }
 
-function buildExactLexQuery(query: string): string {
-  const phrase = query.replace(/"/gu, " ").replace(/\s+/gu, " ").trim();
-  if (phrase.length === 0) {
-    throw new Error("Exact search text cannot be empty.");
-  }
-  return `"${phrase}"`;
-}
-
-function normalizeExactText(input: string): string {
-  return input
-    .normalize("NFKC")
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, " ")
-    .replace(/\s+/gu, " ")
-    .trim();
-}
-
-function findExactPhraseBlockRange(
-  manifest: AttachmentManifest,
-  query: string,
-): { blockStart: number; blockEnd: number } | null {
-  const normalizedQuery = normalizeExactText(query);
-  if (normalizedQuery.length === 0) return null;
-
-  const normalizedBlocks = manifest.blocks.map((block) => ({
-    blockIndex: block.blockIndex,
-    text: normalizeExactText(block.text),
-  }));
-
-  let best: { blockStart: number; blockEnd: number; span: number } | null = null;
-
-  for (let start = 0; start < normalizedBlocks.length; start++) {
-    let combined = "";
-    for (let end = start; end < normalizedBlocks.length; end++) {
-      const text = normalizedBlocks[end]!.text;
-      combined = combined.length > 0 ? `${combined} ${text}`.trim() : text;
-      if (combined.length === 0) continue;
-      if (!combined.includes(normalizedQuery)) continue;
-
-      const candidate = {
-        blockStart: normalizedBlocks[start]!.blockIndex,
-        blockEnd: normalizedBlocks[end]!.blockIndex,
-        span: end - start,
-      };
-      if (!best || candidate.span < best.span) {
-        best = candidate;
-      }
-      break;
-    }
-  }
-
-  return best ? { blockStart: best.blockStart, blockEnd: best.blockEnd } : null;
-}
-
 export async function searchLiterature(
   query: string,
   limit: number,
   overrides: ConfigOverrides = {},
   qmdFactory: QmdFactory = openQmdClient,
   behavior: SearchBehaviorOptions = {},
+  exactFactory: ExactIndexFactory = openExactIndex,
 ): Promise<{
   results: SearchResultRow[];
   warnings?: string[];
@@ -202,56 +151,63 @@ export async function searchLiterature(
   }
 
   const entryByDocKey = new Map(readyEntries.map((entry) => [entry.docKey, entry]));
-  const qmd = await qmdFactory(config);
-  try {
-    const mapped = behavior.exact
-      ? (
-          await qmd.searchLex(buildExactLexQuery(query), { limit })
-        )
-          .filter((result) => behavior.minScore === undefined || result.score >= behavior.minScore)
-          .map((result) => {
-            const docKey =
-              docKeyFromSearchResultPath(result.filepath) ?? docKeyFromSearchResultPath(result.displayPath);
-            if (!docKey) return null;
-            const entry = entryByDocKey.get(docKey);
-            if (!entry || !entry.manifestPath || !exists(entry.manifestPath)) return null;
-            const manifest = readManifest(entry.manifestPath);
-            const range = findExactPhraseBlockRange(manifest, query);
-            if (!range) return null;
-            return buildSearchRow(entry, manifest, range, result.score);
-          })
-          .filter((value): value is ReturnType<typeof buildSearchRow> => value !== null)
-          .sort((a, b) => b.score - a.score)
-      : (
-          await qmd.search({
-            query,
-            limit,
-            ...(behavior.rerank !== undefined ? { rerank: behavior.rerank } : {}),
-            ...(behavior.minScore !== undefined ? { minScore: behavior.minScore } : {}),
-          })
-        )
-          .map((result) => {
-            const docKey = docKeyFromSearchResultPath(result.file) ?? docKeyFromSearchResultPath(result.displayPath);
-            if (!docKey) return null;
-            const entry = entryByDocKey.get(docKey);
-            if (!entry || !entry.manifestPath || !exists(entry.manifestPath)) return null;
-            const manifest = readManifest(entry.manifestPath);
-            return buildHybridSearchRow(entry, manifest, result);
-          })
-          .filter((value): value is ReturnType<typeof buildHybridSearchRow> => value !== null)
-          .sort((a, b) => b.score - a.score);
+  const mapped = behavior.exact
+    ? await (async () => {
+        const exactIndex = await exactFactory(config);
+        try {
+          return (
+            await exactIndex.searchExactCandidates(query, limit)
+          )
+            .filter((candidate) => behavior.minScore === undefined || candidate.score >= behavior.minScore)
+            .map((candidate) => {
+              const entry = entryByDocKey.get(candidate.docKey);
+              if (!entry || !entry.manifestPath || !exists(entry.manifestPath)) return null;
+              const manifest = readManifest(entry.manifestPath);
+              const range = findExactPhraseBlockRange(manifest, query);
+              if (!range) return null;
+              return buildSearchRow(entry, manifest, range, candidate.score);
+            })
+            .filter((value): value is ReturnType<typeof buildSearchRow> => value !== null)
+            .sort((a, b) => b.score - a.score);
+        } finally {
+          await exactIndex.close();
+        }
+      })()
+    : await (async () => {
+        const qmd = await qmdFactory(config);
+        try {
+          return (
+            await qmd.search({
+              query,
+              limit,
+              ...(behavior.rerank !== undefined ? { rerank: behavior.rerank } : {}),
+              ...(behavior.minScore !== undefined ? { minScore: behavior.minScore } : {}),
+            })
+          )
+            .map((result) => {
+              const docKey =
+                docKeyFromSearchResultPath(result.file) ?? docKeyFromSearchResultPath(result.displayPath);
+              if (!docKey) return null;
+              const entry = entryByDocKey.get(docKey);
+              if (!entry || !entry.manifestPath || !exists(entry.manifestPath)) return null;
+              const manifest = readManifest(entry.manifestPath);
+              return buildHybridSearchRow(entry, manifest, result);
+            })
+            .filter((value): value is ReturnType<typeof buildHybridSearchRow> => value !== null)
+            .sort((a, b) => b.score - a.score);
+        } finally {
+          await qmd.close();
+        }
+      })();
 
-    const substantive = mapped.filter((row) => !row.referenceOnly);
-    const references = mapped.filter((row) => row.referenceOnly);
-    const ordered = substantive.length > 0 ? [...substantive, ...references] : mapped;
+  const substantive = mapped.filter((row) => !row.referenceOnly);
+  const references = mapped.filter((row) => row.referenceOnly);
+  const ordered = substantive.length > 0 ? [...substantive, ...references] : mapped;
 
-    return {
-      results: ordered.slice(0, limit).map(({ referenceOnly: _referenceOnly, ...row }) => row),
-      ...(config.warnings.length > 0 ? { warnings: config.warnings } : {}),
-    };
-  } finally {
-    await qmd.close();
-  }
+  return {
+    results: ordered.slice(0, limit).map(({ referenceOnly: _referenceOnly, ...row }) => row),
+    ...(config.warnings.length > 0 ? { warnings: config.warnings } : {}),
+  };
 }
 
 export function readDocument(

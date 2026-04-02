@@ -1,8 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 
 const cliPath = new URL("./cli.ts", import.meta.url).pathname;
+const expectedVersion = JSON.parse(
+  readFileSync(new URL("../package.json", import.meta.url), "utf-8"),
+) as { version: string };
 
 function runCli(args: string[]): { status: number | null; stdout: string; stderr: string } {
   const result = spawnSync(process.execPath, ["--import", "tsx", cliPath, ...args], {
@@ -39,14 +43,14 @@ test("version prints the current package version", () => {
   const result = runCli(["version"]);
 
   assert.equal(result.status, 0);
-  assert.equal(result.stdout.trim(), "0.1.0");
+  assert.equal(result.stdout.trim(), expectedVersion.version);
 });
 
 test("--version prints the current package version", () => {
   const result = runCli(["--version"]);
 
   assert.equal(result.status, 0);
-  assert.equal(result.stdout.trim(), "0.1.0");
+  assert.equal(result.stdout.trim(), expectedVersion.version);
 });
 
 test("sync rejects unexpected positional path and points to attachments-root", () => {

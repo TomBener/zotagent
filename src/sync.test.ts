@@ -133,6 +133,8 @@ test("runSync skips unchanged ready pdfs and refreshes qmd contexts", async () =
   writeCatalogFile(join(indexDir, "catalog.json"), previousCatalog);
 
   const calls = {
+    exactRebuild: 0,
+    exactClose: 0,
     update: 0,
     embed: 0,
     removed: 0,
@@ -165,6 +167,15 @@ test("runSync skips unchanged ready pdfs and refreshes qmd contexts", async () =
       calls.closed += 1;
     },
   });
+  const fakeExactFactory = async () => ({
+    rebuildExactIndex: async () => {
+      calls.exactRebuild += 1;
+    },
+    searchExactCandidates: async () => [],
+    close: async () => {
+      calls.exactClose += 1;
+    },
+  });
 
   const result = await runSync(
     {
@@ -173,10 +184,13 @@ test("runSync skips unchanged ready pdfs and refreshes qmd contexts", async () =
       dataDir,
     },
     fakeFactory,
+    fakeExactFactory,
   );
 
   assert.equal(result.stats.skippedAttachments, 1);
   assert.equal(result.stats.updatedAttachments, 0);
+  assert.equal(calls.exactRebuild, 1);
+  assert.equal(calls.exactClose, 1);
   assert.equal(calls.update, 1);
   assert.equal(calls.embed, 1);
   assert.equal(calls.removed, 1);
@@ -238,6 +252,11 @@ test("runSync removes stale normalized and manifest files when attachment disapp
     removeContext: async () => true,
     close: async () => {},
   });
+  const fakeExactFactory = async () => ({
+    rebuildExactIndex: async () => {},
+    searchExactCandidates: async () => [],
+    close: async () => {},
+  });
 
   const result = await runSync(
     {
@@ -246,6 +265,7 @@ test("runSync removes stale normalized and manifest files when attachment disapp
       dataDir,
     },
     fakeFactory,
+    fakeExactFactory,
   );
 
   assert.equal(result.stats.removedAttachments, 1);

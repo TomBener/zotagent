@@ -1,6 +1,6 @@
 {
   "name": "zotlit",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Zotero literature search CLI for AI agents",
   "type": "module",
   "bin": {
@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@opendataloader/pdf": "^2.2.0",
+    "@pngwasi/node-tantivy-binding": "^0.3.4",
     "@tobilu/qmd": "^2.0.1"
   },
   "devDependencies": {

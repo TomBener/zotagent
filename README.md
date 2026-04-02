@@ -128,7 +128,7 @@ zotlit expand --file <path> --block-start <n> [--block-end <n>] [--radius <n>]
 
 ### 1. `sync`
 
-`sync` reloads the bibliography, extracts changed PDFs, writes local index files, and updates the qmd search index.
+`sync` reloads the bibliography, extracts changed PDFs, writes local index files, rebuilds the lexical exact index, and updates the qmd search index.
 
 What it does:
 
@@ -140,7 +140,8 @@ What it does:
    - `normalized/<docKey>.md`
    - `manifests/<docKey>.json`
    - `index/catalog.json`
-6. Updates the qmd index
+6. Rebuilds `index/tantivy/`
+7. Updates the qmd index
 
 Common commands:
 
@@ -157,10 +158,11 @@ Notes:
 
 After extraction, `sync` also prints two stage messages:
 
+- `Sync: rebuilding exact search index...`
 - `Sync: updating search index...`
 - `Sync: generating embeddings...`
 
-That phase is qmd index work, not a hang.
+The first stage rebuilds the lexical exact index. The later stages are qmd index work, not a hang.
 
 ### 2. `status`
 
@@ -173,7 +175,7 @@ zotlit status
 Main sections in the output:
 
 - `counts`: total, ready, missing, unsupported, and error attachments
-- `paths`: `normalized/`, `manifests/`, `index/`, `qmd.sqlite`, and `catalog.json`
+- `paths`: `normalized/`, `manifests/`, `index/`, `index/tantivy/`, `qmd.sqlite`, and `catalog.json`
 - `qmd`: current qmd index state
 
 Example:
@@ -188,6 +190,7 @@ Example:
     },
     "paths": {
       "normalizedDir": "~/Library/Mobile Documents/com~apple~CloudDocs/Zotlit/normalized",
+      "tantivyDir": "~/Library/Mobile Documents/com~apple~CloudDocs/Zotlit/index/tantivy",
       "qmdDbPath": "~/Library/Mobile Documents/com~apple~CloudDocs/Zotlit/index/qmd.sqlite"
     },
     "qmd": {
@@ -214,7 +217,7 @@ zotlit search "industrial policy" --no-rerank
 Notes:
 
 - search text is positional; `--query` is not supported
-- `--exact` enables exact phrase search
+- `--exact` enables lexical exact search
 - `--rerank` and `--no-rerank` only apply to the default search mode
 - `--exact` cannot be combined with `--rerank`
 - default reranking follows qmd's default behavior unless you override it
@@ -231,18 +234,18 @@ Default `search` works like this:
 
 #### `--exact`
 
-`--exact` still uses qmd. It is not a separate backend.
+`--exact` uses a dedicated Tantivy-based lexical index. It does not use qmd.
 
 Flow:
 
-1. wrap the query as a quoted phrase such as `"dangwei shuji"`
-2. run qmd lexical phrase search
+1. search the local Tantivy exact index built from manifest text
+2. map candidates back to `docKey`
 3. use the local manifest to find the smallest matching block range
 
 That means:
 
 - default `search` is relevance-oriented
-- `search --exact` is literal phrase-oriented
+- `search --exact` is literal and lexical
 
 Example output:
 
