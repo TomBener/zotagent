@@ -6,10 +6,29 @@ export interface AppConfig {
   attachmentsRoot: string;
   dataDir: string;
   qmdEmbedModel?: string;
+  semanticScholarApiKey?: string;
   zoteroLibraryId?: string;
   zoteroLibraryType?: ZoteroLibraryType;
   zoteroApiKey?: string;
   warnings: string[];
+}
+
+export interface SemanticScholarSearchResultRow {
+  paperId: string;
+  title: string;
+  authors: string[];
+  year?: string;
+  doi?: string;
+  venue?: string;
+  journal?: string;
+  publicationDate?: string;
+  publicationTypes: string[];
+  url?: string;
+  openAccessPdfUrl?: string;
+  abstract?: string;
+}
+
+export interface SemanticScholarPaper extends SemanticScholarSearchResultRow {
 }
 
 export interface BibliographyRecord {

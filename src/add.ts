@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 
 import { resolveConfig, type ConfigOverrides } from "./config.js";
+import { getSemanticScholarPaper, inferSemanticScholarItemType } from "./s2.js";
 import type { AppConfig, ZoteroLibraryType } from "./types.js";
 
 const DOI_CSL_ACCEPT_HEADER = "application/vnd.citationstyles.csl+json";
@@ -61,6 +62,7 @@ interface AddInput {
   publication?: string;
   url?: string;
   urlDate?: string;
+  abstract?: string;
   itemType?: string;
 }
 
@@ -71,6 +73,7 @@ export interface AddResult {
   created: boolean;
   source: "doi" | "manual" | "manual-fallback";
   doi?: string;
+  s2PaperId?: string;
   warnings: string[];
 }
 
@@ -265,6 +268,7 @@ function normalizeInput(input: AddInput): Required<Omit<AddInput, "doi" | "itemT
     publication: normalizeSpace(input.publication || ""),
     url: normalizeSpace(input.url || ""),
     urlDate: normalizeSpace(input.urlDate || ""),
+    abstract: normalizeSpace(input.abstract || ""),
     ...(input.itemType ? { itemType: normalizeSpace(input.itemType) } : {}),
   };
 }
@@ -362,6 +366,7 @@ function applyManualOverrides(
   applyPublicationField(payload, input.publication || undefined);
   if (input.url && "url" in payload) payload.url = input.url;
   if (input.urlDate && "accessDate" in payload) payload.accessDate = input.urlDate;
+  if (input.abstract && "abstractNote" in payload) payload.abstractNote = input.abstract;
 }
 
 function buildItemFromCsl(
@@ -531,5 +536,34 @@ export async function addToZotero(
     created: true,
     source: "manual",
     warnings,
+  };
+}
+
+export async function addS2PaperToZotero(
+  paperId: string,
+  inputOverrides: Omit<AddInput, "doi"> = {},
+  overrides: ConfigOverrides = {},
+  fetchImpl: FetchLike = fetch,
+): Promise<AddResult> {
+  const { paper } = await getSemanticScholarPaper(paperId, overrides, fetchImpl);
+  const result = await addToZotero(
+    {
+      ...(paper.doi ? { doi: paper.doi } : {}),
+      title: paper.title,
+      authors: paper.authors,
+      year: paper.publicationDate || paper.year,
+      publication: paper.journal || paper.venue,
+      url: paper.doi ? undefined : paper.url || paper.openAccessPdfUrl,
+      abstract: paper.abstract,
+      itemType: paper.doi ? undefined : inferSemanticScholarItemType(paper),
+      ...inputOverrides,
+    },
+    overrides,
+    fetchImpl,
+  );
+
+  return {
+    ...result,
+    s2PaperId: paper.paperId,
   };
 }

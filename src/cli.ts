@@ -1,15 +1,17 @@
 #!/usr/bin/env node
 
-import { addToZotero } from "./add.js";
-import { getDataPaths, resolveConfig, type ConfigOverrides } from "./config.js";
+import { readFileSync } from "node:fs";
+
+import { addS2PaperToZotero, addToZotero } from "./add.js";
+import { getDataPaths, type ConfigOverrides } from "./config.js";
 import { expandDocument, getIndexStatus, readDocument, searchLiterature } from "./engine.js";
 import { emitError, emitOk } from "./json.js";
 import { searchMetadata } from "./metadata.js";
 import { openQmdClient } from "./qmd.js";
+import { searchSemanticScholar } from "./s2.js";
 import { runSync } from "./sync.js";
 import type { MetadataField } from "./types.js";
 import { compactHomePath } from "./utils.js";
-import { readFileSync } from "node:fs";
 
 type FlagValue = string | string[] | boolean;
 
@@ -116,6 +118,7 @@ function overridesFromFlags(flags: Record<string, FlagValue>): ConfigOverrides {
     attachmentsRoot: getStringFlag(flags, "attachments-root"),
     dataDir: getStringFlag(flags, "data-dir"),
     qmdEmbedModel: getStringFlag(flags, "qmd-embed-model"),
+    semanticScholarApiKey: getStringFlag(flags, "semantic-scholar-api-key"),
     zoteroLibraryId: getStringFlag(flags, "zotero-library-id"),
     zoteroLibraryType: getStringFlag(flags, "zotero-library-type"),
     zoteroApiKey: getStringFlag(flags, "zotero-api-key"),
@@ -134,7 +137,8 @@ Usage:
   zotlit sync [--attachments-root <path>]
   zotlit status
   zotlit version
-  zotlit add [--doi <doi>] [--title <text>] [--author <name>] [--year <text>] [--publication <text>] [--url <url>] [--url-date <date>] [--item-type <type>]
+  zotlit add [--doi <doi> | --s2-paper-id <id>] [--title <text>] [--author <name>] [--year <text>] [--publication <text>] [--url <url>] [--url-date <date>] [--item-type <type>]
+  zotlit s2 "<text>" [--limit <n>]
   zotlit search "<text>" [--exact] [--limit <n>] [--min-score <n>] [--rerank|--no-rerank]
   zotlit metadata "<text>" [--limit <n>] [--field <field>] [--has-pdf]
   zotlit read (--file <path> | --item-key <key>) [--offset-block <n>] [--limit-blocks <n>]
@@ -153,7 +157,11 @@ Commands:
 
   add
     Add a Zotero item and return its itemKey immediately.
-    Prefer --doi when available. Use basic fields as a manual fallback.
+    Prefer --doi when available. --s2-paper-id imports from Semantic Scholar and still prefers DOI when present.
+
+  s2
+    Search Semantic Scholar papers by keyword.
+    Use a returned paperId with add --s2-paper-id to create a Zotero item.
 
   search
     Search indexed Zotero PDFs.
@@ -177,6 +185,7 @@ Commands:
 Options:
   --attachments-root <path>   Limit sync to a Zotero subfolder.
   --doi <doi>                 Import from DOI metadata when possible.
+  --s2-paper-id <id>          Import a Semantic Scholar paper by paperId.
   --title <text>              Set title for manual add or DOI fallback.
   --author <name>             Add an author. Repeat for multiple authors.
   --year <text>               Set the Zotero date field.
@@ -200,7 +209,9 @@ Options:
 
 Examples:
   zotlit add --doi "10.1016/j.econmod.2026.107590"
+  zotlit add --s2-paper-id "f2005ed06241e8aa6f55f7ed9279a56b92038128"
   zotlit add --title "Working Paper" --author "Jane Doe" --year 2026 --url "https://example.com"
+  zotlit s2 "state-owned enterprise governance" --limit 5
   zotlit search "dangwei shuji" --exact
   zotlit search "state-owned enterprise governance" --limit 5 --min-score 0.4
   zotlit metadata "American Journal of Political Science" --field journal
@@ -213,6 +224,7 @@ Examples:
 Config:
   Paths and other defaults are read from ~/.zotlit/config.json.
   The add command also needs zoteroLibraryId, zoteroLibraryType, and zoteroApiKey.
+  The s2 command and --s2-paper-id also need semanticScholarApiKey.
 `);
 }
 
@@ -294,6 +306,7 @@ async function main(): Promise<void> {
         }
         const missingValueFlags = [
           "doi",
+          "s2-paper-id",
           "title",
           "author",
           "year",
@@ -311,24 +324,62 @@ async function main(): Promise<void> {
           return;
         }
         const doi = getStringFlag(parsed.flags, "doi");
+        const s2PaperId = getStringFlag(parsed.flags, "s2-paper-id");
         const title = getStringFlag(parsed.flags, "title");
-        if (!doi && !title) {
-          emitError("MISSING_ARGUMENT", "Provide --doi <doi> or --title <text> for add.");
+        if (doi && s2PaperId) {
+          emitError("UNEXPECTED_ARGUMENT", "Use either --doi <doi> or --s2-paper-id <id>, not both.");
           return;
         }
-        const data = await addToZotero(
-          {
-            doi,
-            title,
-            authors: getStringListFlag(parsed.flags, "author"),
-            year: getStringFlag(parsed.flags, "year"),
-            publication: getStringFlag(parsed.flags, "publication"),
-            url: getStringFlag(parsed.flags, "url"),
-            urlDate: getStringFlag(parsed.flags, "url-date", "access-date"),
-            itemType: getStringFlag(parsed.flags, "item-type"),
-          },
-          overrides,
+        if (!doi && !s2PaperId && !title) {
+          emitError("MISSING_ARGUMENT", "Provide --doi <doi>, --s2-paper-id <id>, or --title <text> for add.");
+          return;
+        }
+        const authors = getStringListFlag(parsed.flags, "author");
+        const sharedInput = {
+          ...(doi ? { doi } : {}),
+          ...(title ? { title } : {}),
+          ...(authors.length > 0 ? { authors } : {}),
+          ...(getStringFlag(parsed.flags, "year") ? { year: getStringFlag(parsed.flags, "year")! } : {}),
+          ...(getStringFlag(parsed.flags, "publication")
+            ? { publication: getStringFlag(parsed.flags, "publication")! }
+            : {}),
+          ...(getStringFlag(parsed.flags, "url") ? { url: getStringFlag(parsed.flags, "url")! } : {}),
+          ...(getStringFlag(parsed.flags, "url-date", "access-date")
+            ? { urlDate: getStringFlag(parsed.flags, "url-date", "access-date")! }
+            : {}),
+          ...(getStringFlag(parsed.flags, "item-type")
+            ? { itemType: getStringFlag(parsed.flags, "item-type")! }
+            : {}),
+        };
+        const data = s2PaperId
+          ? await addS2PaperToZotero(s2PaperId, sharedInput, overrides)
+          : await addToZotero(sharedInput, overrides);
+        emitOk(data, { elapsedMs: Date.now() - startedAt });
+        return;
+      }
+
+      case "s2": {
+        if ("query" in parsed.flags) {
+          emitError("UNEXPECTED_ARGUMENT", '`--query` is not supported. Use: zotlit s2 "<text>"');
+          return;
+        }
+        const invalidFlags = ["exact", "rerank", "no-rerank", "min-score", "field", "has-pdf"].filter(
+          (flag) => flag in parsed.flags,
         );
+        if (invalidFlags.length > 0) {
+          emitError(
+            "UNEXPECTED_ARGUMENT",
+            `s2 only supports --limit. Remove: ${invalidFlags.map((flag) => `--${flag}`).join(", ")}`,
+          );
+          return;
+        }
+        const query = parsed.positionals.slice(1).join(" ");
+        if (!query) {
+          emitError("MISSING_ARGUMENT", 'Missing Semantic Scholar search text. Use: zotlit s2 "<text>"');
+          return;
+        }
+        const limit = getNumberFlag(parsed.flags, "limit") || 10;
+        const data = await searchSemanticScholar(query, limit, overrides);
         emitOk(data, { elapsedMs: Date.now() - startedAt });
         return;
       }

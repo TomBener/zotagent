@@ -10,6 +10,7 @@ interface RawConfig {
   attachmentsRoot?: string;
   dataDir?: string;
   qmdEmbedModel?: string;
+  semanticScholarApiKey?: string;
   zoteroLibraryId?: string;
   zoteroLibraryType?: string;
   zoteroApiKey?: string;
@@ -23,6 +24,7 @@ export interface ConfigOverrides {
   attachmentsRoot?: string;
   dataDir?: string;
   qmdEmbedModel?: string;
+  semanticScholarApiKey?: string;
   zoteroLibraryId?: string;
   zoteroLibraryType?: string;
   zoteroApiKey?: string;
@@ -105,6 +107,12 @@ export function resolveConfig(overrides: ConfigOverrides = {}): AppConfig {
       process.env.QMD_EMBED_MODEL,
       fileConfig.qmdEmbedModel,
       DEFAULTS.qmdEmbedModel,
+    ),
+    semanticScholarApiKey: firstDefined(
+      overrides.semanticScholarApiKey,
+      process.env.ZOTLIT_SEMANTIC_SCHOLAR_API_KEY,
+      process.env.SEMANTIC_SCHOLAR_API_KEY,
+      fileConfig.semanticScholarApiKey,
     ),
     zoteroLibraryId: firstDefined(
       overrides.zoteroLibraryId,

@@ -31,11 +31,13 @@ test("help summarizes current commands and keeps config-only overrides out of th
   assert.match(result.stdout, /Usage:/);
   assert.match(result.stdout, /zotlit sync \[--attachments-root <path>\]/);
   assert.match(result.stdout, /zotlit version/);
-  assert.match(result.stdout, /zotlit add \[--doi <doi>\] \[--title <text>\]/);
+  assert.match(result.stdout, /zotlit add \[--doi <doi> \| --s2-paper-id <id>\] \[--title <text>\]/);
+  assert.match(result.stdout, /zotlit s2 "<text>" \[--limit <n>\]/);
   assert.match(result.stdout, /zotlit search "<text>" \[--exact\] \[--limit <n>\]/);
   assert.match(result.stdout, /zotlit metadata "<text>" \[--limit <n>\] \[--field <field>\] \[--has-pdf\]/);
   assert.match(result.stdout, /Options:/);
   assert.match(result.stdout, /--doi <doi>\s+Import from DOI metadata when possible\./);
+  assert.match(result.stdout, /--s2-paper-id <id>\s+Import a Semantic Scholar paper by paperId\./);
   assert.match(result.stdout, /--item-type <type>\s+Override the Zotero item type\./);
   assert.match(result.stdout, /--version\s+Print the current zotlit version\./);
   assert.match(
@@ -78,7 +80,7 @@ test("add requires doi or title", () => {
 
   assert.equal(result.status, 1);
   assert.match(result.stdout, /"code": "MISSING_ARGUMENT"/);
-  assert.match(result.stdout, /Provide --doi <doi> or --title <text> for add\./);
+  assert.match(result.stdout, /Provide --doi <doi>, --s2-paper-id <id>, or --title <text> for add\./);
 });
 
 test("add rejects positional arguments", () => {
@@ -87,6 +89,14 @@ test("add rejects positional arguments", () => {
   assert.equal(result.status, 1);
   assert.match(result.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
   assert.match(result.stdout, /add does not accept positional arguments/);
+});
+
+test("add rejects combining doi and s2-paper-id", () => {
+  const result = runCli(["add", "--doi", "10.1000/test", "--s2-paper-id", "paper-1"]);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
+  assert.match(result.stdout, /Use either --doi <doi> or --s2-paper-id <id>, not both\./);
 });
 
 test("search rejects removed query flag and points to positional usage", () => {
@@ -121,6 +131,14 @@ test("metadata rejects search-only flags", () => {
   assert.equal(result.status, 1);
   assert.match(result.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
   assert.match(result.stdout, /metadata only supports --limit, --field, and --has-pdf/);
+});
+
+test("s2 rejects metadata and search-only flags", () => {
+  const result = runCli(["s2", "--field", "title", "aging in China"]);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
+  assert.match(result.stdout, /s2 only supports --limit/);
 });
 
 test("metadata accumulates repeated field filters", () => {

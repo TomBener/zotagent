@@ -1,10 +1,15 @@
 # zotlit
 
+[![Lint](https://github.com/TomBener/zotlit/actions/workflows/lint.yml/badge.svg?branch=main)](https://github.com/TomBener/zotlit/actions/workflows/lint.yml)
+[![Release](https://github.com/TomBener/zotlit/actions/workflows/release.yml/badge.svg)](https://github.com/TomBener/zotlit/actions/workflows/release.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/TomBener/zotlit/blob/main/LICENSE)
+
 `zotlit` is a Zotero CLI for AI agents.
 
 It focuses on a small set of tasks:
 
 - add a Zotero item and return its `itemKey`
+- search Semantic Scholar papers and import one into Zotero
 - index local Zotero PDFs
 - search indexed PDFs
 - search bibliography metadata
@@ -14,6 +19,8 @@ It focuses on a small set of tasks:
 
 - `add`
   Create a Zotero item from DOI metadata or basic fields.
+- `s2`
+  Search Semantic Scholar and pass a paperId into `add`.
 - `sync`
   Build or refresh the local PDF index.
 - `search`
@@ -45,6 +52,7 @@ From source:
 
 ```bash
 npm install
+npm run check
 npm run build
 node dist/cli.js help
 ```
@@ -62,19 +70,28 @@ Minimal example:
   "bibliographyJsonPath": "~/Library/CloudStorage/Dropbox/bibliography/bibliography.json",
   "attachmentsRoot": "~/Library/Mobile Documents/com~apple~CloudDocs/Zotero",
   "dataDir": "~/Library/Mobile Documents/com~apple~CloudDocs/Zotlit",
+  "semanticScholarApiKey": "<api-key>",
   "zoteroLibraryId": "<library-id>",
   "zoteroLibraryType": "user",
   "zoteroApiKey": "<api-key>"
 }
 ```
 
-Write config can also come from environment variables:
+API credentials can also come from environment variables:
 
+- `ZOTLIT_SEMANTIC_SCHOLAR_API_KEY`
 - `ZOTLIT_ZOTERO_LIBRARY_ID`
 - `ZOTLIT_ZOTERO_LIBRARY_TYPE`
 - `ZOTLIT_ZOTERO_API_KEY`
 
-For easier migration, `ZOTERO_LIBRARY_ID`, `ZOTERO_LIBRARY_TYPE`, and `ZOTERO_API_KEY` are also accepted.
+Fallback environment variable names:
+
+- `SEMANTIC_SCHOLAR_API_KEY`
+- `ZOTERO_LIBRARY_ID`
+- `ZOTERO_LIBRARY_TYPE`
+- `ZOTERO_API_KEY`
+
+`semanticScholarApiKey` is only needed for `zotlit s2` and `zotlit add --s2-paper-id`.
 
 ## Commands
 
@@ -82,7 +99,8 @@ For easier migration, `ZOTERO_LIBRARY_ID`, `ZOTERO_LIBRARY_TYPE`, and `ZOTERO_AP
 zotlit sync [--attachments-root <path>]
 zotlit status
 zotlit version
-zotlit add [--doi <doi>] [--title <text>] [--author <name>] [--year <text>] [--publication <text>] [--url <url>] [--url-date <date>] [--item-type <type>]
+zotlit add [--doi <doi> | --s2-paper-id <id>] [--title <text>] [--author <name>] [--year <text>] [--publication <text>] [--url <url>] [--url-date <date>] [--item-type <type>]
+zotlit s2 "<text>" [--limit <n>]
 zotlit search "<text>" [--exact] [--limit <n>] [--min-score <n>] [--rerank | --no-rerank]
 zotlit metadata "<text>" [--limit <n>] [--field <field>] [--has-pdf]
 zotlit read (--file <path> | --item-key <key>) [--offset-block <n>] [--limit-blocks <n>]
@@ -95,6 +113,13 @@ Add by DOI:
 
 ```bash
 zotlit add --doi "10.1111/dech.70058"
+```
+
+Search Semantic Scholar and import by paperId:
+
+```bash
+zotlit s2 "active aging in China" --limit 5
+zotlit add --s2-paper-id "f2005ed06241e8aa6f55f7ed9279a56b92038128"
 ```
 
 Add by fields:
@@ -138,6 +163,7 @@ zotlit expand --file "~/Library/.../paper.pdf" --block-start 10 --radius 2
 ## Notes
 
 - `add` returns `itemKey` immediately, so an agent can cite the item right away.
+- `add --s2-paper-id` prefers DOI import when Semantic Scholar returns a DOI, and falls back to Semantic Scholar metadata when it does not.
 - New items created by `add` receive the tag `Added by AI Agent`.
 - Creating an item in Zotero does not make it instantly searchable in local PDF search. `metadata` depends on your exported bibliography JSON, and PDF search depends on `sync`.
 - `journalArticle` items keep `publicationTitle` but do not write `publisher`.

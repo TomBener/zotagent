@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { addToZotero } from "../../src/add.js";
+import { addS2PaperToZotero, addToZotero } from "../../src/add.js";
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -222,4 +222,155 @@ test("addToZotero omits publisher for journal articles imported from DOI", async
   assert.equal(body[0]?.publicationTitle, "Journal of Testing");
   assert.equal(body[0]?.publisher, "");
   assert.deepEqual(body[0]?.tags, [{ tag: "Added by AI Agent" }]);
+});
+
+test("addS2PaperToZotero imports via DOI and allows manual overrides", async () => {
+  const requests: Array<{ url: string; init?: RequestInit }> = [];
+  const fetchMock: typeof fetch = async (input, init) => {
+    const url = String(input);
+    requests.push({ url, init });
+
+    if (url === "https://api.semanticscholar.org/graph/v1/paper/paper-123?fields=title%2Cauthors%2Cyear%2CexternalIds%2CpublicationTypes%2Cjournal%2Curl%2CopenAccessPdf%2CpublicationDate%2Cvenue%2Cabstract") {
+      return jsonResponse({
+        paperId: "paper-123",
+        title: "Semantic Scholar Title",
+        authors: [{ name: "Ada Lovelace" }],
+        year: 2024,
+        externalIds: { DOI: "10.1000/s2-paper" },
+        publicationTypes: ["JournalArticle"],
+        journal: { name: "Journal of Graphs" },
+        publicationDate: "2024-05-01",
+        abstract: "Imported from S2",
+      });
+    }
+    if (url === "https://doi.org/10.1000/s2-paper") {
+      return jsonResponse({
+        type: "article-journal",
+        title: "DOI Title",
+        "container-title": ["Journal of Graphs"],
+        issued: { "date-parts": [[2024, 5, 1]] },
+        author: [{ family: "Lovelace", given: "Ada" }],
+      });
+    }
+    if (url === "https://api.zotero.org/items/new?itemType=journalArticle") {
+      return jsonResponse({
+        itemType: "journalArticle",
+        title: "",
+        creators: [],
+        date: "",
+        publicationTitle: "",
+        abstractNote: "",
+        url: "",
+        accessDate: "",
+        DOI: "",
+        tags: [],
+        collections: [],
+        relations: {},
+      });
+    }
+    if (url === "https://api.zotero.org/users/123456/items") {
+      return jsonResponse({
+        success: {
+          "0": "S2DOI123",
+        },
+      });
+    }
+
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+
+  const result = await addS2PaperToZotero(
+    "paper-123",
+    {
+      title: "Override Title",
+    },
+    {
+      semanticScholarApiKey: "s2-secret",
+      zoteroLibraryId: "123456",
+      zoteroLibraryType: "user",
+      zoteroApiKey: "secret",
+    },
+    fetchMock,
+  );
+
+  assert.equal(result.itemKey, "S2DOI123");
+  assert.equal(result.source, "doi");
+  assert.equal(result.doi, "10.1000/s2-paper");
+  assert.equal(result.s2PaperId, "paper-123");
+
+  const createRequest = requests.at(-1);
+  assert.ok(createRequest);
+  const body = JSON.parse(String(createRequest?.init?.body)) as Array<Record<string, unknown>>;
+  assert.equal(body[0]?.title, "Override Title");
+  assert.equal(body[0]?.publicationTitle, "Journal of Graphs");
+  assert.equal(body[0]?.abstractNote, "Imported from S2");
+});
+
+test("addS2PaperToZotero creates a manual item when no DOI is available", async () => {
+  const requests: Array<{ url: string; init?: RequestInit }> = [];
+  const fetchMock: typeof fetch = async (input, init) => {
+    const url = String(input);
+    requests.push({ url, init });
+
+    if (url === "https://api.semanticscholar.org/graph/v1/paper/paper-456?fields=title%2Cauthors%2Cyear%2CexternalIds%2CpublicationTypes%2Cjournal%2Curl%2CopenAccessPdf%2CpublicationDate%2Cvenue%2Cabstract") {
+      return jsonResponse({
+        paperId: "paper-456",
+        title: "Conference Paper",
+        authors: [{ name: "Grace Hopper" }, { name: "Research Group" }],
+        year: 2023,
+        publicationTypes: ["Conference"],
+        venue: "Proceedings of Testing",
+        url: "https://www.semanticscholar.org/paper/paper-456",
+        abstract: "No DOI available",
+      });
+    }
+    if (url === "https://api.zotero.org/items/new?itemType=conferencePaper") {
+      return jsonResponse({
+        itemType: "conferencePaper",
+        title: "",
+        creators: [],
+        date: "",
+        proceedingsTitle: "",
+        abstractNote: "",
+        url: "",
+        accessDate: "",
+        tags: [],
+        collections: [],
+        relations: {},
+      });
+    }
+    if (url === "https://api.zotero.org/users/123456/items") {
+      return jsonResponse({
+        success: {
+          "0": "S2MANUAL1",
+        },
+      });
+    }
+
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+
+  const result = await addS2PaperToZotero(
+    "paper-456",
+    {},
+    {
+      semanticScholarApiKey: "s2-secret",
+      zoteroLibraryId: "123456",
+      zoteroLibraryType: "user",
+      zoteroApiKey: "secret",
+    },
+    fetchMock,
+  );
+
+  assert.equal(result.itemKey, "S2MANUAL1");
+  assert.equal(result.source, "manual");
+  assert.equal(result.s2PaperId, "paper-456");
+
+  const createRequest = requests.at(-1);
+  assert.ok(createRequest);
+  const body = JSON.parse(String(createRequest?.init?.body)) as Array<Record<string, unknown>>;
+  assert.equal(body[0]?.title, "Conference Paper");
+  assert.equal(body[0]?.proceedingsTitle, "Proceedings of Testing");
+  assert.equal(body[0]?.abstractNote, "No DOI available");
+  assert.equal(body[0]?.url, "https://www.semanticscholar.org/paper/paper-456");
 });
