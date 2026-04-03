@@ -22,7 +22,7 @@
     "check": "npm run lint && npm test"
   },
   "dependencies": {
-    "@opendataloader/pdf": "^2.2.0",
+    "@opendataloader/pdf": "^2.2.1",
     "@pngwasi/node-tantivy-binding": "^0.3.4",
     "@tobilu/qmd": "^2.0.1"
   },
