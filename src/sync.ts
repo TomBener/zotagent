@@ -801,9 +801,6 @@ export async function runSync(
 
       const current = statSync(attachment.filePath, { throwIfNoEntry: false });
       if (!current || !attachment.exists) {
-        const previous = previousByDocKey.get(attachment.docKey);
-        deleteIfExists(previous?.normalizedPath);
-        deleteIfExists(previous?.manifestPath);
         fileOutcomes.push({
           kind: "missing",
           filePath: attachment.filePath,
@@ -1068,9 +1065,6 @@ export async function runSync(
     }
 
     for (const docKey of staleDocKeys) {
-      const previous = previousByDocKey.get(docKey);
-      deleteIfExists(previous?.normalizedPath);
-      deleteIfExists(previous?.manifestPath);
       stats.removedAttachments += 1;
     }
 

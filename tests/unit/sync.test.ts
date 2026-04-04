@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -643,7 +643,7 @@ test("runSync reuses a ready index when bibliography paths come from another mac
   assert.equal(nextCatalog.entries[0]?.docKey, docKey);
 });
 
-test("runSync removes stale normalized and manifest files when attachment disappears", async () => {
+test("runSync keeps cached outputs when attachment disappears from the current catalog", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotlit-stale-"));
   const attachmentsRoot = join(root, "attachments");
   const dataDir = join(root, "data");
@@ -715,8 +715,137 @@ test("runSync removes stale normalized and manifest files when attachment disapp
 
   assert.equal(result.stats.removedAttachments, 1);
   assert.equal(statSync(indexDir).isDirectory(), true);
-  assert.equal(existsSync(normalizedPath), false);
-  assert.equal(existsSync(manifestPath), false);
+  assert.equal(existsSync(normalizedPath), true);
+  assert.equal(existsSync(manifestPath), true);
+});
+
+test("runSync reuses cached outputs after an attachment temporarily disappears", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotlit-sync-resume-missing-"));
+  const attachmentsRoot = join(root, "attachments");
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  const normalizedDir = join(dataDir, "normalized");
+  mkdirSync(attachmentsRoot, { recursive: true });
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+  mkdirSync(normalizedDir, { recursive: true });
+
+  const pdfPath = join(attachmentsRoot, "paper.pdf");
+  const bibliographyPath = join(root, "bibliography.json");
+  const docKey = sha1("paper.pdf");
+  const normalizedPath = join(normalizedDir, `${docKey}.md`);
+  const manifestPath = join(manifestsDir, `${docKey}.json`);
+
+  writeFileSync(pdfPath, "pdf-v1");
+  const initialStat = statSync(pdfPath);
+  writeFileSync(
+    bibliographyPath,
+    JSON.stringify([
+      {
+        id: "cite",
+        title: "Paper",
+        author: [{ family: "A", given: "Author" }],
+        file: pdfPath,
+        "zotero-item-key": "ITEM1",
+      },
+    ]),
+    "utf-8",
+  );
+  writeFileSync(normalizedPath, "Body", "utf-8");
+  writeFileSync(
+    manifestPath,
+    JSON.stringify({
+      docKey,
+      itemKey: "ITEM1",
+      title: "Paper",
+      authors: ["A Author"],
+      filePath: pdfPath,
+      normalizedPath,
+      blocks: [],
+    }),
+    "utf-8",
+  );
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [
+      {
+        docKey,
+        itemKey: "ITEM1",
+        citationKey: "cite",
+        title: "Paper",
+        authors: ["A Author"],
+        filePath: pdfPath,
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: initialStat.size,
+        mtimeMs: Math.trunc(initialStat.mtimeMs),
+        sourceHash: "existinghash",
+        lastIndexedAt: new Date().toISOString(),
+        normalizedPath,
+        manifestPath,
+      },
+    ],
+  });
+
+  const fakeFactory = async () => ({
+    search: async () => [],
+    searchLex: async () => [],
+    update: async () => ({}),
+    embed: async () => ({}),
+    getStatus: async () => ({ documents: 0, collections: [], embeddings: { total: 0, stale: 0 } }),
+    listContexts: async () => [],
+    addContext: async () => true,
+    removeContext: async () => true,
+    close: async () => {},
+  });
+  const fakeExactFactory = async () => ({
+    rebuildExactIndex: async () => {},
+    searchExactCandidates: async () => [],
+    close: async () => {},
+  });
+
+  unlinkSync(pdfPath);
+  const missingResult = await runSync(
+    {
+      bibliographyJsonPath: bibliographyPath,
+      attachmentsRoot,
+      dataDir,
+    },
+    fakeFactory,
+    fakeExactFactory,
+    async () => new Map(),
+    () => {},
+  );
+
+  assert.equal(missingResult.stats.missingAttachments, 1);
+  assert.equal(existsSync(normalizedPath), true);
+  assert.equal(existsSync(manifestPath), true);
+
+  writeFileSync(pdfPath, "pdf-v1");
+  let extractCalls = 0;
+  const resumedResult = await runSync(
+    {
+      bibliographyJsonPath: bibliographyPath,
+      attachmentsRoot,
+      dataDir,
+    },
+    fakeFactory,
+    fakeExactFactory,
+    async () => {
+      extractCalls += 1;
+      return new Map();
+    },
+    () => {},
+  );
+
+  assert.equal(extractCalls, 0);
+  assert.equal(resumedResult.stats.skippedAttachments, 1);
+  assert.equal(resumedResult.stats.updatedAttachments, 0);
+  assert.equal(resumedResult.stats.readyAttachments, 1);
 });
 
 test("runSync records extraction failures per attachment and continues indexing others", async () => {
