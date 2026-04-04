@@ -103,3 +103,44 @@ test("loadCatalog remaps bibliography attachment paths into the current attachme
     [epubPath, pdfPath],
   );
 });
+
+test("loadCatalog only relocates files that match the requested Zotero subfolder tail", () => {
+  const root = mkdtempSync(join(tmpdir(), "zotlit-catalog-subfolder-"));
+  const attachmentsRoot = join(root, "miniagent", "Zotero", "CSS & Social Media", "preprint");
+  const bibliographyRoot = join(root, "rentao", "Zotero");
+  mkdirSync(attachmentsRoot, { recursive: true });
+
+  const keptPdfPath = join(attachmentsRoot, "kept.pdf");
+  writeFileSync(keptPdfPath, "pdf");
+
+  const bibliographyPath = join(root, "bibliography.json");
+  writeFileSync(
+    bibliographyPath,
+    JSON.stringify([
+      {
+        id: "citekey",
+        title: "Portable Paper",
+        author: [{ family: "Smith", given: "Jane" }],
+        file: [
+          join(bibliographyRoot, "CSS & Social Media", "preprint", "kept.pdf"),
+          join(bibliographyRoot, "other-folder", "should-not-appear.pdf"),
+        ].join(";"),
+        type: "article-journal",
+        "zotero-item-key": "ITEM1",
+      },
+    ]),
+    "utf-8",
+  );
+
+  const catalog = loadCatalog({
+    bibliographyJsonPath: bibliographyPath,
+    attachmentsRoot,
+    dataDir: join(root, "data"),
+    warnings: [],
+  });
+
+  assert.deepEqual(catalog.records[0]?.attachmentPaths, [keptPdfPath]);
+  assert.deepEqual(catalog.records[0]?.supportedPdfFiles, [keptPdfPath]);
+  assert.equal(catalog.attachments.length, 1);
+  assert.equal(catalog.attachments[0]?.filePath, keptPdfPath);
+});

@@ -140,6 +140,13 @@ function findSegmentSequence(haystack: string[], needle: string[]): number {
   return -1;
 }
 
+function findLastSegmentIndex(segments: string[], value: string): number {
+  for (let index = segments.length - 1; index >= 0; index -= 1) {
+    if (segments[index] === value) return index;
+  }
+  return -1;
+}
+
 function relocateAttachmentPath(
   filePath: string,
   attachmentsRoot: string,
@@ -158,26 +165,17 @@ function relocateAttachmentPath(
 
   const rootSegments = splitPathSegments(normalizedRoot);
   const fileSegments = splitPathSegments(normalizedPath);
-  let bestRelativeSegments: string[] | undefined;
-  let bestOverlapLength = 0;
+  const zoteroRootIndex = findLastSegmentIndex(rootSegments, "Zotero");
+  if (zoteroRootIndex < 0) return undefined;
 
-  for (let rootStart = 0; rootStart < rootSegments.length; rootStart += 1) {
-    const rootSuffix = rootSegments.slice(rootStart);
-    if (rootSuffix.length === 0 || rootSuffix.length < bestOverlapLength) continue;
+  const requiredTail = rootSegments.slice(zoteroRootIndex);
+  const matchIndex = findSegmentSequence(fileSegments, requiredTail);
+  if (matchIndex < 0) return undefined;
 
-    const matchIndex = findSegmentSequence(fileSegments, rootSuffix);
-    if (matchIndex < 0) continue;
+  const relativeSegments = fileSegments.slice(matchIndex + requiredTail.length);
+  if (relativeSegments.length === 0) return undefined;
 
-    const relativeSegments = fileSegments.slice(matchIndex + rootSuffix.length);
-    if (relativeSegments.length === 0) continue;
-
-    bestRelativeSegments = relativeSegments;
-    bestOverlapLength = rootSuffix.length;
-  }
-
-  if (!bestRelativeSegments) return undefined;
-
-  const relativePath = bestRelativeSegments.join("/");
+  const relativePath = relativeSegments.join("/");
   return {
     absolutePath: `${normalizedRoot}/${relativePath}`,
     relativePath,
