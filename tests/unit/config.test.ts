@@ -9,6 +9,14 @@ test("getDataPaths keeps index outputs in dataDir but uses system temp for extra
   const paths = getDataPaths("/Users/example/Library/Mobile Documents/com~apple~CloudDocs/Zotlit");
 
   assert.equal(
+    paths.logsDir,
+    "/Users/example/Library/Mobile Documents/com~apple~CloudDocs/Zotlit/logs",
+  );
+  assert.equal(
+    paths.latestSyncLogPath,
+    "/Users/example/Library/Mobile Documents/com~apple~CloudDocs/Zotlit/logs/sync-latest.log",
+  );
+  assert.equal(
     paths.normalizedDir,
     "/Users/example/Library/Mobile Documents/com~apple~CloudDocs/Zotlit/normalized",
   );

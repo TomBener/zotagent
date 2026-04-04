@@ -151,6 +151,8 @@ export function getDataPaths(dataDir: string): DataPaths {
   const resolvedDataDir = resolveHomePath(dataDir);
   const indexDir = resolve(resolvedDataDir, "index");
   return {
+    logsDir: resolve(resolvedDataDir, "logs"),
+    latestSyncLogPath: resolve(resolvedDataDir, "logs", "sync-latest.log"),
     normalizedDir: resolve(resolvedDataDir, "normalized"),
     manifestsDir: resolve(resolvedDataDir, "manifests"),
     indexDir,

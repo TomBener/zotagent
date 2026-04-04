@@ -234,6 +234,8 @@ Config:
 
 function compactPathMap(paths: ReturnType<typeof getDataPaths>): ReturnType<typeof getDataPaths> {
   return {
+    logsDir: compactHomePath(paths.logsDir),
+    latestSyncLogPath: compactHomePath(paths.latestSyncLogPath),
     normalizedDir: compactHomePath(paths.normalizedDir),
     manifestsDir: compactHomePath(paths.manifestsDir),
     indexDir: compactHomePath(paths.indexDir),
@@ -274,6 +276,7 @@ async function main(): Promise<void> {
         emitOk(
           {
             ...result.stats,
+            logPath: compactHomePath(result.logPath),
             warnings: result.config.warnings,
             paths: compactPathMap(getDataPaths(result.config.dataDir)),
           },

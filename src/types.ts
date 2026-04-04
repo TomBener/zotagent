@@ -178,6 +178,8 @@ export interface ReadBlock {
 }
 
 export interface DataPaths {
+  logsDir: string;
+  latestSyncLogPath: string;
   normalizedDir: string;
   manifestsDir: string;
   indexDir: string;

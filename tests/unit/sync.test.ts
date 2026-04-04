@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -217,6 +217,10 @@ test("runSync skips unchanged ready pdfs and refreshes qmd contexts", async () =
   assert.equal(calls.removed, 1);
   assert.equal(calls.added, 1);
   assert.equal(calls.closed, 1);
+
+  const logBody = readFileSync(result.logPath, "utf-8");
+  assert.match(logBody, /## Skipped Files/);
+  assert.match(logBody, /paper\.pdf: reused existing indexed output/);
 });
 
 test("runSync resumes from existing normalized and manifest outputs when catalog state is missing", async () => {
@@ -628,6 +632,7 @@ test("runSync records extraction failures per attachment and continues indexing 
   assert.equal(result.stats.errorAttachments, 1);
   assert.equal(result.stats.indexedAttachments, 1);
   assert.equal(result.stats.updatedAttachments, 1);
+  assert.equal(existsSync(result.logPath), true);
 
   const catalog = readCatalogFile(join(dataDir, "index", "catalog.json"));
   const goodEntry = catalog.entries.find((entry) => entry.itemKey === "GOOD");
@@ -637,6 +642,16 @@ test("runSync records extraction failures per attachment and continues indexing 
   assert.match(badEntry?.error || "", /PDF extraction failed/);
   assert.match(badEntry?.error || "", /bad\.pdf/);
   assert.match(badEntry?.error || "", /malformed PDF xref table/);
+
+  const logBody = readFileSync(result.logPath, "utf-8");
+  const latestLogPath = join(dataDir, "logs", "sync-latest.log");
+  assert.equal(existsSync(latestLogPath), true);
+  assert.match(logBody, /# zotlit sync log/);
+  assert.match(logBody, /Loaded bibliography with 2 records and 2 attachments/);
+  assert.match(logBody, /## Errored Files/);
+  assert.match(logBody, /PDF extraction failed for .*bad\.pdf/);
+  assert.match(logBody, /bad\.pdf: java\.lang\.IllegalStateException: malformed PDF xref table/);
+  assert.match(logBody, /malformed PDF xref table/);
 });
 
 test("runSync retries a timed out batch one file at a time", async () => {

@@ -45,6 +45,7 @@ Notes:
 
 - `sync` uses Java during PDF extraction
 - `sync` skips PDFs that time out or fail extraction, records them as `error`, and continues the rest of the batch
+- `sync` writes a readable log file to `dataDir/logs/` and refreshes `dataDir/logs/sync-latest.log`
 - qmd may prepare local models on first use
 
 ## Install

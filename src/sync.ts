@@ -1,5 +1,7 @@
 import { buildArgs, type ConvertOptions } from "@opendataloader/pdf";
 import {
+  appendFileSync,
+  copyFileSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -21,7 +23,6 @@ import { mapEntriesByDocKey, readCatalogFile, summarizeCatalog, writeCatalogFile
 import { openExactIndex, type ExactIndexFactory } from "./tantivy.js";
 import type { AttachmentCatalogEntry, AttachmentManifest, CatalogEntry, CatalogFile, SyncStats } from "./types.js";
 import {
-  chunkArray,
   compactHomePath,
   ensureDir,
   ensureParentDir,
@@ -39,9 +40,142 @@ const require = createRequire(import.meta.url);
 const ODL_PACKAGE_ENTRY = require.resolve("@opendataloader/pdf");
 const ODL_JAR_PATH = resolve(dirname(ODL_PACKAGE_ENTRY), "..", "lib", ODL_JAR_NAME);
 
-function logSyncPhase(message: string): void {
+function writeConsoleSyncLine(message: string): void {
   if (process.stderr.isTTY) {
     process.stderr.write(`${message}\n`);
+  }
+}
+
+function buildSyncLogFileName(date: Date): string {
+  return `sync-${date.toISOString().replace(/:/g, "-").replace(/\.\d{3}Z$/, "Z")}.log`;
+}
+
+function formatLogTimestamp(date: Date = new Date()): string {
+  return date.toISOString();
+}
+
+function formatLogSectionTitle(title: string): string {
+  return `\n## ${title}\n`;
+}
+
+type SyncFileOutcomeKind = "skipped" | "error" | "missing" | "unsupported";
+
+type SyncFileOutcome = {
+  kind: SyncFileOutcomeKind;
+  filePath: string;
+  detail?: string;
+};
+
+class SyncLogger {
+  readonly logPath: string;
+  readonly latestLogPath: string;
+
+  constructor(
+    private readonly paths: ReturnType<typeof getDataPaths>,
+    private readonly config: ReturnType<typeof resolveConfig>,
+    private readonly startedAt: Date,
+  ) {
+    ensureDir(paths.logsDir);
+    this.logPath = resolve(paths.logsDir, buildSyncLogFileName(startedAt));
+    this.latestLogPath = paths.latestSyncLogPath;
+    writeFileSync(this.logPath, "", "utf-8");
+    this.writeHeader();
+  }
+
+  private append(line: string): void {
+    appendFileSync(this.logPath, line, "utf-8");
+  }
+
+  private writeHeader(): void {
+    this.append("# zotlit sync log\n");
+    this.append(`startedAt: ${formatLogTimestamp(this.startedAt)}\n`);
+    this.append(`dataDir: ${this.config.dataDir}\n`);
+    this.append(`attachmentsRoot: ${this.config.attachmentsRoot}\n`);
+    this.append(`bibliographyJsonPath: ${this.config.bibliographyJsonPath}\n`);
+    if (this.config.warnings.length > 0) {
+      this.append(formatLogSectionTitle("Config Warnings"));
+      for (const warning of this.config.warnings) {
+        this.append(`- ${warning}\n`);
+      }
+    }
+    this.append(formatLogSectionTitle("Events"));
+  }
+
+  info(message: string, options: { console?: boolean } = {}): void {
+    const consoleOutput = options.console ?? false;
+    const line = `[${formatLogTimestamp()}] INFO ${message}`;
+    this.append(`${line}\n`);
+    if (consoleOutput) {
+      writeConsoleSyncLine(`Sync: ${message}`);
+    }
+  }
+
+  warn(message: string, options: { console?: boolean } = {}): void {
+    const consoleOutput = options.console ?? true;
+    const line = `[${formatLogTimestamp()}] WARN ${message}`;
+    this.append(`${line}\n`);
+    if (consoleOutput) {
+      writeConsoleSyncLine(`Sync: ${message}`);
+    }
+  }
+
+  error(message: string, options: { console?: boolean } = {}): void {
+    const consoleOutput = options.console ?? true;
+    const line = `[${formatLogTimestamp()}] ERROR ${message}`;
+    this.append(`${line}\n`);
+    if (consoleOutput) {
+      writeConsoleSyncLine(`Sync: ${message}`);
+    }
+  }
+
+  detail(title: string, content: string): void {
+    this.append(formatLogSectionTitle(title));
+    this.append(`${content.trimEnd()}\n`);
+  }
+
+  private writeFileListSection(title: string, items: SyncFileOutcome[]): void {
+    if (items.length === 0) return;
+    this.append(formatLogSectionTitle(title));
+    for (const item of items) {
+      const line = item.detail
+        ? `- ${compactHomePath(item.filePath)}: ${item.detail}`
+        : `- ${compactHomePath(item.filePath)}`;
+      this.append(`${line}\n`);
+    }
+  }
+
+  finalize(status: "ok" | "failed", outcomes: SyncFileOutcome[], stats?: SyncStats): void {
+    this.writeFileListSection(
+      "Skipped Files",
+      outcomes.filter((item) => item.kind === "skipped"),
+    );
+    this.writeFileListSection(
+      "Errored Files",
+      outcomes.filter((item) => item.kind === "error"),
+    );
+    this.writeFileListSection(
+      "Missing Files",
+      outcomes.filter((item) => item.kind === "missing"),
+    );
+    this.writeFileListSection(
+      "Unsupported Files",
+      outcomes.filter((item) => item.kind === "unsupported"),
+    );
+    this.append(formatLogSectionTitle("Summary"));
+    this.append(`finishedAt: ${formatLogTimestamp()}\n`);
+    this.append(`status: ${status}\n`);
+    if (stats) {
+      this.append(`totalRecords: ${stats.totalRecords}\n`);
+      this.append(`totalAttachments: ${stats.totalAttachments}\n`);
+      this.append(`supportedAttachments: ${stats.supportedAttachments}\n`);
+      this.append(`readyAttachments: ${stats.readyAttachments}\n`);
+      this.append(`errorAttachments: ${stats.errorAttachments}\n`);
+      this.append(`indexedAttachments: ${stats.indexedAttachments}\n`);
+      this.append(`updatedAttachments: ${stats.updatedAttachments}\n`);
+      this.append(`skippedAttachments: ${stats.skippedAttachments}\n`);
+      this.append(`removedAttachments: ${stats.removedAttachments}\n`);
+    }
+    copyFileSync(this.logPath, this.latestLogPath);
   }
 }
 
@@ -325,7 +459,7 @@ export async function runOdlConvert(
     timeoutMs: executionOptions.timeoutMs ?? getOdlTimeoutMs(inputPaths.length),
     label: "OpenDataLoader PDF extraction",
     env: executionOptions.env,
-    streamOutput: !options.quiet,
+    streamOutput: false,
     spawnImpl: executionOptions.spawnImpl,
   });
 }
@@ -452,226 +586,280 @@ export async function runSync(
 ): Promise<{
   stats: SyncStats;
   config: ReturnType<typeof resolveConfig>;
+  logPath: string;
 }> {
   const config = resolveConfig(overrides);
   const paths = getDataPaths(config.dataDir);
-  ensureDir(paths.normalizedDir);
-  ensureDir(paths.manifestsDir);
-  ensureDir(paths.indexDir);
-  ensureDir(paths.tempDir);
+  const logger = new SyncLogger(paths, config, new Date());
 
-  const catalogData = loadCatalog(config);
-  const previousCatalog = readCatalogFile(paths.catalogPath);
-  const previousByDocKey = mapEntriesByDocKey(previousCatalog);
-  const nextEntries: CatalogEntry[] = [];
-  const changedAttachments: AttachmentCatalogEntry[] = [];
-  const staleDocKeys = new Set(previousCatalog.entries.map((entry) => entry.docKey));
+  try {
+    ensureDir(paths.normalizedDir);
+    ensureDir(paths.manifestsDir);
+    ensureDir(paths.indexDir);
+    ensureDir(paths.tempDir);
+    ensureDir(paths.logsDir);
+    logger.info("Prepared data directories.");
 
-  const stats: SyncStats = {
-    totalRecords: catalogData.records.length,
-    totalAttachments: catalogData.attachments.length,
-    supportedAttachments: 0,
-    readyAttachments: 0,
-    missingAttachments: 0,
-    unsupportedAttachments: 0,
-    errorAttachments: 0,
-    indexedAttachments: 0,
-    updatedAttachments: 0,
-    skippedAttachments: 0,
-    removedAttachments: 0,
-  };
+    const catalogData = loadCatalog(config);
+    logger.info(
+      `Loaded bibliography with ${catalogData.records.length} records and ${catalogData.attachments.length} attachments.`,
+    );
+    const previousCatalog = readCatalogFile(paths.catalogPath);
+    const previousByDocKey = mapEntriesByDocKey(previousCatalog);
+    const nextEntries: CatalogEntry[] = [];
+    const changedAttachments: AttachmentCatalogEntry[] = [];
+    const staleDocKeys = new Set(previousCatalog.entries.map((entry) => entry.docKey));
+    const fileOutcomes: SyncFileOutcome[] = [];
 
-  for (const attachment of catalogData.attachments) {
-    staleDocKeys.delete(attachment.docKey);
-    if (attachment.supported) stats.supportedAttachments += 1;
+    const stats: SyncStats = {
+      totalRecords: catalogData.records.length,
+      totalAttachments: catalogData.attachments.length,
+      supportedAttachments: 0,
+      readyAttachments: 0,
+      missingAttachments: 0,
+      unsupportedAttachments: 0,
+      errorAttachments: 0,
+      indexedAttachments: 0,
+      updatedAttachments: 0,
+      skippedAttachments: 0,
+      removedAttachments: 0,
+    };
 
-    if (!attachment.supported) {
+    for (const attachment of catalogData.attachments) {
+      staleDocKeys.delete(attachment.docKey);
+      if (attachment.supported) stats.supportedAttachments += 1;
+
+      if (!attachment.supported) {
+        fileOutcomes.push({
+          kind: "unsupported",
+          filePath: attachment.filePath,
+          detail: `unsupported file type: ${attachment.fileExt}`,
+        });
+        nextEntries.push(
+          toCatalogEntry(attachment, {
+            extractStatus: "unsupported",
+          }),
+        );
+        stats.unsupportedAttachments += 1;
+        continue;
+      }
+
+      const current = statSync(attachment.filePath, { throwIfNoEntry: false });
+      if (!current || !attachment.exists) {
+        const previous = previousByDocKey.get(attachment.docKey);
+        deleteIfExists(previous?.normalizedPath);
+        deleteIfExists(previous?.manifestPath);
+        fileOutcomes.push({
+          kind: "missing",
+          filePath: attachment.filePath,
+          detail: "file missing at sync time",
+        });
+        nextEntries.push(
+          toCatalogEntry(attachment, {
+            extractStatus: "missing",
+          }),
+        );
+        stats.missingAttachments += 1;
+        continue;
+      }
+
+      const previous = previousByDocKey.get(attachment.docKey);
+      const fallbackNormalizedPath = resolve(paths.normalizedDir, `${attachment.docKey}.md`);
+      const fallbackManifestPath = resolve(paths.manifestsDir, `${attachment.docKey}.json`);
+      const currentMtimeMs = Math.trunc(current.mtimeMs);
+      const previousIsReadyAndUnchanged =
+        previous?.extractStatus === "ready" &&
+        previous.size === current.size &&
+        previous.mtimeMs === currentMtimeMs &&
+        hasReusableArtifacts(attachment, previous.normalizedPath, previous.manifestPath);
+      const fallbackArtifactsReusable = hasReusableArtifacts(
+        attachment,
+        fallbackNormalizedPath,
+        fallbackManifestPath,
+      );
+
+      if (!previousIsReadyAndUnchanged && !fallbackArtifactsReusable) {
+        changedAttachments.push(attachment);
+        continue;
+      }
+
       nextEntries.push(
         toCatalogEntry(attachment, {
-          extractStatus: "unsupported",
+          extractStatus: "ready",
+          size: current.size,
+          mtimeMs: currentMtimeMs,
+          sourceHash: previousIsReadyAndUnchanged ? previous.sourceHash ?? null : null,
+          lastIndexedAt: previousIsReadyAndUnchanged ? previous.lastIndexedAt ?? null : null,
+          normalizedPath: previousIsReadyAndUnchanged ? previous.normalizedPath : fallbackNormalizedPath,
+          manifestPath: previousIsReadyAndUnchanged ? previous.manifestPath : fallbackManifestPath,
         }),
       );
-      stats.unsupportedAttachments += 1;
-      continue;
+      fileOutcomes.push({
+        kind: "skipped",
+        filePath: attachment.filePath,
+        detail: "reused existing indexed output",
+      });
+      stats.readyAttachments += 1;
+      stats.skippedAttachments += 1;
     }
 
-    const current = statSync(attachment.filePath, { throwIfNoEntry: false });
-    if (!current || !attachment.exists) {
+    if (changedAttachments.length > 0) {
+      logger.info(`Preparing to extract ${changedAttachments.length} changed PDF(s).`, { console: true });
+      requireJava();
+    } else {
+      logger.info("No PDF extraction needed; reusing existing indexed files where possible.", { console: true });
+    }
+
+    async function recordReadyAttachment(
+      attachment: AttachmentCatalogEntry,
+      written: ExtractedPaths,
+    ): Promise<void> {
+      const current = statSync(attachment.filePath);
+      const sourceHash = await sha1File(attachment.filePath);
+
+      nextEntries.push(
+        toCatalogEntry(attachment, {
+          extractStatus: "ready",
+          size: current.size,
+          mtimeMs: Math.trunc(current.mtimeMs),
+          sourceHash,
+          lastIndexedAt: new Date().toISOString(),
+          normalizedPath: written.normalizedPath,
+          manifestPath: written.manifestPath,
+        }),
+      );
+      stats.readyAttachments += 1;
+      stats.updatedAttachments += 1;
+      stats.indexedAttachments += 1;
+    }
+
+    function recordErroredAttachment(attachment: AttachmentCatalogEntry, error: unknown): void {
       const previous = previousByDocKey.get(attachment.docKey);
       deleteIfExists(previous?.normalizedPath);
       deleteIfExists(previous?.manifestPath);
+
+      const current = statSync(attachment.filePath, { throwIfNoEntry: false });
+      const message = toExtractErrorMessage(attachment.filePath, error);
+      logger.error(message);
+      logger.detail(
+        `Extraction Error: ${compactHomePath(attachment.filePath)}`,
+        error instanceof Error ? error.message : String(error),
+      );
+      fileOutcomes.push({
+        kind: "error",
+        filePath: attachment.filePath,
+        detail: summarizeSyncError(error),
+      });
+
       nextEntries.push(
         toCatalogEntry(attachment, {
-          extractStatus: "missing",
+          extractStatus: "error",
+          size: current?.size ?? null,
+          mtimeMs: current ? Math.trunc(current.mtimeMs) : null,
+          sourceHash: null,
+          lastIndexedAt: null,
+          error: message,
         }),
       );
-      stats.missingAttachments += 1;
-      continue;
     }
 
-    const previous = previousByDocKey.get(attachment.docKey);
-    const fallbackNormalizedPath = resolve(paths.normalizedDir, `${attachment.docKey}.md`);
-    const fallbackManifestPath = resolve(paths.manifestsDir, `${attachment.docKey}.json`);
-    const currentMtimeMs = Math.trunc(current.mtimeMs);
-    const previousIsReadyAndUnchanged =
-      previous?.extractStatus === "ready" &&
-      previous.size === current.size &&
-      previous.mtimeMs === currentMtimeMs &&
-      hasReusableArtifacts(attachment, previous.normalizedPath, previous.manifestPath);
-    const fallbackArtifactsReusable = hasReusableArtifacts(
-      attachment,
-      fallbackNormalizedPath,
-      fallbackManifestPath,
-    );
-
-    if (!previousIsReadyAndUnchanged && !fallbackArtifactsReusable) {
-      changedAttachments.push(attachment);
-      continue;
-    }
-
-    nextEntries.push(
-      toCatalogEntry(attachment, {
-        extractStatus: "ready",
-        size: current.size,
-        mtimeMs: currentMtimeMs,
-        sourceHash: previousIsReadyAndUnchanged ? previous.sourceHash ?? null : null,
-        lastIndexedAt: previousIsReadyAndUnchanged ? previous.lastIndexedAt ?? null : null,
-        normalizedPath: previousIsReadyAndUnchanged ? previous.normalizedPath : fallbackNormalizedPath,
-        manifestPath: previousIsReadyAndUnchanged ? previous.manifestPath : fallbackManifestPath,
-      }),
-    );
-    stats.readyAttachments += 1;
-    stats.skippedAttachments += 1;
-  }
-
-  if (changedAttachments.length > 0) {
-    requireJava();
-  }
-
-  async function recordReadyAttachment(
-    attachment: AttachmentCatalogEntry,
-    written: ExtractedPaths,
-  ): Promise<void> {
-    const current = statSync(attachment.filePath);
-    const sourceHash = await sha1File(attachment.filePath);
-
-    nextEntries.push(
-      toCatalogEntry(attachment, {
-        extractStatus: "ready",
-        size: current.size,
-        mtimeMs: Math.trunc(current.mtimeMs),
-        sourceHash,
-        lastIndexedAt: new Date().toISOString(),
-        normalizedPath: written.normalizedPath,
-        manifestPath: written.manifestPath,
-      }),
-    );
-    stats.readyAttachments += 1;
-    stats.updatedAttachments += 1;
-    stats.indexedAttachments += 1;
-  }
-
-  function recordErroredAttachment(attachment: AttachmentCatalogEntry, error: unknown): void {
-    const previous = previousByDocKey.get(attachment.docKey);
-    deleteIfExists(previous?.normalizedPath);
-    deleteIfExists(previous?.manifestPath);
-
-    const current = statSync(attachment.filePath, { throwIfNoEntry: false });
-    const message = toExtractErrorMessage(attachment.filePath, error);
-    logSyncPhase(`Sync: ${message}`);
-
-    nextEntries.push(
-      toCatalogEntry(attachment, {
-        extractStatus: "error",
-        size: current?.size ?? null,
-        mtimeMs: current ? Math.trunc(current.mtimeMs) : null,
-        sourceHash: null,
-        lastIndexedAt: null,
-        error: message,
-      }),
-    );
-  }
-
-  for (const batch of groupForOdlBatches(changedAttachments)) {
-    try {
-      const extracted = await extractBatchFn(batch, paths.tempDir, paths.manifestsDir, paths.normalizedDir);
-      for (const attachment of batch) {
-        const written = extracted.get(attachment.docKey);
-        if (!written) {
-          throw new Error(`Missing extracted output for ${attachment.filePath}`);
-        }
-        await recordReadyAttachment(attachment, written);
-      }
-    } catch (batchError) {
-      if (batch.length > 1) {
-        logSyncPhase("Sync: batch extraction failed, retrying files individually...");
+    const batches = groupForOdlBatches(changedAttachments);
+    for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
+      const batch = batches[batchIndex]!;
+      logger.info(`Extracting batch ${batchIndex + 1}/${batches.length} (${batch.length} PDF(s)).`, {
+        console: true,
+      });
+      try {
+        const extracted = await extractBatchFn(batch, paths.tempDir, paths.manifestsDir, paths.normalizedDir);
         for (const attachment of batch) {
-          try {
-            const extracted = await extractBatchFn(
-              [attachment],
-              paths.tempDir,
-              paths.manifestsDir,
-              paths.normalizedDir,
-            );
-            const written = extracted.get(attachment.docKey);
-            if (!written) {
-              throw new Error(`Missing extracted output for ${attachment.filePath}`);
-            }
-            await recordReadyAttachment(attachment, written);
-          } catch (singleError) {
-            recordErroredAttachment(attachment, singleError);
+          const written = extracted.get(attachment.docKey);
+          if (!written) {
+            throw new Error(`Missing extracted output for ${attachment.filePath}`);
           }
+          await recordReadyAttachment(attachment, written);
         }
-      } else {
+      } catch (batchError) {
+        if (batch.length > 1) {
+          logger.warn(`Batch ${batchIndex + 1} failed; retrying ${batch.length} PDF(s) individually.`);
+          logger.detail(
+            `Batch ${batchIndex + 1} Error`,
+            batchError instanceof Error ? batchError.message : String(batchError),
+          );
+          for (const attachment of batch) {
+            try {
+              logger.info(`Retrying ${compactHomePath(attachment.filePath)} individually.`);
+              const extracted = await extractBatchFn(
+                [attachment],
+                paths.tempDir,
+                paths.manifestsDir,
+                paths.normalizedDir,
+              );
+              const written = extracted.get(attachment.docKey);
+              if (!written) {
+                throw new Error(`Missing extracted output for ${attachment.filePath}`);
+              }
+              await recordReadyAttachment(attachment, written);
+            } catch (singleError) {
+              recordErroredAttachment(attachment, singleError);
+            }
+          }
+          continue;
+        }
+
         recordErroredAttachment(batch[0]!, batchError);
       }
+      writeProgressCatalog(paths.catalogPath, nextEntries);
     }
 
+    for (const docKey of staleDocKeys) {
+      const previous = previousByDocKey.get(docKey);
+      deleteIfExists(previous?.normalizedPath);
+      deleteIfExists(previous?.manifestPath);
+      stats.removedAttachments += 1;
+    }
+
+    nextEntries.sort((a, b) => a.filePath.localeCompare(b.filePath));
+    const nextCatalog: CatalogFile = {
+      version: 1,
+      generatedAt: new Date().toISOString(),
+      entries: nextEntries,
+    };
     writeProgressCatalog(paths.catalogPath, nextEntries);
-  }
 
-  for (const docKey of staleDocKeys) {
-    const previous = previousByDocKey.get(docKey);
-    deleteIfExists(previous?.normalizedPath);
-    deleteIfExists(previous?.manifestPath);
-    stats.removedAttachments += 1;
-  }
-
-  nextEntries.sort((a, b) => a.filePath.localeCompare(b.filePath));
-  const nextCatalog: CatalogFile = {
-    version: 1,
-    generatedAt: new Date().toISOString(),
-    entries: nextEntries,
-  };
-  writeProgressCatalog(paths.catalogPath, nextEntries);
-
-  const readyEntries = nextEntries.filter((entry) => entry.extractStatus === "ready");
-  const exactIndex = await exactFactory(config);
-  try {
-    logSyncPhase("Sync: rebuilding exact search index...");
-    await exactIndex.rebuildExactIndex(readyEntries);
-  } finally {
-    await exactIndex.close();
-  }
-
-  const qmd = await qmdFactory(config);
-  try {
-    logSyncPhase("Sync: updating search index...");
-    await qmd.update();
-    await syncQmdContexts(qmd, readyEntries);
-    if (readyEntries.length > 0) {
-      logSyncPhase("Sync: generating embeddings...");
-      await qmd.embed();
+    const readyEntries = nextEntries.filter((entry) => entry.extractStatus === "ready");
+    const exactIndex = await exactFactory(config);
+    try {
+      logger.info("Rebuilding exact search index...", { console: true });
+      await exactIndex.rebuildExactIndex(readyEntries);
+    } finally {
+      await exactIndex.close();
     }
-  } finally {
-    await qmd.close();
+
+    const qmd = await qmdFactory(config);
+    try {
+      logger.info("Updating search index...", { console: true });
+      await qmd.update();
+      await syncQmdContexts(qmd, readyEntries);
+      if (readyEntries.length > 0) {
+        logger.info("Generating embeddings...", { console: true });
+        await qmd.embed();
+      }
+    } finally {
+      await qmd.close();
+    }
+
+    const finalCounts = summarizeCatalog(nextCatalog);
+    stats.readyAttachments = finalCounts.readyAttachments;
+    stats.missingAttachments = finalCounts.missingAttachments;
+    stats.unsupportedAttachments = finalCounts.unsupportedAttachments;
+    stats.errorAttachments = finalCounts.errorAttachments;
+    logger.info(`Sync finished. Log saved to ${compactHomePath(logger.logPath)}.`, { console: true });
+    logger.finalize("ok", fileOutcomes, stats);
+
+    return { stats, config, logPath: logger.logPath };
+  } catch (error) {
+    logger.error(`Sync aborted: ${summarizeSyncError(error)}`);
+    logger.finalize("failed", []);
+    throw error;
   }
-
-  const finalCounts = summarizeCatalog(nextCatalog);
-  stats.readyAttachments = finalCounts.readyAttachments;
-  stats.missingAttachments = finalCounts.missingAttachments;
-  stats.unsupportedAttachments = finalCounts.unsupportedAttachments;
-  stats.errorAttachments = finalCounts.errorAttachments;
-
-  return { stats, config };
 }
