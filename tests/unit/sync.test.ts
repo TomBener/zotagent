@@ -1,8 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   buildHiddenJavaToolOptions,
@@ -13,6 +15,17 @@ import {
 import { readCatalogFile, writeCatalogFile } from "../../src/state.js";
 import type { CatalogFile } from "../../src/types.js";
 import { sha1 } from "../../src/utils.js";
+
+const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
+const syncModuleUrl = new URL("../../src/sync.ts", import.meta.url).href;
+
+function runInlineModule(script: string, timeout = 5_000) {
+  return spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", script], {
+    cwd: repoRoot,
+    encoding: "utf-8",
+    timeout,
+  });
+}
 
 test("buildHiddenJavaToolOptions appends dock-hiding flag without dropping existing options", () => {
   assert.equal(
@@ -103,6 +116,155 @@ test("runProcessWithTimeout keeps only the tail of oversized child output", asyn
       return true;
     },
   );
+});
+
+test("runSync relays SIGINT instead of swallowing it", () => {
+  const result = runInlineModule(
+    `
+      import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+      import { tmpdir } from "node:os";
+      import { join } from "node:path";
+      import { runSync } from ${JSON.stringify(syncModuleUrl)};
+
+      const root = mkdtempSync(join(tmpdir(), "zotlit-sync-signal-"));
+      const attachmentsRoot = join(root, "attachments");
+      const dataDir = join(root, "data");
+      mkdirSync(attachmentsRoot, { recursive: true });
+
+      const pdfPath = join(attachmentsRoot, "paper.pdf");
+      const bibliographyPath = join(root, "bibliography.json");
+      writeFileSync(pdfPath, "pdf");
+      writeFileSync(
+        bibliographyPath,
+        JSON.stringify([
+          {
+            id: "cite",
+            title: "Paper",
+            author: [{ family: "A", given: "Author" }],
+            file: pdfPath,
+            "zotero-item-key": "ITEM1",
+          },
+        ]),
+        "utf-8",
+      );
+
+      const fakeFactory = async () => ({
+        search: async () => [],
+        searchLex: async () => [],
+        update: async () => ({}),
+        embed: async () => ({}),
+        getStatus: async () => ({ documents: 0, collections: [], embeddings: { total: 0, stale: 0 } }),
+        listContexts: async () => [],
+        addContext: async () => true,
+        removeContext: async () => true,
+        close: async () => {},
+      });
+      const fakeExactFactory = async () => ({
+        rebuildExactIndex: async () => {},
+        searchExactCandidates: async () => [],
+        close: async () => {},
+      });
+      const fakeExtractBatch = async () => {
+        setInterval(() => {}, 1000);
+        return await new Promise(() => {});
+      };
+
+      setTimeout(() => {
+        process.kill(process.pid, "SIGINT");
+      }, 50);
+
+      await runSync(
+        {
+          bibliographyJsonPath: bibliographyPath,
+          attachmentsRoot,
+          dataDir,
+        },
+        fakeFactory,
+        fakeExactFactory,
+        fakeExtractBatch,
+        () => {},
+      );
+    `,
+    2_000,
+  );
+
+  assert.equal(result.error, undefined);
+  assert.equal(result.signal, "SIGINT");
+});
+
+test("runSync does not swallow uncaught exceptions", () => {
+  const result = runInlineModule(
+    `
+      import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+      import { tmpdir } from "node:os";
+      import { join } from "node:path";
+      import { runSync } from ${JSON.stringify(syncModuleUrl)};
+
+      const root = mkdtempSync(join(tmpdir(), "zotlit-sync-uncaught-"));
+      const attachmentsRoot = join(root, "attachments");
+      const dataDir = join(root, "data");
+      mkdirSync(attachmentsRoot, { recursive: true });
+
+      const pdfPath = join(attachmentsRoot, "paper.pdf");
+      const bibliographyPath = join(root, "bibliography.json");
+      writeFileSync(pdfPath, "pdf");
+      writeFileSync(
+        bibliographyPath,
+        JSON.stringify([
+          {
+            id: "cite",
+            title: "Paper",
+            author: [{ family: "A", given: "Author" }],
+            file: pdfPath,
+            "zotero-item-key": "ITEM1",
+          },
+        ]),
+        "utf-8",
+      );
+
+      const fakeFactory = async () => ({
+        search: async () => [],
+        searchLex: async () => [],
+        update: async () => ({}),
+        embed: async () => ({}),
+        getStatus: async () => ({ documents: 0, collections: [], embeddings: { total: 0, stale: 0 } }),
+        listContexts: async () => [],
+        addContext: async () => true,
+        removeContext: async () => true,
+        close: async () => {},
+      });
+      const fakeExactFactory = async () => ({
+        rebuildExactIndex: async () => {},
+        searchExactCandidates: async () => [],
+        close: async () => {},
+      });
+      const fakeExtractBatch = async () => {
+        setInterval(() => {}, 1000);
+        return await new Promise(() => {});
+      };
+
+      setTimeout(() => {
+        throw new Error("boom");
+      }, 50);
+
+      await runSync(
+        {
+          bibliographyJsonPath: bibliographyPath,
+          attachmentsRoot,
+          dataDir,
+        },
+        fakeFactory,
+        fakeExactFactory,
+        fakeExtractBatch,
+        () => {},
+      );
+    `,
+    2_000,
+  );
+
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /boom/);
 });
 
 test("runSync skips unchanged ready pdfs and refreshes qmd contexts", async () => {

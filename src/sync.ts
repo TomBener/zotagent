@@ -673,6 +673,8 @@ export async function runSync(
   const logger = new SyncLogger(paths, config, new Date());
   let finalStatusWritten = false;
   let latestProgress: SyncRunProgressSnapshot = { status: "starting", note: "sync initialized" };
+  let activeFileOutcomes: SyncFileOutcome[] = [];
+  let activeStats: SyncStats | undefined;
 
   const writeProgress = (partial: Partial<SyncRunProgressSnapshot> = {}): void => {
     latestProgress = {
@@ -695,27 +697,12 @@ export async function runSync(
   const removeLifecycleHooks = (): void => {
     if (removedLifecycleHooks) return;
     removedLifecycleHooks = true;
-    process.off("uncaughtException", onUncaughtException);
-    process.off("unhandledRejection", onUnhandledRejection);
     process.off("beforeExit", onBeforeExit);
     process.off("exit", onExit);
     for (const [signal, handler] of signalHandlers.entries()) {
       process.off(signal, handler);
     }
     signalHandlers.clear();
-  };
-
-  const onUncaughtException = (error: Error): void => {
-    logger.error(`uncaughtException: ${summarizeSyncError(error)}`);
-    logger.detail("uncaughtException", error.stack ?? error.message);
-    writeProgress({ status: "failed", note: `uncaughtException: ${summarizeSyncError(error)}` });
-  };
-
-  const onUnhandledRejection = (reason: unknown): void => {
-    const detail = reason instanceof Error ? reason.stack ?? reason.message : String(reason);
-    logger.error(`unhandledRejection: ${summarizeSyncError(reason)}`);
-    logger.detail("unhandledRejection", detail);
-    writeProgress({ status: "failed", note: `unhandledRejection: ${summarizeSyncError(reason)}` });
   };
 
   const onBeforeExit = (code: number): void => {
@@ -729,14 +716,19 @@ export async function runSync(
     logger.info(`Process exit with code ${code}.`);
   };
 
-  process.on("uncaughtException", onUncaughtException);
-  process.on("unhandledRejection", onUnhandledRejection);
   process.on("beforeExit", onBeforeExit);
   process.on("exit", onExit);
   for (const signal of signalNames) {
     const handler = () => {
       writeProgress({ status: "failed", note: `received ${signal}` });
       logger.warn(`Received ${signal}; sync process is being interrupted.`);
+      finalizeOnce("failed", activeFileOutcomes, activeStats);
+      removeLifecycleHooks();
+      try {
+        process.kill(process.pid, signal);
+      } catch {
+        process.exit(1);
+      }
     };
     signalHandlers.set(signal, handler);
     process.on(signal, handler);
@@ -760,6 +752,7 @@ export async function runSync(
     const changedAttachments: AttachmentCatalogEntry[] = [];
     const staleDocKeys = new Set(previousCatalog.entries.map((entry) => entry.docKey));
     const fileOutcomes: SyncFileOutcome[] = [];
+    activeFileOutcomes = fileOutcomes;
 
     const stats: SyncStats = {
       totalRecords: catalogData.records.length,
@@ -774,6 +767,7 @@ export async function runSync(
       skippedAttachments: 0,
       removedAttachments: 0,
     };
+    activeStats = stats;
 
     writeProgress({
       status: "running",
@@ -1130,15 +1124,15 @@ export async function runSync(
       note: "sync completed successfully",
     });
     logger.info(`Sync finished. Log saved to ${compactHomePath(logger.logPath)}.`, { console: true });
-    finalizeOnce("ok", fileOutcomes, stats);
     removeLifecycleHooks();
+    finalizeOnce("ok", fileOutcomes, stats);
 
     return { stats, config, logPath: logger.logPath };
   } catch (error) {
+    removeLifecycleHooks();
     writeProgress({ status: "failed", note: summarizeSyncError(error) });
     logger.error(`Sync aborted: ${summarizeSyncError(error)}`);
-    finalizeOnce("failed", []);
-    removeLifecycleHooks();
+    finalizeOnce("failed", activeFileOutcomes, activeStats);
     throw error;
   }
 }
