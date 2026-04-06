@@ -24,7 +24,7 @@
   "dependencies": {
     "@opendataloader/pdf": "^2.2.1",
     "@pngwasi/node-tantivy-binding": "^0.3.4",
-    "@tobilu/qmd": "^2.0.1"
+    "@tobilu/qmd": "^2.1.0"
   },
   "devDependencies": {
     "@types/node": "^25.2.3",
