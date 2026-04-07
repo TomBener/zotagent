@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -641,6 +641,134 @@ test("runSync reuses a ready index when bibliography paths come from another mac
   const nextCatalog = readCatalogFile(join(indexDir, "catalog.json"));
   assert.equal(nextCatalog.entries[0]?.filePath, pdfPath);
   assert.equal(nextCatalog.entries[0]?.docKey, docKey);
+});
+
+test("catalog storage uses home-relative paths and reads them back as local paths", () => {
+  const root = mkdtempSync(join(homedir(), ".zotlit-catalog-home-"));
+  try {
+    const dataDir = join(root, "Zotlit");
+    const indexDir = join(dataDir, "index");
+    const normalizedDir = join(dataDir, "normalized");
+    const manifestsDir = join(dataDir, "manifests");
+    mkdirSync(indexDir, { recursive: true });
+    mkdirSync(normalizedDir, { recursive: true });
+    mkdirSync(manifestsDir, { recursive: true });
+
+    const docKey = "7".repeat(40);
+    const pdfPath = join(root, "Zotero", "paper.pdf");
+    const normalizedPath = join(normalizedDir, `${docKey}.md`);
+    const manifestPath = join(manifestsDir, `${docKey}.json`);
+    mkdirSync(join(root, "Zotero"), { recursive: true });
+    writeFileSync(pdfPath, "pdf");
+    writeFileSync(normalizedPath, "Body");
+    writeFileSync(manifestPath, "{}");
+
+    const catalogPath = join(indexDir, "catalog.json");
+    const homeRelativeCatalogPath = catalogPath.replace(homedir(), "~");
+    writeCatalogFile(homeRelativeCatalogPath, {
+      version: 1,
+      generatedAt: new Date().toISOString(),
+      entries: [
+        {
+          docKey,
+          itemKey: "ITEM1",
+          title: "Paper",
+          authors: [],
+          filePath: pdfPath,
+          fileExt: "pdf",
+          exists: true,
+          supported: true,
+          extractStatus: "ready",
+          size: 1,
+          mtimeMs: 1,
+          sourceHash: "hash",
+          lastIndexedAt: new Date().toISOString(),
+          normalizedPath,
+          manifestPath,
+        },
+      ],
+    });
+
+    const raw = JSON.parse(readFileSync(catalogPath, "utf-8")) as CatalogFile;
+    assert.match(raw.entries[0]!.filePath, /^~\//u);
+    assert.match(raw.entries[0]!.normalizedPath!, /^~\//u);
+    assert.match(raw.entries[0]!.manifestPath!, /^~\//u);
+
+    const hydrated = readCatalogFile(homeRelativeCatalogPath);
+    assert.equal(hydrated.entries[0]?.filePath, pdfPath);
+    assert.equal(hydrated.entries[0]?.normalizedPath, normalizedPath);
+    assert.equal(hydrated.entries[0]?.manifestPath, manifestPath);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("readCatalogFile relocates stale Mac home paths to the current iCloud dataDir artifacts", () => {
+  const root = mkdtempSync(join(homedir(), ".zotlit-catalog-relocate-"));
+  try {
+    const dataDir = join(root, "Library", "Mobile Documents", "com~apple~CloudDocs", "Zotlit");
+    const zoteroRoot = join(root, "Library", "Mobile Documents", "com~apple~CloudDocs", "Zotero");
+    const indexDir = join(dataDir, "index");
+    const normalizedDir = join(dataDir, "normalized");
+    const manifestsDir = join(dataDir, "manifests");
+    mkdirSync(indexDir, { recursive: true });
+    mkdirSync(normalizedDir, { recursive: true });
+    mkdirSync(manifestsDir, { recursive: true });
+    mkdirSync(zoteroRoot, { recursive: true });
+
+    const docKey = "8".repeat(40);
+    const pdfPath = join(zoteroRoot, "paper.pdf");
+    const normalizedPath = join(normalizedDir, `${docKey}.md`);
+    const manifestPath = join(manifestsDir, `${docKey}.json`);
+    writeFileSync(pdfPath, "pdf");
+    writeFileSync(normalizedPath, "Body");
+    writeFileSync(manifestPath, "{}");
+
+    const staleHomePrefix = "/Users/miniagent";
+    const localHomePrefix = homedir();
+    const stalePdfPath = pdfPath.replace(localHomePrefix, staleHomePrefix);
+    const staleNormalizedPath = normalizedPath.replace(localHomePrefix, staleHomePrefix);
+    const staleManifestPath = manifestPath.replace(localHomePrefix, staleHomePrefix);
+
+    writeFileSync(
+      join(indexDir, "catalog.json"),
+      JSON.stringify(
+        {
+          version: 1,
+          generatedAt: new Date().toISOString(),
+          entries: [
+            {
+              docKey,
+              itemKey: "ITEM1",
+              title: "Paper",
+              authors: [],
+              filePath: stalePdfPath,
+              fileExt: "pdf",
+              exists: true,
+              supported: true,
+              extractStatus: "ready",
+              size: 1,
+              mtimeMs: 1,
+              sourceHash: "hash",
+              lastIndexedAt: new Date().toISOString(),
+              normalizedPath: staleNormalizedPath,
+              manifestPath: staleManifestPath,
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+
+    const hydrated = readCatalogFile(join(indexDir, "catalog.json"));
+    assert.equal(hydrated.entries[0]?.filePath, pdfPath);
+    assert.equal(hydrated.entries[0]?.normalizedPath, normalizedPath);
+    assert.equal(hydrated.entries[0]?.manifestPath, manifestPath);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("runSync keeps cached outputs when attachment disappears from the current catalog", async () => {

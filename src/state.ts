@@ -1,22 +1,85 @@
 import { readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, resolve } from "node:path";
 
 import type { CatalogCounts, CatalogEntry, CatalogFile } from "./types.js";
-import { ensureParentDir, exists } from "./utils.js";
+import { compactHomePath, ensureParentDir, exists, normalizePathForLookup } from "./utils.js";
+
+function dataDirFromCatalogPath(path: string): string {
+  return dirname(dirname(normalizePathForLookup(path)));
+}
+
+function replaceForeignHome(path: string): string {
+  const normalized = normalizePathForLookup(path);
+  const currentHome = normalizePathForLookup(homedir());
+  if (normalized.startsWith(`${currentHome}/`)) return normalized;
+
+  const replaced = normalized.replace(/^\/Users\/[^/]+/u, currentHome);
+  return replaced !== normalized && exists(replaced) ? replaced : normalized;
+}
+
+function hydrateCatalogEntry(entry: CatalogEntry, dataDir: string): CatalogEntry {
+  const normalizedPath = entry.normalizedPath
+    ? replaceForeignHome(entry.normalizedPath)
+    : resolve(dataDir, "normalized", `${entry.docKey}.md`);
+  const manifestPath = entry.manifestPath
+    ? replaceForeignHome(entry.manifestPath)
+    : resolve(dataDir, "manifests", `${entry.docKey}.json`);
+
+  const fallbackNormalizedPath = resolve(dataDir, "normalized", `${entry.docKey}.md`);
+  const fallbackManifestPath = resolve(dataDir, "manifests", `${entry.docKey}.json`);
+
+  return {
+    ...entry,
+    filePath: replaceForeignHome(entry.filePath),
+    ...(entry.normalizedPath
+      ? { normalizedPath: exists(normalizedPath) ? normalizedPath : fallbackNormalizedPath }
+      : {}),
+    ...(entry.manifestPath ? { manifestPath: exists(manifestPath) ? manifestPath : fallbackManifestPath } : {}),
+  };
+}
+
+function compactCatalogEntry(entry: CatalogEntry): CatalogEntry {
+  return {
+    ...entry,
+    filePath: compactHomePath(entry.filePath),
+    ...(entry.normalizedPath ? { normalizedPath: compactHomePath(entry.normalizedPath) } : {}),
+    ...(entry.manifestPath ? { manifestPath: compactHomePath(entry.manifestPath) } : {}),
+  };
+}
 
 export function readCatalogFile(path: string): CatalogFile {
-  if (!exists(path)) {
+  const catalogPath = normalizePathForLookup(path);
+  if (!exists(catalogPath)) {
     return {
       version: 1,
       generatedAt: "",
       entries: [],
     };
   }
-  return JSON.parse(readFileSync(path, "utf-8")) as CatalogFile;
+  const catalog = JSON.parse(readFileSync(catalogPath, "utf-8")) as CatalogFile;
+  const dataDir = dataDirFromCatalogPath(catalogPath);
+  return {
+    ...catalog,
+    entries: catalog.entries.map((entry) => hydrateCatalogEntry(entry, dataDir)),
+  };
 }
 
 export function writeCatalogFile(path: string, catalog: CatalogFile): void {
-  ensureParentDir(path);
-  writeFileSync(path, JSON.stringify(catalog, null, 2), "utf-8");
+  const catalogPath = normalizePathForLookup(path);
+  ensureParentDir(catalogPath);
+  writeFileSync(
+    catalogPath,
+    JSON.stringify(
+      {
+        ...catalog,
+        entries: catalog.entries.map(compactCatalogEntry),
+      },
+      null,
+      2,
+    ),
+    "utf-8",
+  );
 }
 
 export function summarizeCatalog(catalog: CatalogFile): CatalogCounts {

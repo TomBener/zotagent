@@ -35,7 +35,7 @@ export function compactHomePath(raw: string): string {
 }
 
 export function ensureDir(path: string): void {
-  mkdirSync(path, { recursive: true });
+  mkdirSync(resolveHomePath(path), { recursive: true });
 }
 
 export function ensureParentDir(path: string): void {
@@ -60,7 +60,7 @@ export function chunkArray<T>(items: T[], size: number): T[][] {
 }
 
 export function exists(path: string): boolean {
-  return existsSync(path);
+  return existsSync(resolveHomePath(path));
 }
 
 export function formatAuthors(authors: string[]): string {
