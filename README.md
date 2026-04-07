@@ -45,6 +45,8 @@ Notes:
 
 - `sync` uses Java during PDF extraction
 - `sync` skips PDFs that time out or fail extraction, records them as `error`, and continues the rest of the batch
+- `sync` skips unchanged extraction errors on later runs; use `--retry-errors` to force another attempt
+- `sync` extracts books, chapters, `/Book/` attachments, and large PDFs one at a time instead of batching them with other PDFs
 - `sync` writes a readable log file to `dataDir/logs/` and refreshes `dataDir/logs/sync-latest.log`
 - qmd may prepare local models on first use
 
@@ -99,12 +101,12 @@ Fallback environment variable names:
 `semanticScholarApiKey` is only needed for `zotlit s2` and `zotlit add --s2-paper-id`.
 `zoteroCollectionKey` is optional and sets the default collection for new items created by `add`.
 `zoteroLibraryType` supports both `user` and `group`.
-`sync` treats bibliography attachment paths as relocatable under `attachmentsRoot`, so a bibliography exported on another machine still matches local PDFs when the relative path under the Zotero root is the same.
+`sync` treats bibliography attachment paths as relocatable under `attachmentsRoot`, so a bibliography exported on another machine still matches local PDFs when the relative path under the Zotero root is the same. Catalog paths under the local home directory are stored as `~/...`, so an iCloud-backed `dataDir` can be shared across Macs with different usernames.
 
 ## Commands
 
 ```bash
-zotlit sync [--attachments-root <path>]
+zotlit sync [--attachments-root <path>] [--retry-errors] [--pdf-timeout-ms <n>] [--pdf-batch-size <n>]
 zotlit status
 zotlit version
 zotlit add [--doi <doi> | --s2-paper-id <id>] [--title <text>] [--author <name>] [--year <text>] [--publication <text>] [--url <url>] [--url-date <date>] [--collection-key <key>] [--item-type <type>]
@@ -157,6 +159,24 @@ Build or refresh the local index:
 
 ```bash
 zotlit sync
+```
+
+Retry unchanged extraction errors:
+
+```bash
+zotlit sync --retry-errors
+```
+
+Extract every PDF one at a time:
+
+```bash
+zotlit sync --pdf-batch-size 1
+```
+
+Give large PDFs a longer per-extraction timeout:
+
+```bash
+zotlit sync --pdf-timeout-ms 600000
 ```
 
 Search indexed PDFs:
