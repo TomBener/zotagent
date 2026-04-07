@@ -544,28 +544,42 @@ export async function runOdlConvert(
 }
 
 type ExtractedPaths = { manifestPath: string; normalizedPath: string };
+type ExtractBatchOptions = {
+  timeoutMs?: number;
+};
 type ExtractBatchFn = (
   batch: AttachmentCatalogEntry[],
   tempRoot: string,
   manifestsDir: string,
   normalizedDir: string,
+  options?: ExtractBatchOptions,
 ) => Promise<Map<string, ExtractedPaths>>;
+
+export type SyncRunOptions = {
+  retryErrors?: boolean;
+  pdfTimeoutMs?: number;
+};
 
 async function extractBatch(
   batch: AttachmentCatalogEntry[],
   tempRoot: string,
   manifestsDir: string,
   normalizedDir: string,
+  options: ExtractBatchOptions = {},
 ): Promise<Map<string, ExtractedPaths>> {
   const tempDir = mkdtempSync(join(tempRoot, "odl-"));
   const byDocKey = new Map<string, ExtractedPaths>();
 
   try {
     await withHiddenJavaDockIcon(() =>
-      runOdlConvert(batch.map((attachment) => attachment.filePath), {
-        outputDir: tempDir,
-        format: "markdown,json",
-      }),
+      runOdlConvert(
+        batch.map((attachment) => attachment.filePath),
+        {
+          outputDir: tempDir,
+          format: "markdown,json",
+        },
+        options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {},
+      ),
     );
 
     for (const attachment of batch) {
@@ -663,6 +677,7 @@ export async function runSync(
   exactFactory: ExactIndexFactory = openExactIndex,
   extractBatchFn: ExtractBatchFn = extractBatch,
   requireJavaFn: () => void = requireJava,
+  options: SyncRunOptions = {},
 ): Promise<{
   stats: SyncStats;
   config: ReturnType<typeof resolveConfig>;
@@ -819,16 +834,43 @@ export async function runSync(
       const fallbackNormalizedPath = resolve(paths.normalizedDir, `${attachment.docKey}.md`);
       const fallbackManifestPath = resolve(paths.manifestsDir, `${attachment.docKey}.json`);
       const currentMtimeMs = Math.trunc(current.mtimeMs);
+      const previousIsUnchanged =
+        previous !== undefined &&
+        previous.size === current.size &&
+        previous.mtimeMs === currentMtimeMs;
       const previousIsReadyAndUnchanged =
         previous?.extractStatus === "ready" &&
-        previous.size === current.size &&
-        previous.mtimeMs === currentMtimeMs &&
+        previousIsUnchanged &&
         hasReusableArtifacts(attachment, previous.normalizedPath, previous.manifestPath);
+      const previousIsErrorAndUnchanged =
+        previous?.extractStatus === "error" &&
+        previousIsUnchanged;
       const fallbackArtifactsReusable = hasReusableArtifacts(
         attachment,
         fallbackNormalizedPath,
         fallbackManifestPath,
       );
+
+      if (previousIsErrorAndUnchanged && !fallbackArtifactsReusable && !options.retryErrors) {
+        nextEntries.push(
+          toCatalogEntry(attachment, {
+            extractStatus: "error",
+            size: current.size,
+            mtimeMs: currentMtimeMs,
+            sourceHash: previous.sourceHash ?? null,
+            lastIndexedAt: previous.lastIndexedAt ?? null,
+            error: previous.error ?? "Previous extraction error; file unchanged.",
+          }),
+        );
+        fileOutcomes.push({
+          kind: "skipped",
+          filePath: attachment.filePath,
+          detail: "skipped unchanged previous extraction error",
+        });
+        stats.errorAttachments += 1;
+        stats.skippedAttachments += 1;
+        continue;
+      }
 
       if (!previousIsReadyAndUnchanged && !fallbackArtifactsReusable) {
         changedAttachments.push(attachment);
@@ -939,7 +981,13 @@ export async function runSync(
         console: true,
       });
       try {
-        const extracted = await extractBatchFn(batch, paths.tempDir, paths.manifestsDir, paths.normalizedDir);
+        const extracted = await extractBatchFn(
+          batch,
+          paths.tempDir,
+          paths.manifestsDir,
+          paths.normalizedDir,
+          options.pdfTimeoutMs !== undefined ? { timeoutMs: options.pdfTimeoutMs } : undefined,
+        );
         for (const attachment of batch) {
           const written = extracted.get(attachment.docKey);
           if (!written) {
@@ -979,6 +1027,7 @@ export async function runSync(
                 paths.tempDir,
                 paths.manifestsDir,
                 paths.normalizedDir,
+                options.pdfTimeoutMs !== undefined ? { timeoutMs: options.pdfTimeoutMs } : undefined,
               );
               const written = extracted.get(attachment.docKey);
               if (!written) {

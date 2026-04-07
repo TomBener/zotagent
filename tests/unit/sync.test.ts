@@ -976,6 +976,228 @@ test("runSync reuses cached outputs after an attachment temporarily disappears",
   assert.equal(resumedResult.stats.readyAttachments, 1);
 });
 
+test("runSync skips unchanged previous extraction errors by default", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotlit-sync-error-cache-"));
+  const attachmentsRoot = join(root, "attachments");
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  mkdirSync(attachmentsRoot, { recursive: true });
+  mkdirSync(indexDir, { recursive: true });
+
+  const pdfPath = join(attachmentsRoot, "book.pdf");
+  writeFileSync(pdfPath, "book");
+  const currentStat = statSync(pdfPath);
+  const docKey = sha1("book.pdf");
+  const bibliographyPath = join(root, "bibliography.json");
+  writeFileSync(
+    bibliographyPath,
+    JSON.stringify([
+      {
+        id: "book-cite",
+        title: "Large Book",
+        author: [{ family: "Book", given: "Author" }],
+        file: pdfPath,
+        "zotero-item-key": "BOOK",
+      },
+    ]),
+    "utf-8",
+  );
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [
+      {
+        docKey,
+        itemKey: "BOOK",
+        citationKey: "book-cite",
+        title: "Large Book",
+        authors: ["Book Author"],
+        filePath: pdfPath,
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "error",
+        size: currentStat.size,
+        mtimeMs: Math.trunc(currentStat.mtimeMs),
+        sourceHash: null,
+        lastIndexedAt: null,
+        error: "PDF extraction failed for book.pdf: timed out after 180000ms.",
+      },
+    ],
+  });
+
+  const fakeFactory = async () => ({
+    search: async () => [],
+    searchLex: async () => [],
+    update: async () => ({}),
+    embed: async () => ({}),
+    getStatus: async () => ({ documents: 0, collections: [], embeddings: { total: 0, stale: 0 } }),
+    listContexts: async () => [],
+    addContext: async () => true,
+    removeContext: async () => true,
+    close: async () => {},
+  });
+  const fakeExactFactory = async () => ({
+    rebuildExactIndex: async () => {},
+    searchExactCandidates: async () => [],
+    close: async () => {},
+  });
+  let extractCalls = 0;
+  let javaChecks = 0;
+
+  const result = await runSync(
+    {
+      bibliographyJsonPath: bibliographyPath,
+      attachmentsRoot,
+      dataDir,
+    },
+    fakeFactory,
+    fakeExactFactory,
+    async () => {
+      extractCalls += 1;
+      return new Map();
+    },
+    () => {
+      javaChecks += 1;
+    },
+  );
+
+  assert.equal(extractCalls, 0);
+  assert.equal(javaChecks, 0);
+  assert.equal(result.stats.errorAttachments, 1);
+  assert.equal(result.stats.skippedAttachments, 1);
+
+  const catalog = readCatalogFile(join(indexDir, "catalog.json"));
+  assert.equal(catalog.entries[0]?.extractStatus, "error");
+  assert.equal(catalog.entries[0]?.error, "PDF extraction failed for book.pdf: timed out after 180000ms.");
+
+  const logBody = readFileSync(result.logPath, "utf-8");
+  assert.match(logBody, /book\.pdf: skipped unchanged previous extraction error/);
+});
+
+test("runSync retries unchanged previous errors when requested and passes custom PDF timeout", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotlit-sync-retry-errors-"));
+  const attachmentsRoot = join(root, "attachments");
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  const normalizedDir = join(dataDir, "normalized");
+  mkdirSync(attachmentsRoot, { recursive: true });
+  mkdirSync(indexDir, { recursive: true });
+
+  const pdfPath = join(attachmentsRoot, "book.pdf");
+  writeFileSync(pdfPath, "book");
+  const currentStat = statSync(pdfPath);
+  const docKey = sha1("book.pdf");
+  const bibliographyPath = join(root, "bibliography.json");
+  writeFileSync(
+    bibliographyPath,
+    JSON.stringify([
+      {
+        id: "book-cite",
+        title: "Large Book",
+        author: [{ family: "Book", given: "Author" }],
+        file: pdfPath,
+        "zotero-item-key": "BOOK",
+      },
+    ]),
+    "utf-8",
+  );
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [
+      {
+        docKey,
+        itemKey: "BOOK",
+        citationKey: "book-cite",
+        title: "Large Book",
+        authors: ["Book Author"],
+        filePath: pdfPath,
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "error",
+        size: currentStat.size,
+        mtimeMs: Math.trunc(currentStat.mtimeMs),
+        sourceHash: null,
+        lastIndexedAt: null,
+        error: "PDF extraction failed for book.pdf: timed out after 180000ms.",
+      },
+    ],
+  });
+
+  const fakeFactory = async () => ({
+    search: async () => [],
+    searchLex: async () => [],
+    update: async () => ({}),
+    embed: async () => ({}),
+    getStatus: async () => ({ documents: 1, collections: [], embeddings: { total: 1, stale: 0 } }),
+    listContexts: async () => [],
+    addContext: async () => true,
+    removeContext: async () => true,
+    close: async () => {},
+  });
+  const fakeExactFactory = async () => ({
+    rebuildExactIndex: async () => {},
+    searchExactCandidates: async () => [],
+    close: async () => {},
+  });
+  let extractCalls = 0;
+  let seenTimeoutMs: number | undefined;
+  const fakeExtractBatch = async (
+    batch: Array<{ docKey: string; filePath: string; itemKey: string }>,
+    _tempRoot: string,
+    manifestsRoot: string,
+    normalizedRoot: string,
+    options?: { timeoutMs?: number },
+  ) => {
+    extractCalls += 1;
+    seenTimeoutMs = options?.timeoutMs;
+    const attachment = batch[0]!;
+    const normalizedPath = join(normalizedRoot, `${attachment.docKey}.md`);
+    const manifestPath = join(manifestsRoot, `${attachment.docKey}.json`);
+    mkdirSync(normalizedRoot, { recursive: true });
+    mkdirSync(manifestsRoot, { recursive: true });
+    writeFileSync(normalizedPath, "# Large Book", "utf-8");
+    writeFileSync(
+      manifestPath,
+      JSON.stringify({
+        docKey: attachment.docKey,
+        itemKey: attachment.itemKey,
+        title: "Large Book",
+        authors: ["Book Author"],
+        filePath: attachment.filePath,
+        normalizedPath,
+        blocks: [],
+      }),
+      "utf-8",
+    );
+    return new Map([[attachment.docKey, { normalizedPath, manifestPath }]]);
+  };
+
+  const result = await runSync(
+    {
+      bibliographyJsonPath: bibliographyPath,
+      attachmentsRoot,
+      dataDir,
+    },
+    fakeFactory,
+    fakeExactFactory,
+    fakeExtractBatch,
+    () => {},
+    { retryErrors: true, pdfTimeoutMs: 1_800_000 },
+  );
+
+  assert.equal(extractCalls, 1);
+  assert.equal(seenTimeoutMs, 1_800_000);
+  assert.equal(result.stats.readyAttachments, 1);
+  assert.equal(result.stats.updatedAttachments, 1);
+  assert.equal(result.stats.errorAttachments, 0);
+});
+
 test("runSync records extraction failures per attachment and continues indexing others", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotlit-sync-error-"));
   const attachmentsRoot = join(root, "attachments");

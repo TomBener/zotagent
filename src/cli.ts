@@ -20,7 +20,15 @@ interface ParsedArgs {
   flags: Record<string, FlagValue>;
 }
 
-const BOOLEAN_FLAGS = new Set(["exact", "has-pdf", "help", "no-rerank", "rerank", "version"]);
+const BOOLEAN_FLAGS = new Set([
+  "exact",
+  "has-pdf",
+  "help",
+  "no-rerank",
+  "rerank",
+  "retry-errors",
+  "version",
+]);
 const METADATA_FIELDS: MetadataField[] = ["title", "author", "year", "abstract", "journal", "publisher"];
 
 function getCliVersion(): string {
@@ -135,7 +143,7 @@ function printHelp(): void {
 Search indexed Zotero PDFs or bibliography metadata and follow PDF hits with read or expand.
 
 Usage:
-  zotlit sync [--attachments-root <path>]
+  zotlit sync [--attachments-root <path>] [--retry-errors] [--pdf-timeout-ms <n>]
   zotlit status
   zotlit version
   zotlit add [--doi <doi> | --s2-paper-id <id>] [--title <text>] [--author <name>] [--year <text>] [--publication <text>] [--url <url>] [--url-date <date>] [--collection-key <key>] [--item-type <type>]
@@ -149,6 +157,7 @@ Commands:
   sync
     Refresh the local index.
     Use --attachments-root to index only a Zotero subfolder.
+    Unchanged extraction errors are skipped by default; use --retry-errors to retry them.
 
   status
     Show attachment counts, local index paths, and qmd status.
@@ -185,6 +194,8 @@ Commands:
 
 Options:
   --attachments-root <path>   Limit sync to a Zotero subfolder.
+  --retry-errors              Retry unchanged PDFs that failed extraction earlier.
+  --pdf-timeout-ms <n>        Override the OpenDataLoader timeout for each PDF extraction call.
   --doi <doi>                 Import from DOI metadata when possible.
   --s2-paper-id <id>          Import a Semantic Scholar paper by paperId.
   --title <text>              Set title for manual add or DOI fallback.
@@ -222,6 +233,7 @@ Examples:
   zotlit status
   zotlit version
   zotlit sync --attachments-root "/path/to/zotero/subfolder"
+  zotlit sync --retry-errors --pdf-timeout-ms 1800000
 
 Config:
   Paths and other defaults are read from ~/.zotlit/config.json.
@@ -272,7 +284,19 @@ async function main(): Promise<void> {
           );
           return;
         }
-        const result = await runSync(overrides);
+        if (parsed.flags["pdf-timeout-ms"] === true) {
+          emitError("INVALID_ARGUMENT", "`--pdf-timeout-ms` requires a positive number.");
+          return;
+        }
+        const pdfTimeoutMs = getNumberFlag(parsed.flags, "pdf-timeout-ms");
+        if (pdfTimeoutMs !== undefined && (!Number.isInteger(pdfTimeoutMs) || pdfTimeoutMs <= 0)) {
+          emitError("INVALID_ARGUMENT", "`--pdf-timeout-ms` must be a positive integer.");
+          return;
+        }
+        const result = await runSync(overrides, openQmdClient, undefined, undefined, undefined, {
+          ...(getBooleanFlag(parsed.flags, "retry-errors") ? { retryErrors: true } : {}),
+          ...(pdfTimeoutMs !== undefined ? { pdfTimeoutMs } : {}),
+        });
         emitOk(
           {
             ...result.stats,
