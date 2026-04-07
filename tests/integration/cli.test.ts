@@ -29,7 +29,10 @@ test("help summarizes current commands and keeps config-only overrides out of th
 
   assert.equal(result.status, 0);
   assert.match(result.stdout, /Usage:/);
-  assert.match(result.stdout, /zotlit sync \[--attachments-root <path>\] \[--retry-errors\] \[--pdf-timeout-ms <n>\]/);
+  assert.match(
+    result.stdout,
+    /zotlit sync \[--attachments-root <path>\] \[--retry-errors\] \[--pdf-timeout-ms <n>\] \[--pdf-batch-size <n>\]/,
+  );
   assert.match(result.stdout, /zotlit version/);
   assert.match(result.stdout, /zotlit add \[--doi <doi> \| --s2-paper-id <id>\] \[--title <text>\]/);
   assert.match(result.stdout, /zotlit s2 "<text>" \[--limit <n>\]/);
@@ -43,6 +46,7 @@ test("help summarizes current commands and keeps config-only overrides out of th
   assert.match(result.stdout, /--version\s+Print the current zotlit version\./);
   assert.match(result.stdout, /--retry-errors\s+Retry unchanged PDFs that failed extraction earlier\./);
   assert.match(result.stdout, /--pdf-timeout-ms <n>\s+Override the OpenDataLoader timeout/);
+  assert.match(result.stdout, /--pdf-batch-size <n>\s+Override the maximum number of PDFs per extraction batch\./);
   assert.match(
     result.stdout,
     /--limit <n>\s+Return up to n search results\. Default: 10 for search, 20 for metadata\./,
@@ -86,6 +90,14 @@ test("sync rejects invalid pdf timeout", () => {
   assert.equal(result.status, 1);
   assert.match(result.stdout, /"code": "INVALID_ARGUMENT"/);
   assert.match(result.stdout, /`--pdf-timeout-ms` must be a positive integer\./);
+});
+
+test("sync rejects invalid pdf batch size", () => {
+  const result = runCli(["sync", "--pdf-batch-size", "0"]);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /"code": "INVALID_ARGUMENT"/);
+  assert.match(result.stdout, /`--pdf-batch-size` must be a positive integer\./);
 });
 
 test("add requires doi or title", () => {

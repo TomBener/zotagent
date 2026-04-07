@@ -1198,6 +1198,213 @@ test("runSync retries unchanged previous errors when requested and passes custom
   assert.equal(result.stats.errorAttachments, 0);
 });
 
+test("runSync extracts book attachments in single-file batches by default", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotlit-sync-book-batches-"));
+  const attachmentsRoot = join(root, "attachments");
+  const dataDir = join(root, "data");
+  const manifestsDir = join(dataDir, "manifests");
+  const normalizedDir = join(dataDir, "normalized");
+  mkdirSync(join(attachmentsRoot, "Book"), { recursive: true });
+  mkdirSync(join(attachmentsRoot, "papers"), { recursive: true });
+
+  const bookPath = join(attachmentsRoot, "Book", "book.pdf");
+  const paperOnePath = join(attachmentsRoot, "papers", "paper-one.pdf");
+  const paperTwoPath = join(attachmentsRoot, "papers", "paper-two.pdf");
+  writeFileSync(bookPath, "book");
+  writeFileSync(paperOnePath, "paper one");
+  writeFileSync(paperTwoPath, "paper two");
+
+  const bibliographyPath = join(root, "bibliography.json");
+  writeFileSync(
+    bibliographyPath,
+    JSON.stringify([
+      {
+        id: "book-cite",
+        title: "Large Book",
+        type: "book",
+        file: bookPath,
+        "zotero-item-key": "BOOK",
+      },
+      {
+        id: "paper-one-cite",
+        title: "Paper One",
+        type: "article-journal",
+        file: paperOnePath,
+        "zotero-item-key": "PAPER1",
+      },
+      {
+        id: "paper-two-cite",
+        title: "Paper Two",
+        type: "article-journal",
+        file: paperTwoPath,
+        "zotero-item-key": "PAPER2",
+      },
+    ]),
+    "utf-8",
+  );
+
+  const fakeFactory = async () => ({
+    search: async () => [],
+    searchLex: async () => [],
+    update: async () => ({}),
+    embed: async () => ({}),
+    getStatus: async () => ({ documents: 3, collections: [], embeddings: { total: 3, stale: 0 } }),
+    listContexts: async () => [],
+    addContext: async () => true,
+    removeContext: async () => true,
+    close: async () => {},
+  });
+  const fakeExactFactory = async () => ({
+    rebuildExactIndex: async () => {},
+    searchExactCandidates: async () => [],
+    close: async () => {},
+  });
+  const batches: string[][] = [];
+  const fakeExtractBatch = async (batch: Array<{ docKey: string; filePath: string; itemKey: string }>) => {
+    batches.push(batch.map((attachment) => attachment.itemKey));
+    const out = new Map<string, { manifestPath: string; normalizedPath: string }>();
+
+    for (const attachment of batch) {
+      const normalizedPath = join(normalizedDir, `${attachment.docKey}.md`);
+      const manifestPath = join(manifestsDir, `${attachment.docKey}.json`);
+      mkdirSync(normalizedDir, { recursive: true });
+      mkdirSync(manifestsDir, { recursive: true });
+      writeFileSync(normalizedPath, `# ${attachment.itemKey}`, "utf-8");
+      writeFileSync(
+        manifestPath,
+        JSON.stringify({
+          docKey: attachment.docKey,
+          itemKey: attachment.itemKey,
+          title: attachment.itemKey,
+          authors: [],
+          filePath: attachment.filePath,
+          normalizedPath,
+          blocks: [],
+        }),
+        "utf-8",
+      );
+      out.set(attachment.docKey, { normalizedPath, manifestPath });
+    }
+
+    return out;
+  };
+
+  const result = await runSync(
+    {
+      bibliographyJsonPath: bibliographyPath,
+      attachmentsRoot,
+      dataDir,
+    },
+    fakeFactory,
+    fakeExactFactory,
+    fakeExtractBatch,
+    () => {},
+  );
+
+  assert.equal(result.stats.readyAttachments, 3);
+  assert.equal(batches.some((batch) => batch.length > 1 && batch.includes("BOOK")), false);
+  assert.deepEqual(batches.find((batch) => batch.includes("BOOK")), ["BOOK"]);
+  assert.equal(batches.some((batch) => batch.includes("PAPER1") && batch.includes("PAPER2")), true);
+});
+
+test("runSync honors explicit PDF batch size", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotlit-sync-batch-size-"));
+  const attachmentsRoot = join(root, "attachments");
+  const dataDir = join(root, "data");
+  const manifestsDir = join(dataDir, "manifests");
+  const normalizedDir = join(dataDir, "normalized");
+  mkdirSync(attachmentsRoot, { recursive: true });
+
+  const onePath = join(attachmentsRoot, "one.pdf");
+  const twoPath = join(attachmentsRoot, "two.pdf");
+  writeFileSync(onePath, "one");
+  writeFileSync(twoPath, "two");
+
+  const bibliographyPath = join(root, "bibliography.json");
+  writeFileSync(
+    bibliographyPath,
+    JSON.stringify([
+      {
+        id: "one-cite",
+        title: "One",
+        type: "article-journal",
+        file: onePath,
+        "zotero-item-key": "ONE",
+      },
+      {
+        id: "two-cite",
+        title: "Two",
+        type: "article-journal",
+        file: twoPath,
+        "zotero-item-key": "TWO",
+      },
+    ]),
+    "utf-8",
+  );
+
+  const fakeFactory = async () => ({
+    search: async () => [],
+    searchLex: async () => [],
+    update: async () => ({}),
+    embed: async () => ({}),
+    getStatus: async () => ({ documents: 2, collections: [], embeddings: { total: 2, stale: 0 } }),
+    listContexts: async () => [],
+    addContext: async () => true,
+    removeContext: async () => true,
+    close: async () => {},
+  });
+  const fakeExactFactory = async () => ({
+    rebuildExactIndex: async () => {},
+    searchExactCandidates: async () => [],
+    close: async () => {},
+  });
+  const batchSizes: number[] = [];
+  const fakeExtractBatch = async (batch: Array<{ docKey: string; filePath: string; itemKey: string }>) => {
+    batchSizes.push(batch.length);
+    const out = new Map<string, { manifestPath: string; normalizedPath: string }>();
+
+    for (const attachment of batch) {
+      const normalizedPath = join(normalizedDir, `${attachment.docKey}.md`);
+      const manifestPath = join(manifestsDir, `${attachment.docKey}.json`);
+      mkdirSync(normalizedDir, { recursive: true });
+      mkdirSync(manifestsDir, { recursive: true });
+      writeFileSync(normalizedPath, `# ${attachment.itemKey}`, "utf-8");
+      writeFileSync(
+        manifestPath,
+        JSON.stringify({
+          docKey: attachment.docKey,
+          itemKey: attachment.itemKey,
+          title: attachment.itemKey,
+          authors: [],
+          filePath: attachment.filePath,
+          normalizedPath,
+          blocks: [],
+        }),
+        "utf-8",
+      );
+      out.set(attachment.docKey, { normalizedPath, manifestPath });
+    }
+
+    return out;
+  };
+
+  const result = await runSync(
+    {
+      bibliographyJsonPath: bibliographyPath,
+      attachmentsRoot,
+      dataDir,
+    },
+    fakeFactory,
+    fakeExactFactory,
+    fakeExtractBatch,
+    () => {},
+    { pdfBatchSize: 1 },
+  );
+
+  assert.equal(result.stats.readyAttachments, 2);
+  assert.deepEqual(batchSizes, [1, 1]);
+});
+
 test("runSync records extraction failures per attachment and continues indexing others", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotlit-sync-error-"));
   const attachmentsRoot = join(root, "attachments");

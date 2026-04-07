@@ -35,6 +35,8 @@ const ODL_JAR_NAME = "opendataloader-pdf-cli.jar";
 const ODL_SINGLE_PDF_TIMEOUT_MS = 180_000;
 const ODL_EXTRA_BATCH_TIMEOUT_MS = 30_000;
 const ODL_FORCE_KILL_GRACE_MS = 1_000;
+const ODL_DEFAULT_BATCH_SIZE = 8;
+const ODL_SINGLE_BATCH_SIZE_BYTES = 20 * 1024 * 1024;
 
 const require = createRequire(import.meta.url);
 const ODL_PACKAGE_ENTRY = require.resolve("@opendataloader/pdf");
@@ -485,12 +487,38 @@ function hasReusableArtifacts(
   return manifest.docKey === attachment.docKey && manifest.itemKey === attachment.itemKey;
 }
 
-function groupForOdlBatches(attachments: AttachmentCatalogEntry[], maxBatchSize = 8): AttachmentCatalogEntry[][] {
+function isLikelyBookAttachment(attachment: AttachmentCatalogEntry): boolean {
+  if (attachment.type === "book" || attachment.type === "chapter") return true;
+  return attachment.filePath
+    .split("/")
+    .some((segment) => segment.toLowerCase() === "book");
+}
+
+function shouldExtractAttachmentAlone(attachment: AttachmentCatalogEntry): boolean {
+  if (isLikelyBookAttachment(attachment)) return true;
+  const current = statSync(attachment.filePath, { throwIfNoEntry: false });
+  return Boolean(current && current.size >= ODL_SINGLE_BATCH_SIZE_BYTES);
+}
+
+function groupForOdlBatches(
+  attachments: AttachmentCatalogEntry[],
+  maxBatchSize = ODL_DEFAULT_BATCH_SIZE,
+): AttachmentCatalogEntry[][] {
   const out: AttachmentCatalogEntry[][] = [];
   let current: AttachmentCatalogEntry[] = [];
   let stems = new Set<string>();
 
   for (const attachment of attachments) {
+    if (maxBatchSize <= 1 || shouldExtractAttachmentAlone(attachment)) {
+      if (current.length > 0) {
+        out.push(current);
+        current = [];
+        stems = new Set<string>();
+      }
+      out.push([attachment]);
+      continue;
+    }
+
     const stem = stemForFile(attachment.filePath);
     if (current.length >= maxBatchSize || stems.has(stem)) {
       out.push(current);
@@ -558,6 +586,7 @@ type ExtractBatchFn = (
 export type SyncRunOptions = {
   retryErrors?: boolean;
   pdfTimeoutMs?: number;
+  pdfBatchSize?: number;
 };
 
 async function extractBatch(
@@ -957,7 +986,7 @@ export async function runSync(
       );
     }
 
-    const batches = groupForOdlBatches(changedAttachments);
+    const batches = groupForOdlBatches(changedAttachments, options.pdfBatchSize ?? ODL_DEFAULT_BATCH_SIZE);
     for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
       const batch = batches[batchIndex]!;
       writeProgress({

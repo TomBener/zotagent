@@ -143,7 +143,7 @@ function printHelp(): void {
 Search indexed Zotero PDFs or bibliography metadata and follow PDF hits with read or expand.
 
 Usage:
-  zotlit sync [--attachments-root <path>] [--retry-errors] [--pdf-timeout-ms <n>]
+  zotlit sync [--attachments-root <path>] [--retry-errors] [--pdf-timeout-ms <n>] [--pdf-batch-size <n>]
   zotlit status
   zotlit version
   zotlit add [--doi <doi> | --s2-paper-id <id>] [--title <text>] [--author <name>] [--year <text>] [--publication <text>] [--url <url>] [--url-date <date>] [--collection-key <key>] [--item-type <type>]
@@ -196,6 +196,7 @@ Options:
   --attachments-root <path>   Limit sync to a Zotero subfolder.
   --retry-errors              Retry unchanged PDFs that failed extraction earlier.
   --pdf-timeout-ms <n>        Override the OpenDataLoader timeout for each PDF extraction call.
+  --pdf-batch-size <n>        Override the maximum number of PDFs per extraction batch.
   --doi <doi>                 Import from DOI metadata when possible.
   --s2-paper-id <id>          Import a Semantic Scholar paper by paperId.
   --title <text>              Set title for manual add or DOI fallback.
@@ -234,6 +235,7 @@ Examples:
   zotlit version
   zotlit sync --attachments-root "/path/to/zotero/subfolder"
   zotlit sync --retry-errors --pdf-timeout-ms 1800000
+  zotlit sync --pdf-batch-size 1
 
 Config:
   Paths and other defaults are read from ~/.zotlit/config.json.
@@ -288,14 +290,24 @@ async function main(): Promise<void> {
           emitError("INVALID_ARGUMENT", "`--pdf-timeout-ms` requires a positive number.");
           return;
         }
+        if (parsed.flags["pdf-batch-size"] === true) {
+          emitError("INVALID_ARGUMENT", "`--pdf-batch-size` requires a positive number.");
+          return;
+        }
         const pdfTimeoutMs = getNumberFlag(parsed.flags, "pdf-timeout-ms");
         if (pdfTimeoutMs !== undefined && (!Number.isInteger(pdfTimeoutMs) || pdfTimeoutMs <= 0)) {
           emitError("INVALID_ARGUMENT", "`--pdf-timeout-ms` must be a positive integer.");
           return;
         }
+        const pdfBatchSize = getNumberFlag(parsed.flags, "pdf-batch-size");
+        if (pdfBatchSize !== undefined && (!Number.isInteger(pdfBatchSize) || pdfBatchSize <= 0)) {
+          emitError("INVALID_ARGUMENT", "`--pdf-batch-size` must be a positive integer.");
+          return;
+        }
         const result = await runSync(overrides, openQmdClient, undefined, undefined, undefined, {
           ...(getBooleanFlag(parsed.flags, "retry-errors") ? { retryErrors: true } : {}),
           ...(pdfTimeoutMs !== undefined ? { pdfTimeoutMs } : {}),
+          ...(pdfBatchSize !== undefined ? { pdfBatchSize } : {}),
         });
         emitOk(
           {
