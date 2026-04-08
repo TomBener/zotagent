@@ -24,7 +24,6 @@ const BOOLEAN_FLAGS = new Set([
   "exact",
   "has-pdf",
   "help",
-  "no-rerank",
   "rerank",
   "retry-errors",
   "version",
@@ -148,7 +147,7 @@ Usage:
   zotlit version
   zotlit add [--doi <doi> | --s2-paper-id <id>] [--title <text>] [--author <name>] [--year <text>] [--publication <text>] [--url <url>] [--url-date <date>] [--collection-key <key>] [--item-type <type>]
   zotlit s2 "<text>" [--limit <n>]
-  zotlit search "<text>" [--exact] [--limit <n>] [--min-score <n>] [--rerank|--no-rerank]
+  zotlit search "<text>" [--exact] [--limit <n>] [--min-score <n>] [--rerank]
   zotlit metadata "<text>" [--limit <n>] [--field <field>] [--has-pdf]
   zotlit read (--file <path> | --item-key <key>) [--offset-block <n>] [--limit-blocks <n>]
   zotlit expand --file <path> --block-start <n> [--block-end <n>] [--radius <n>]
@@ -176,7 +175,7 @@ Commands:
   search
     Search indexed Zotero PDFs.
     --exact uses Tantivy-based lexical search.
-    --rerank / --no-rerank override qmd's default rerank behavior.
+    qmd reranking is skipped by default; --rerank enables it for narrower queries.
     --exact cannot be combined with --rerank.
 
   metadata
@@ -210,8 +209,7 @@ Options:
   --exact                     Use Tantivy-based lexical search for search.
   --limit <n>                 Return up to n search results. Default: 10 for search, 20 for metadata.
   --min-score <n>             Drop lower-scoring search hits before mapping.
-  --rerank                    Force reranking for search.
-  --no-rerank                 Skip reranking for search.
+  --rerank                    Enable qmd reranking for search. Slower, useful for narrower queries.
   --field <field>             Limit metadata search to title, author, year, abstract, journal, or publisher.
   --has-pdf                   Keep only metadata results with a supported PDF attachment path.
   --offset-block <n>          Start reading at block n. Default: 0.
@@ -410,7 +408,7 @@ async function main(): Promise<void> {
           emitError("UNEXPECTED_ARGUMENT", '`--query` is not supported. Use: zotlit s2 "<text>"');
           return;
         }
-        const invalidFlags = ["exact", "rerank", "no-rerank", "min-score", "field", "has-pdf"].filter(
+        const invalidFlags = ["exact", "rerank", "min-score", "field", "has-pdf"].filter(
           (flag) => flag in parsed.flags,
         );
         if (invalidFlags.length > 0) {
@@ -443,11 +441,7 @@ async function main(): Promise<void> {
         }
         const limit = getNumberFlag(parsed.flags, "limit") || 10;
         const exact = getBooleanFlag(parsed.flags, "exact");
-        const explicitRerank = getBooleanFlag(parsed.flags, "rerank")
-          ? true
-          : getBooleanFlag(parsed.flags, "no-rerank")
-            ? false
-            : undefined;
+        const explicitRerank = getBooleanFlag(parsed.flags, "rerank") ? true : undefined;
         if (exact && explicitRerank === true) {
           emitError("UNEXPECTED_ARGUMENT", '`--exact` cannot be combined with `--rerank`.');
           return;
@@ -457,6 +451,7 @@ async function main(): Promise<void> {
           ...(exact ? { exact: true } : {}),
           ...(explicitRerank !== undefined ? { rerank: explicitRerank } : {}),
           ...(minScore !== undefined ? { minScore } : {}),
+          ...(!exact ? { progress: (message: string) => process.stderr.write(`${message}\n`) } : {}),
         });
         emitOk(data);
         return;
@@ -467,7 +462,7 @@ async function main(): Promise<void> {
           emitError("UNEXPECTED_ARGUMENT", '`--query` is not supported. Use: zotlit metadata "<text>"');
           return;
         }
-        const invalidFlags = ["exact", "rerank", "no-rerank", "min-score"].filter(
+        const invalidFlags = ["exact", "rerank", "min-score"].filter(
           (flag) => flag in parsed.flags,
         );
         if (invalidFlags.length > 0) {

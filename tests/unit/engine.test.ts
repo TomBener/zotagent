@@ -111,31 +111,36 @@ test("searchLiterature prefers substantive hits over reference-only hits", async
   };
   writeCatalogFile(join(indexDir, "catalog.json"), catalog);
 
+  let capturedSearchOptions: { query?: string; limit?: number; rerank?: boolean; minScore?: number } | undefined;
+
   const fakeFactory = async () => ({
-    search: async () => [
-      {
-        file: `qmd://library/${referenceDocKey}.md`,
-        displayPath: `${referenceDocKey}.md`,
-        title: "Reference",
-        body: "Smith, J. (2022). Ageing in China.",
-        bestChunk: "Smith, J. (2022). Ageing in China.",
-        bestChunkPos: 0,
-        score: 0.98,
-        context: null,
-        docid: "222222",
-      },
-      {
-        file: `qmd://library/${substantiveDocKey}.md`,
-        displayPath: `${substantiveDocKey}.md`,
-        title: "Substantive",
-        body: "Population ageing in China is reshaping care arrangements.",
-        bestChunk: "Population ageing in China is reshaping care arrangements.",
-        bestChunkPos: 0,
-        score: 0.81,
-        context: null,
-        docid: "111111",
-      },
-    ],
+    search: async (options: { query?: string; limit?: number; rerank?: boolean; minScore?: number }) => {
+      capturedSearchOptions = options;
+      return [
+        {
+          file: `qmd://library/${referenceDocKey}.md`,
+          displayPath: `${referenceDocKey}.md`,
+          title: "Reference",
+          body: "Smith, J. (2022). Ageing in China.",
+          bestChunk: "Smith, J. (2022). Ageing in China.",
+          bestChunkPos: 0,
+          score: 0.98,
+          context: null,
+          docid: "222222",
+        },
+        {
+          file: `qmd://library/${substantiveDocKey}.md`,
+          displayPath: `${substantiveDocKey}.md`,
+          title: "Substantive",
+          body: "Population ageing in China is reshaping care arrangements.",
+          bestChunk: "Population ageing in China is reshaping care arrangements.",
+          bestChunkPos: 0,
+          score: 0.81,
+          context: null,
+          docid: "111111",
+        },
+      ];
+    },
     searchLex: async () => [],
     update: async () => ({}),
     embed: async () => ({}),
@@ -160,6 +165,7 @@ test("searchLiterature prefers substantive hits over reference-only hits", async
   assert.equal(result.results.length, 1);
   assert.equal(result.results[0]!.itemKey, "ITEM1");
   assert.equal("warnings" in result, false);
+  assert.equal(capturedSearchOptions?.rerank, false);
 });
 
 test("searchLiterature forwards explicit rerank override", async () => {
@@ -308,10 +314,10 @@ test("searchLiterature forwards explicit rerank override", async () => {
       dataDir,
     },
     fakeFactory,
-    { rerank: false },
+    { rerank: true },
   );
 
-  assert.equal(capturedSearchOptions?.rerank, false);
+  assert.equal(capturedSearchOptions?.rerank, true);
   assert.equal(result.results.length, 2);
   assert.equal(result.results[0]!.itemKey, "ITEM1");
 });

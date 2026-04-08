@@ -24,7 +24,7 @@ It focuses on a small set of tasks:
 - `sync`
   Build or refresh the local PDF index.
 - `search`
-  Search indexed PDFs with default search or `--exact` lexical search.
+  Search indexed PDFs with default no-rerank hybrid search, optional `--rerank`, or `--exact` lexical search.
 - `metadata`
   Search bibliography metadata without running `sync`.
 - `read` / `expand`
@@ -111,7 +111,7 @@ zotlit status
 zotlit version
 zotlit add [--doi <doi> | --s2-paper-id <id>] [--title <text>] [--author <name>] [--year <text>] [--publication <text>] [--url <url>] [--url-date <date>] [--collection-key <key>] [--item-type <type>]
 zotlit s2 "<text>" [--limit <n>]
-zotlit search "<text>" [--exact] [--limit <n>] [--min-score <n>] [--rerank | --no-rerank]
+zotlit search "<text>" [--exact] [--limit <n>] [--min-score <n>] [--rerank]
 zotlit metadata "<text>" [--limit <n>] [--field <field>] [--has-pdf]
 zotlit read (--file <path> | --item-key <key>) [--offset-block <n>] [--limit-blocks <n>]
 zotlit expand --file <path> --block-start <n> [--block-end <n>] [--radius <n>]
@@ -184,7 +184,10 @@ Search indexed PDFs:
 ```bash
 zotlit search "state-owned enterprise governance"
 zotlit search "dangwei shuji" --exact
+zotlit search "how do party secretaries shape SOE governance" --rerank
 ```
+
+Default `search` skips qmd reranking for lower latency. Use `--rerank` only for narrower queries when ranking quality matters more than speed.
 
 Search metadata:
 

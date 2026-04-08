@@ -12,6 +12,7 @@ interface SearchBehaviorOptions {
   rerank?: boolean;
   minScore?: number;
   exact?: boolean;
+  progress?: (message: string) => void;
 }
 
 function readManifest(path: string): AttachmentManifest {
@@ -176,11 +177,17 @@ export async function searchLiterature(
     : await (async () => {
         const qmd = await qmdFactory(config);
         try {
+          const rerank = behavior.rerank ?? false;
+          behavior.progress?.(
+            rerank
+              ? "qmd search: running hybrid query with rerank"
+              : "qmd search: running hybrid query without rerank",
+          );
           return (
             await qmd.search({
               query,
               limit,
-              ...(behavior.rerank !== undefined ? { rerank: behavior.rerank } : {}),
+              rerank,
               ...(behavior.minScore !== undefined ? { minScore: behavior.minScore } : {}),
             })
           )

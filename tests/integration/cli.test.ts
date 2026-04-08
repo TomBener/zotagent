@@ -51,6 +51,8 @@ test("help summarizes current commands and keeps config-only overrides out of th
     result.stdout,
     /--limit <n>\s+Return up to n search results\. Default: 10 for search, 20 for metadata\./,
   );
+  assert.match(result.stdout, /qmd reranking is skipped by default/);
+  assert.match(result.stdout, /--rerank\s+Enable qmd reranking/);
   assert.match(result.stdout, /--field <field>\s+Limit metadata search/);
   assert.match(result.stdout, /--has-pdf\s+Keep only metadata results/);
   assert.match(result.stdout, /expand currently requires --file\./);

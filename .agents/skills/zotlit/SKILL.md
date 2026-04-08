@@ -12,12 +12,17 @@ description: Use this skill whenever the user wants to use zotlit to add Zotero 
 For most agent tasks, use this path:
 
 1. If the user wants to add a source to Zotero, use `zotlit add`
-2. If the user wants to search indexed PDFs, use `zotlit search`
-3. If the user wants a literal phrase, add `--exact`
-4. Take the returned `file` and `blockStart`, then run `zotlit expand`
-5. Use `zotlit read` when the user wants a larger block slice from one indexed attachment
+2. For literature search, start with `zotlit metadata` to find high-confidence title, abstract, author, journal, publisher, and year matches
+3. Then use `zotlit search --exact` for key phrases in indexed PDF full text
+4. Use default `zotlit search` last for fast semantic full-text recall and missed wording
+5. Take the returned `file` and `blockStart`, then run `zotlit expand`
+6. Use `zotlit read` when the user wants a larger block slice from one indexed attachment
 
 `sync` is secondary. Use it only when the user explicitly wants to rebuild or refresh the index.
+
+Query planning is the agent's job. If the user asks for Chinese and English literature, generate English search terms yourself; zotlit does not translate queries or decide bilingual coverage.
+
+Do not run multiple default qmd `zotlit search` commands in parallel. It is OK to parallelize `metadata`, `search --exact`, and `expand`.
 
 ## Commands
 
@@ -44,7 +49,6 @@ zotlit search "state-owned enterprise governance"
 zotlit search "dangwei shuji" --exact
 zotlit search "industrial policy" --limit 5 --min-score 0.4
 zotlit search "how do party secretaries shape SOE governance" --rerank
-zotlit search "industrial policy" --no-rerank
 ```
 
 Rules:
@@ -52,7 +56,10 @@ Rules:
 - search text is positional
 - do not use `--query`
 - `--exact` is for exact phrase search
+- use default `search` after metadata and `--exact`, not as the first pass
 - `--exact` cannot be combined with `--rerank`
+- default `search` skips qmd rerank; add `--rerank` only for a narrower query when ranking quality matters more than latency
+- avoid parallel default qmd searches; run them one at a time
 
 ### Expand
 
@@ -94,6 +101,8 @@ zotlit metadata "Development and Change" --field journal
 ```
 
 Use `metadata` when the user wants bibliography matches and does not need full-text PDF search.
+
+For literature search, use `metadata` first. It searches Zotero-exported bibliography fields, including abstract, and is usually cheaper than full-text search.
 
 ### Sync
 
