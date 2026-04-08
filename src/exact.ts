@@ -27,31 +27,70 @@ export function findExactPhraseBlockRange(
   const normalizedQuery = normalizeExactText(query);
   if (normalizedQuery.length === 0) return null;
 
-  const normalizedBlocks = manifest.blocks.map((block) => ({
-    blockIndex: block.blockIndex,
-    text: normalizeExactText(block.text),
-  }));
+  const normalizedBlocks: Array<{
+    blockIndex: number;
+    start: number;
+    end: number;
+  }> = [];
+  let normalizedBody = "";
+
+  for (const block of manifest.blocks) {
+    const text = normalizeExactText(block.text);
+    if (text.length === 0) continue;
+
+    if (normalizedBody.length > 0) {
+      normalizedBody += " ";
+    }
+    const start = normalizedBody.length;
+    normalizedBody += text;
+    normalizedBlocks.push({
+      blockIndex: block.blockIndex,
+      start,
+      end: normalizedBody.length,
+    });
+  }
+
+  if (normalizedBody.length === 0) return null;
+
+  const findBlockForOffset = (offset: number): { blockIndex: number; ordinal: number } | null => {
+    let low = 0;
+    let high = normalizedBlocks.length - 1;
+
+    while (low <= high) {
+      const mid = Math.floor((low + high) / 2);
+      const block = normalizedBlocks[mid]!;
+      if (offset < block.start) {
+        high = mid - 1;
+      } else if (offset >= block.end) {
+        low = mid + 1;
+      } else {
+        return { blockIndex: block.blockIndex, ordinal: mid };
+      }
+    }
+
+    return null;
+  };
 
   let best: { blockStart: number; blockEnd: number; span: number } | null = null;
+  let matchStart = normalizedBody.indexOf(normalizedQuery);
 
-  for (let start = 0; start < normalizedBlocks.length; start++) {
-    let combined = "";
-    for (let end = start; end < normalizedBlocks.length; end++) {
-      const text = normalizedBlocks[end]!.text;
-      combined = combined.length > 0 ? `${combined} ${text}`.trim() : text;
-      if (combined.length === 0) continue;
-      if (!combined.includes(normalizedQuery)) continue;
+  while (matchStart !== -1) {
+    const matchEnd = matchStart + normalizedQuery.length - 1;
+    const blockStart = findBlockForOffset(matchStart);
+    const blockEnd = findBlockForOffset(matchEnd);
 
+    if (blockStart !== null && blockEnd !== null) {
       const candidate = {
-        blockStart: normalizedBlocks[start]!.blockIndex,
-        blockEnd: normalizedBlocks[end]!.blockIndex,
-        span: end - start,
+        blockStart: blockStart.blockIndex,
+        blockEnd: blockEnd.blockIndex,
+        span: blockEnd.ordinal - blockStart.ordinal,
       };
       if (!best || candidate.span < best.span) {
         best = candidate;
       }
-      break;
     }
+
+    matchStart = normalizedBody.indexOf(normalizedQuery, matchStart + 1);
   }
 
   return best ? { blockStart: best.blockStart, blockEnd: best.blockEnd } : null;
