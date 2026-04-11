@@ -23,6 +23,10 @@ function resolveReadyEntry(
   fileOrItem: { file?: string; itemKey?: string },
   entries: CatalogEntry[],
 ): CatalogEntry {
+  if (fileOrItem.file && fileOrItem.itemKey) {
+    throw new Error("Provide exactly one of --file <path> or --item-key <key>, not both.");
+  }
+
   if (fileOrItem.file) {
     const normalized = normalizePathForLookup(fileOrItem.file);
     const matched = entries.find((entry) => normalizePathForLookup(entry.filePath) === normalized);
@@ -267,7 +271,7 @@ export function readDocument(
 }
 
 export function expandDocument(
-  input: { file: string; blockStart: number; blockEnd: number; radius: number },
+  input: { file?: string; itemKey?: string; blockStart: number; blockEnd: number; radius: number },
   overrides: ConfigOverrides = {},
 ): {
   itemKey: string;
@@ -293,7 +297,7 @@ export function expandDocument(
 } {
   const config = resolveConfig(overrides);
   const catalog = readCatalogFile(getDataPaths(config.dataDir).catalogPath);
-  const entry = resolveReadyEntry({ file: input.file }, getReadyEntries(catalog));
+  const entry = resolveReadyEntry({ file: input.file, itemKey: input.itemKey }, getReadyEntries(catalog));
   if (!entry.manifestPath || !exists(entry.manifestPath)) {
     throw new Error(`Indexed manifest not found for file: ${entry.filePath}`);
   }

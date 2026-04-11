@@ -1,6 +1,6 @@
 {
   "name": "zotlit",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "description": "Zotero literature search CLI for AI agents",
   "type": "module",
   "bin": {

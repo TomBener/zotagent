@@ -119,6 +119,41 @@ function getBooleanFlag(flags: Record<string, FlagValue>, key: string): boolean 
   return flags[key] === true;
 }
 
+interface NumericFlagOptions {
+  requirement: string;
+  constraint: string;
+  integer?: boolean;
+  min?: number;
+}
+
+function parseNumericFlag(
+  flags: Record<string, FlagValue>,
+  key: string,
+  options: NumericFlagOptions,
+): { value?: number; error?: string } {
+  if (!(key in flags)) return {};
+  if (flags[key] === true) {
+    return { error: `\`--${key}\` requires ${options.requirement}.` };
+  }
+
+  const raw = getStringFlag(flags, key);
+  if (!raw) {
+    return { error: `\`--${key}\` requires ${options.requirement}.` };
+  }
+
+  const value = Number(raw);
+  if (!Number.isFinite(value)) {
+    return { error: `\`--${key}\` must be ${options.constraint}.` };
+  }
+  if (options.integer && !Number.isInteger(value)) {
+    return { error: `\`--${key}\` must be ${options.constraint}.` };
+  }
+  if (options.min !== undefined && value < options.min) {
+    return { error: `\`--${key}\` must be ${options.constraint}.` };
+  }
+  return { value };
+}
+
 function overridesFromFlags(flags: Record<string, FlagValue>): ConfigOverrides {
   return {
     bibliographyJsonPath: getStringFlag(flags, "bibliography", "bibliography-json"),
@@ -150,7 +185,7 @@ Usage:
   zotlit search "<text>" [--exact] [--limit <n>] [--min-score <n>] [--rerank]
   zotlit metadata "<text>" [--limit <n>] [--field <field>] [--has-pdf]
   zotlit read (--file <path> | --item-key <key>) [--offset-block <n>] [--limit-blocks <n>]
-  zotlit expand --file <path> --block-start <n> [--block-end <n>] [--radius <n>]
+  zotlit expand (--file <path> | --item-key <key>) --block-start <n> [--block-end <n>] [--radius <n>]
 
 Commands:
   sync
@@ -189,7 +224,7 @@ Commands:
 
   expand
     Expand around a search hit or block range from a local manifest.
-    expand currently requires --file.
+    Use either --file or --item-key.
 
 Options:
   --attachments-root <path>   Limit sync to a Zotero subfolder.
@@ -206,6 +241,7 @@ Options:
   --url-date <date>           Set the access date for the URL.
   --collection-key <key>      Add the new item to a Zotero collection by collection key.
   --item-type <type>          Override the Zotero item type. Default: journalArticle or webpage.
+  --item-key <key>            Resolve an indexed attachment by Zotero item key for read or expand.
   --exact                     Use Tantivy-based lexical search for search.
   --limit <n>                 Return up to n search results. Default: 10 for search, 20 for metadata.
   --min-score <n>             Drop lower-scoring search hits before mapping.
@@ -227,7 +263,7 @@ Examples:
   zotlit search "dangwei shuji" --exact
   zotlit search "state-owned enterprise governance" --limit 5 --min-score 0.4
   zotlit metadata "American Journal of Political Science" --field journal
-  zotlit expand --file "~/Library/.../paper.pdf" --block-start 10 --radius 2
+  zotlit expand --item-key KG326EEI --block-start 10 --radius 2
   zotlit read --item-key KG326EEI
   zotlit status
   zotlit version
@@ -256,6 +292,22 @@ function compactPathMap(paths: ReturnType<typeof getDataPaths>): ReturnType<type
     qmdDbPath: compactHomePath(paths.qmdDbPath),
     catalogPath: compactHomePath(paths.catalogPath),
   };
+}
+
+function emitDocumentLookupError(prefix: "READ" | "EXPAND", error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error);
+  try {
+    const parsedError = JSON.parse(message) as { message?: string; files?: string[] };
+    emitError(
+      `${prefix}_CONFLICT`,
+      parsedError.message || message,
+      parsedError.files ? { files: parsedError.files } : undefined,
+    );
+    return;
+  } catch {
+    emitError(`${prefix}_FAILED`, message);
+    return;
+  }
 }
 
 async function main(): Promise<void> {
@@ -423,7 +475,17 @@ async function main(): Promise<void> {
           emitError("MISSING_ARGUMENT", 'Missing Semantic Scholar search text. Use: zotlit s2 "<text>"');
           return;
         }
-        const limit = getNumberFlag(parsed.flags, "limit") || 10;
+        const limitInput = parseNumericFlag(parsed.flags, "limit", {
+          requirement: "a positive integer",
+          constraint: "a positive integer",
+          integer: true,
+          min: 1,
+        });
+        if (limitInput.error) {
+          emitError("INVALID_ARGUMENT", limitInput.error);
+          return;
+        }
+        const limit = limitInput.value ?? 10;
         const data = await searchSemanticScholar(query, limit, overrides);
         emitOk(data, { elapsedMs: Date.now() - startedAt });
         return;
@@ -439,21 +501,39 @@ async function main(): Promise<void> {
           emitError("MISSING_ARGUMENT", 'Missing search text. Use: zotlit search "<text>"');
           return;
         }
-        const limit = getNumberFlag(parsed.flags, "limit") || 10;
         const exact = getBooleanFlag(parsed.flags, "exact");
         const explicitRerank = getBooleanFlag(parsed.flags, "rerank") ? true : undefined;
         if (exact && explicitRerank === true) {
           emitError("UNEXPECTED_ARGUMENT", '`--exact` cannot be combined with `--rerank`.');
           return;
         }
-        const minScore = getNumberFlag(parsed.flags, "min-score");
+        const limitInput = parseNumericFlag(parsed.flags, "limit", {
+          requirement: "a positive integer",
+          constraint: "a positive integer",
+          integer: true,
+          min: 1,
+        });
+        if (limitInput.error) {
+          emitError("INVALID_ARGUMENT", limitInput.error);
+          return;
+        }
+        const minScoreInput = parseNumericFlag(parsed.flags, "min-score", {
+          requirement: "a number",
+          constraint: "a finite number",
+        });
+        if (minScoreInput.error) {
+          emitError("INVALID_ARGUMENT", minScoreInput.error);
+          return;
+        }
+        const limit = limitInput.value ?? 10;
+        const minScore = minScoreInput.value;
         const data = await searchLiterature(query, limit, overrides, openQmdClient, {
           ...(exact ? { exact: true } : {}),
           ...(explicitRerank !== undefined ? { rerank: explicitRerank } : {}),
           ...(minScore !== undefined ? { minScore } : {}),
           ...(!exact ? { progress: (message: string) => process.stderr.write(`${message}\n`) } : {}),
         });
-        emitOk(data);
+        emitOk(data, { elapsedMs: Date.now() - startedAt });
         return;
       }
 
@@ -497,7 +577,17 @@ async function main(): Promise<void> {
           );
           return;
         }
-        const limit = getNumberFlag(parsed.flags, "limit") || 20;
+        const limitInput = parseNumericFlag(parsed.flags, "limit", {
+          requirement: "a positive integer",
+          constraint: "a positive integer",
+          integer: true,
+          min: 1,
+        });
+        if (limitInput.error) {
+          emitError("INVALID_ARGUMENT", limitInput.error);
+          return;
+        }
+        const limit = limitInput.value ?? 20;
         const data = await searchMetadata(query, limit, overrides, {
           ...(requestedFields.length > 0 ? { fields: requestedFields as MetadataField[] } : {}),
           ...(getBooleanFlag(parsed.flags, "has-pdf") ? { hasPdf: true } : {}),
@@ -509,8 +599,32 @@ async function main(): Promise<void> {
       case "read": {
         const file = getStringFlag(parsed.flags, "file");
         const itemKey = getStringFlag(parsed.flags, "item-key");
+        if (file && itemKey) {
+          emitError("UNEXPECTED_ARGUMENT", "Provide exactly one of --file <path> or --item-key <key>, not both.");
+          return;
+        }
         if (!file && !itemKey) {
           emitError("MISSING_ARGUMENT", "Provide either --file <path> or --item-key <key>.");
+          return;
+        }
+        const offsetBlockInput = parseNumericFlag(parsed.flags, "offset-block", {
+          requirement: "a non-negative integer",
+          constraint: "a non-negative integer",
+          integer: true,
+          min: 0,
+        });
+        if (offsetBlockInput.error) {
+          emitError("INVALID_ARGUMENT", offsetBlockInput.error);
+          return;
+        }
+        const limitBlocksInput = parseNumericFlag(parsed.flags, "limit-blocks", {
+          requirement: "a positive integer",
+          constraint: "a positive integer",
+          integer: true,
+          min: 1,
+        });
+        if (limitBlocksInput.error) {
+          emitError("INVALID_ARGUMENT", limitBlocksInput.error);
           return;
         }
         try {
@@ -518,52 +632,86 @@ async function main(): Promise<void> {
             {
               file,
               itemKey,
-              offsetBlock: getNumberFlag(parsed.flags, "offset-block") || 0,
-              limitBlocks: getNumberFlag(parsed.flags, "limit-blocks") || 20,
+              offsetBlock: offsetBlockInput.value ?? 0,
+              limitBlocks: limitBlocksInput.value ?? 20,
             },
             overrides,
           );
           emitOk(data, { elapsedMs: Date.now() - startedAt });
           return;
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          try {
-            const parsedError = JSON.parse(message) as { message?: string; files?: string[] };
-            emitError(
-              "READ_CONFLICT",
-              parsedError.message || message,
-              parsedError.files ? { files: parsedError.files } : undefined,
-            );
-            return;
-          } catch {
-            emitError("READ_FAILED", message);
-            return;
-          }
+          emitDocumentLookupError("READ", error);
+          return;
         }
       }
 
       case "expand": {
         const file = getStringFlag(parsed.flags, "file");
-        const blockStart = getNumberFlag(parsed.flags, "block-start");
-        const blockEnd = getNumberFlag(parsed.flags, "block-end") ?? blockStart;
-        if (!file || blockStart === undefined) {
+        const itemKey = getStringFlag(parsed.flags, "item-key");
+        if (file && itemKey) {
+          emitError("UNEXPECTED_ARGUMENT", "Provide exactly one of --file <path> or --item-key <key>, not both.");
+          return;
+        }
+        const blockStartInput = parseNumericFlag(parsed.flags, "block-start", {
+          requirement: "a non-negative integer",
+          constraint: "a non-negative integer",
+          integer: true,
+          min: 0,
+        });
+        if (blockStartInput.error) {
+          emitError("INVALID_ARGUMENT", blockStartInput.error);
+          return;
+        }
+        const blockEndInput = parseNumericFlag(parsed.flags, "block-end", {
+          requirement: "a non-negative integer",
+          constraint: "a non-negative integer",
+          integer: true,
+          min: 0,
+        });
+        if (blockEndInput.error) {
+          emitError("INVALID_ARGUMENT", blockEndInput.error);
+          return;
+        }
+        const radiusInput = parseNumericFlag(parsed.flags, "radius", {
+          requirement: "a non-negative integer",
+          constraint: "a non-negative integer",
+          integer: true,
+          min: 0,
+        });
+        if (radiusInput.error) {
+          emitError("INVALID_ARGUMENT", radiusInput.error);
+          return;
+        }
+        if ((!file && !itemKey) || blockStartInput.value === undefined) {
           emitError(
             "MISSING_ARGUMENT",
-            "Provide --file <path> and --block-start <n> for expand.",
+            "Provide either --file <path> or --item-key <key>, and --block-start <n> for expand.",
           );
           return;
         }
-        const data = expandDocument(
-          {
-            file,
-            blockStart,
-            blockEnd: blockEnd!,
-            radius: getNumberFlag(parsed.flags, "radius") || 2,
-          },
-          overrides,
-        );
-        emitOk(data, { elapsedMs: Date.now() - startedAt });
-        return;
+        const blockStartValue = blockStartInput.value;
+        const blockEndValue = blockEndInput.value ?? blockStartValue;
+        if (blockEndValue < blockStartValue) {
+          emitError("INVALID_ARGUMENT", "`--block-end` must be greater than or equal to `--block-start`.");
+          return;
+        }
+        try {
+          const data = expandDocument(
+            {
+              ...(file ? { file } : {}),
+              ...(itemKey ? { itemKey } : {}),
+              blockStart: blockStartValue,
+              blockEnd: blockEndValue,
+              radius: radiusInput.value ?? 2,
+            },
+            overrides,
+          );
+          emitOk(data, { elapsedMs: Date.now() - startedAt });
+          return;
+        } catch (error) {
+          emitDocumentLookupError("EXPAND", error);
+          return;
+        }
       }
 
       default:

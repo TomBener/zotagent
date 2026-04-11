@@ -3,7 +3,11 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+
+import { openExactIndex } from "../../src/tantivy.js";
+import { writeCatalogFile } from "../../src/state.js";
+import type { AppConfig, AttachmentManifest, CatalogEntry, CatalogFile } from "../../src/types.js";
 
 const repoRoot = new URL("../..", import.meta.url);
 const cliPath = new URL("../../src/cli.ts", import.meta.url).pathname;
@@ -22,6 +26,119 @@ function runCli(args: string[]): { status: number | null; stdout: string; stderr
     stdout: result.stdout,
     stderr: result.stderr,
   };
+}
+
+function writeManifest(path: string, manifest: AttachmentManifest): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(manifest, null, 2), "utf-8");
+}
+
+function createConfig(bibliographyJsonPath: string, attachmentsRoot: string, dataDir: string): AppConfig {
+  return {
+    bibliographyJsonPath,
+    attachmentsRoot,
+    dataDir,
+    warnings: [],
+  };
+}
+
+function readyEntry(
+  dataDir: string,
+  docKey: string,
+  itemKey: string,
+  title: string,
+  filePath: string,
+  manifestPath: string,
+): CatalogEntry {
+  return {
+    docKey,
+    itemKey,
+    title,
+    authors: ["A"],
+    filePath,
+    fileExt: "pdf",
+    exists: true,
+    supported: true,
+    extractStatus: "ready",
+    size: 1,
+    mtimeMs: 1,
+    sourceHash: `${docKey}-hash`,
+    lastIndexedAt: new Date().toISOString(),
+    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+    manifestPath,
+  };
+}
+
+async function createIndexedFixture(): Promise<{
+  root: string;
+  bibliographyPath: string;
+  attachmentsRoot: string;
+  dataDir: string;
+  filePath: string;
+}> {
+  const root = mkdtempSync(join(tmpdir(), "zotlit-cli-indexed-"));
+  const attachmentsRoot = join(root, "attachments");
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  const bibliographyPath = join(root, "bibliography.json");
+  const docKey = "9".repeat(40);
+  const filePath = join(attachmentsRoot, "paper.pdf");
+  const manifestPath = join(manifestsDir, `${docKey}.json`);
+
+  mkdirSync(attachmentsRoot, { recursive: true });
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+  writeFileSync(bibliographyPath, "[]", "utf-8");
+
+  writeManifest(manifestPath, {
+    docKey,
+    itemKey: "ITEM9",
+    title: "Exact match",
+    authors: ["A"],
+    filePath,
+    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+    blocks: [
+      {
+        blockIndex: 0,
+        blockType: "paragraph",
+        sectionPath: ["Body"],
+        text: "The top leader is the company party secretary, dangwei shuji.",
+        charStart: 0,
+        charEnd: 63,
+        lineStart: 1,
+        lineEnd: 1,
+        isReferenceLike: false,
+      },
+      {
+        blockIndex: 1,
+        blockType: "paragraph",
+        sectionPath: ["Body"],
+        text: "Party organization shapes firm governance.",
+        charStart: 65,
+        charEnd: 106,
+        lineStart: 3,
+        lineEnd: 3,
+        isReferenceLike: false,
+      },
+    ],
+  });
+
+  const catalog: CatalogFile = {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [readyEntry(dataDir, docKey, "ITEM9", "Exact match", filePath, manifestPath)],
+  };
+  writeCatalogFile(join(indexDir, "catalog.json"), catalog);
+
+  const exactIndex = await openExactIndex(createConfig(bibliographyPath, attachmentsRoot, dataDir));
+  try {
+    await exactIndex.rebuildExactIndex(catalog.entries);
+  } finally {
+    await exactIndex.close();
+  }
+
+  return { root, bibliographyPath, attachmentsRoot, dataDir, filePath };
 }
 
 test("help summarizes current commands and keeps config-only overrides out of the main listing", () => {
@@ -55,7 +172,9 @@ test("help summarizes current commands and keeps config-only overrides out of th
   assert.match(result.stdout, /--rerank\s+Enable qmd reranking/);
   assert.match(result.stdout, /--field <field>\s+Limit metadata search/);
   assert.match(result.stdout, /--has-pdf\s+Keep only metadata results/);
-  assert.match(result.stdout, /expand currently requires --file\./);
+  assert.match(result.stdout, /zotlit expand \(\[?--file <path> \| --item-key <key>\)?/);
+  assert.match(result.stdout, /Use either --file or --item-key\./);
+  assert.match(result.stdout, /--item-key <key>\s+Resolve an indexed attachment by Zotero item key/);
   assert.match(result.stdout, /zoteroLibraryType supports both user and group\./);
   assert.match(result.stdout, /zoteroCollectionKey sets the default collection/);
   assert.match(result.stdout, /Paths and other defaults are read from \~\/\.zotlit\/config\.json\./);
@@ -168,6 +287,72 @@ test("s2 rejects metadata and search-only flags", () => {
   assert.match(result.stdout, /s2 only supports --limit/);
 });
 
+test("s2 rejects invalid limit values", () => {
+  const result = runCli(["s2", "aging in China", "--limit", "0"]);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /"code": "INVALID_ARGUMENT"/);
+  assert.match(result.stdout, /`--limit` must be a positive integer\./);
+});
+
+test("search rejects invalid limit and min-score values", () => {
+  const invalidLimit = runCli(["search", "dangwei shuji", "--limit", "0"]);
+
+  assert.equal(invalidLimit.status, 1);
+  assert.match(invalidLimit.stdout, /"code": "INVALID_ARGUMENT"/);
+  assert.match(invalidLimit.stdout, /`--limit` must be a positive integer\./);
+
+  const invalidScore = runCli(["search", "dangwei shuji", "--min-score", "nope"]);
+
+  assert.equal(invalidScore.status, 1);
+  assert.match(invalidScore.stdout, /"code": "INVALID_ARGUMENT"/);
+  assert.match(invalidScore.stdout, /`--min-score` must be a finite number\./);
+});
+
+test("metadata rejects invalid limit values", () => {
+  const result = runCli(["metadata", "aging in China", "--limit"]);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /"code": "INVALID_ARGUMENT"/);
+  assert.match(result.stdout, /`--limit` requires a positive integer\./);
+});
+
+test("read rejects conflicting selectors and invalid numeric values", () => {
+  const conflict = runCli(["read", "--file", "/tmp/paper.pdf", "--item-key", "ITEM1"]);
+
+  assert.equal(conflict.status, 1);
+  assert.match(conflict.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
+  assert.match(conflict.stdout, /Provide exactly one of --file <path> or --item-key <key>, not both\./);
+
+  const invalidOffset = runCli(["read", "--item-key", "ITEM1", "--offset-block", "-1"]);
+
+  assert.equal(invalidOffset.status, 1);
+  assert.match(invalidOffset.stdout, /"code": "INVALID_ARGUMENT"/);
+  assert.match(invalidOffset.stdout, /`--offset-block` must be a non-negative integer\./);
+});
+
+test("expand rejects conflicting selectors and invalid numeric values", () => {
+  const conflict = runCli([
+    "expand",
+    "--file",
+    "/tmp/paper.pdf",
+    "--item-key",
+    "ITEM1",
+    "--block-start",
+    "1",
+  ]);
+
+  assert.equal(conflict.status, 1);
+  assert.match(conflict.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
+  assert.match(conflict.stdout, /Provide exactly one of --file <path> or --item-key <key>, not both\./);
+
+  const invalidRange = runCli(["expand", "--item-key", "ITEM1", "--block-start", "2", "--block-end", "1"]);
+
+  assert.equal(invalidRange.status, 1);
+  assert.match(invalidRange.stdout, /"code": "INVALID_ARGUMENT"/);
+  assert.match(invalidRange.stdout, /`--block-end` must be greater than or equal to `--block-start`\./);
+});
+
 test("metadata accumulates repeated field filters", () => {
   const root = mkdtempSync(join(tmpdir(), "zotlit-cli-metadata-"));
   const attachmentsRoot = join(root, "attachments");
@@ -222,4 +407,70 @@ test("metadata accumulates repeated field filters", () => {
     parsed.data.results.map((row) => row.itemKey),
     ["ITEM1", "ITEM2"],
   );
+});
+
+test("search exact returns elapsedMs in meta", async () => {
+  const fixture = await createIndexedFixture();
+
+  const result = runCli([
+    "search",
+    "dangwei shuji",
+    "--exact",
+    "--bibliography",
+    fixture.bibliographyPath,
+    "--attachments-root",
+    fixture.attachmentsRoot,
+    "--data-dir",
+    fixture.dataDir,
+  ]);
+
+  assert.equal(result.status, 0);
+  const parsed = JSON.parse(result.stdout) as {
+    ok: boolean;
+    data: {
+      results: Array<{ itemKey: string }>;
+    };
+    meta?: { elapsedMs?: number };
+  };
+  assert.equal(parsed.ok, true);
+  assert.deepEqual(parsed.data.results.map((row) => row.itemKey), ["ITEM9"]);
+  assert.equal(typeof parsed.meta?.elapsedMs, "number");
+});
+
+test("expand resolves a unique attachment by itemKey", async () => {
+  const fixture = await createIndexedFixture();
+
+  const result = runCli([
+    "expand",
+    "--item-key",
+    "ITEM9",
+    "--block-start",
+    "1",
+    "--radius",
+    "1",
+    "--bibliography",
+    fixture.bibliographyPath,
+    "--attachments-root",
+    fixture.attachmentsRoot,
+    "--data-dir",
+    fixture.dataDir,
+  ]);
+
+  assert.equal(result.status, 0);
+  const parsed = JSON.parse(result.stdout) as {
+    ok: boolean;
+    data: {
+      itemKey: string;
+      file: string;
+      contextStart: number;
+      contextEnd: number;
+      passage: string;
+    };
+  };
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.data.itemKey, "ITEM9");
+  assert.equal(parsed.data.file, fixture.filePath);
+  assert.equal(parsed.data.contextStart, 0);
+  assert.equal(parsed.data.contextEnd, 1);
+  assert.match(parsed.data.passage, /Party organization shapes firm governance\./);
 });

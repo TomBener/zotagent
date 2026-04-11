@@ -58,7 +58,7 @@ From source:
 npm install
 npm run check
 npm run build
-node dist/cli.js help
+npm install -g .
 ```
 
 ## Config
@@ -114,7 +114,7 @@ zotlit s2 "<text>" [--limit <n>]
 zotlit search "<text>" [--exact] [--limit <n>] [--min-score <n>] [--rerank]
 zotlit metadata "<text>" [--limit <n>] [--field <field>] [--has-pdf]
 zotlit read (--file <path> | --item-key <key>) [--offset-block <n>] [--limit-blocks <n>]
-zotlit expand --file <path> --block-start <n> [--block-end <n>] [--radius <n>]
+zotlit expand (--file <path> | --item-key <key>) --block-start <n> [--block-end <n>] [--radius <n>]
 ```
 
 ## Common Usage
@@ -189,6 +189,14 @@ zotlit search "how do party secretaries shape SOE governance" --rerank
 
 Default `search` skips qmd reranking for lower latency. Use `--rerank` only for narrower queries when ranking quality matters more than speed.
 
+Follow a search hit with `read` or `expand`:
+
+```bash
+zotlit search "dangwei shuji" --exact
+zotlit read --item-key KG326EEI
+zotlit expand --item-key KG326EEI --block-start 10 --radius 2
+```
+
 Search metadata:
 
 ```bash
@@ -199,6 +207,7 @@ Read and expand:
 
 ```bash
 zotlit read --item-key KG326EEI
+zotlit expand --item-key KG326EEI --block-start 10 --radius 2
 zotlit expand --file "~/Library/.../paper.pdf" --block-start 10 --radius 2
 ```
 
@@ -209,6 +218,8 @@ zotlit expand --file "~/Library/.../paper.pdf" --block-start 10 --radius 2
 - `add` writes to the library root by default. Set `zoteroCollectionKey` in config or pass `--collection-key <key>` to place new items in a collection.
 - New items created by `add` receive the tag `Added by AI Agent`.
 - Creating an item in Zotero does not make it instantly searchable in local PDF search. `metadata` depends on your exported bibliography JSON, and PDF search depends on `sync`.
+- `search`, `read`, and `expand` only work on the local index. Run `zotlit sync` first when PDFs or manifests are stale.
+- Missing Zotero or Semantic Scholar credentials fail fast with explicit config errors instead of partial results.
 - `journalArticle` items keep `publicationTitle` but do not write `publisher`.
 
 ## License

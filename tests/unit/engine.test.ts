@@ -582,3 +582,109 @@ test("readDocument reports multi-attachment conflict and expandDocument returns 
   assert.equal(expanded.blocks.length, 3);
   assert.equal(expanded.passage, "Paragraph one.");
 });
+
+test("expandDocument resolves a unique attachment by itemKey", () => {
+  const root = mkdtempSync(join(tmpdir(), "zotlit-expand-item-key-"));
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docKey = "5".repeat(40);
+  const manifestPath = join(manifestsDir, `${docKey}.json`);
+
+  writeManifest(manifestPath, {
+    docKey,
+    itemKey: "ITEM5",
+    title: "Doc Five",
+    authors: ["A"],
+    filePath: "/tmp/doc-five.pdf",
+    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+    blocks: [
+      {
+        blockIndex: 0,
+        blockType: "paragraph",
+        sectionPath: ["Body"],
+        text: "First block.",
+        charStart: 0,
+        charEnd: 12,
+        lineStart: 1,
+        lineEnd: 1,
+        isReferenceLike: false,
+      },
+      {
+        blockIndex: 1,
+        blockType: "paragraph",
+        sectionPath: ["Body"],
+        text: "Second block.",
+        charStart: 14,
+        charEnd: 27,
+        lineStart: 3,
+        lineEnd: 3,
+        isReferenceLike: false,
+      },
+    ],
+  });
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [
+      {
+        docKey,
+        itemKey: "ITEM5",
+        title: "Doc Five",
+        authors: ["A"],
+        filePath: "/tmp/doc-five.pdf",
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: 1,
+        mtimeMs: 1,
+        sourceHash: "hash5",
+        lastIndexedAt: new Date().toISOString(),
+        normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+        manifestPath,
+      },
+    ],
+  });
+
+  const expanded = expandDocument(
+    {
+      itemKey: "ITEM5",
+      blockStart: 1,
+      blockEnd: 1,
+      radius: 1,
+    },
+    {
+      bibliographyJsonPath: join(root, "bibliography.json"),
+      attachmentsRoot: root,
+      dataDir,
+    },
+  );
+
+  assert.equal(expanded.itemKey, "ITEM5");
+  assert.equal(expanded.file, "/tmp/doc-five.pdf");
+  assert.equal(expanded.contextStart, 0);
+  assert.equal(expanded.contextEnd, 1);
+  assert.equal(expanded.passage, "Second block.");
+});
+
+test("expandDocument rejects passing both file and itemKey", () => {
+  assert.throws(
+    () =>
+      expandDocument(
+        {
+          file: "/tmp/doc.pdf",
+          itemKey: "ITEM1",
+          blockStart: 0,
+          blockEnd: 0,
+          radius: 0,
+        },
+        {},
+      ),
+    /Provide exactly one of --file <path> or --item-key <key>, not both\./,
+  );
+});
