@@ -13,7 +13,7 @@ It focuses on a small set of tasks:
 - index local Zotero PDFs
 - search indexed PDFs
 - search bibliography metadata
-- read or expand local passages by `itemKey` or file
+- read or expand local passages by `itemKey`, `citationKey`, or file
 
 ## Features
 
@@ -113,8 +113,8 @@ zotlit add [--doi <doi> | --s2-paper-id <id>] [--title <text>] [--author <name>]
 zotlit s2 "<text>" [--limit <n>]
 zotlit search "<text>" [--exact] [--limit <n>] [--min-score <n>] [--rerank]
 zotlit metadata "<text>" [--limit <n>] [--field <field>] [--has-pdf]
-zotlit read (--file <path> | --item-key <key>) [--offset-block <n>] [--limit-blocks <n>]
-zotlit expand (--file <path> | --item-key <key>) --block-start <n> [--block-end <n>] [--radius <n>]
+zotlit read (--file <path> | --item-key <key> | --citation-key <key>) [--offset-block <n>] [--limit-blocks <n>]
+zotlit expand (--file <path> | --item-key <key> | --citation-key <key>) --block-start <n> [--block-end <n>] [--radius <n>]
 ```
 
 ## Common Usage
@@ -194,6 +194,7 @@ Follow a search hit with `read` or `expand`:
 ```bash
 zotlit search "dangwei shuji" --exact
 zotlit read --item-key KG326EEI
+zotlit read --citation-key lee2024aging
 zotlit expand --item-key KG326EEI --block-start 10 --radius 2
 ```
 
@@ -207,6 +208,7 @@ Read and expand:
 
 ```bash
 zotlit read --item-key KG326EEI
+zotlit read --citation-key lee2024aging
 zotlit expand --item-key KG326EEI --block-start 10 --radius 2
 zotlit expand --file "~/Library/.../paper.pdf" --block-start 10 --radius 2
 ```

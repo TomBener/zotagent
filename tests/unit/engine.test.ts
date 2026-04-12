@@ -455,6 +455,7 @@ test("readDocument reports multi-attachment conflict and expandDocument returns 
   writeManifest(manifestOnePath, {
     docKey: docOne,
     itemKey: "ITEM1",
+    citationKey: "smith2024one",
     title: "Doc One",
     authors: ["A"],
     filePath: "/tmp/doc-one.pdf",
@@ -498,6 +499,7 @@ test("readDocument reports multi-attachment conflict and expandDocument returns 
   writeManifest(manifestTwoPath, {
     docKey: docTwo,
     itemKey: "ITEM1",
+    citationKey: "smith2024two",
     title: "Doc Two",
     authors: ["A"],
     filePath: "/tmp/doc-two.pdf",
@@ -512,6 +514,7 @@ test("readDocument reports multi-attachment conflict and expandDocument returns 
       {
         docKey: docOne,
         itemKey: "ITEM1",
+        citationKey: "smith2024one",
         title: "Doc One",
         authors: ["A"],
         filePath: "/tmp/doc-one.pdf",
@@ -529,6 +532,7 @@ test("readDocument reports multi-attachment conflict and expandDocument returns 
       {
         docKey: docTwo,
         itemKey: "ITEM1",
+        citationKey: "smith2024two",
         title: "Doc Two",
         authors: ["A"],
         filePath: "/tmp/doc-two.pdf",
@@ -597,6 +601,7 @@ test("expandDocument resolves a unique attachment by itemKey", () => {
   writeManifest(manifestPath, {
     docKey,
     itemKey: "ITEM5",
+    citationKey: "lee2024aging",
     title: "Doc Five",
     authors: ["A"],
     filePath: "/tmp/doc-five.pdf",
@@ -634,6 +639,7 @@ test("expandDocument resolves a unique attachment by itemKey", () => {
       {
         docKey,
         itemKey: "ITEM5",
+        citationKey: "lee2024aging",
         title: "Doc Five",
         authors: ["A"],
         filePath: "/tmp/doc-five.pdf",
@@ -672,19 +678,109 @@ test("expandDocument resolves a unique attachment by itemKey", () => {
   assert.equal(expanded.passage, "Second block.");
 });
 
-test("expandDocument rejects passing both file and itemKey", () => {
+test("readDocument resolves a unique attachment by citationKey", () => {
+  const root = mkdtempSync(join(tmpdir(), "zotlit-read-citation-key-"));
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docKey = "6".repeat(40);
+  const manifestPath = join(manifestsDir, `${docKey}.json`);
+
+  writeManifest(manifestPath, {
+    docKey,
+    itemKey: "ITEM6",
+    citationKey: "wang2024soe",
+    title: "Doc Six",
+    authors: ["B"],
+    filePath: "/tmp/doc-six.pdf",
+    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+    blocks: [
+      {
+        blockIndex: 0,
+        blockType: "paragraph",
+        sectionPath: ["Body"],
+        text: "First block.",
+        charStart: 0,
+        charEnd: 12,
+        lineStart: 1,
+        lineEnd: 1,
+        isReferenceLike: false,
+      },
+      {
+        blockIndex: 1,
+        blockType: "paragraph",
+        sectionPath: ["Body"],
+        text: "Second block.",
+        charStart: 14,
+        charEnd: 27,
+        lineStart: 3,
+        lineEnd: 3,
+        isReferenceLike: false,
+      },
+    ],
+  });
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [
+      {
+        docKey,
+        itemKey: "ITEM6",
+        citationKey: "wang2024soe",
+        title: "Doc Six",
+        authors: ["B"],
+        filePath: "/tmp/doc-six.pdf",
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: 1,
+        mtimeMs: 1,
+        sourceHash: "hash6",
+        lastIndexedAt: new Date().toISOString(),
+        normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+        manifestPath,
+      },
+    ],
+  });
+
+  const read = readDocument(
+    {
+      citationKey: "wang2024soe",
+      offsetBlock: 1,
+      limitBlocks: 1,
+    },
+    {
+      bibliographyJsonPath: join(root, "bibliography.json"),
+      attachmentsRoot: root,
+      dataDir,
+    },
+  );
+
+  assert.equal(read.itemKey, "ITEM6");
+  assert.equal(read.citationKey, "wang2024soe");
+  assert.equal(read.file, "/tmp/doc-six.pdf");
+  assert.equal(read.blocks.length, 1);
+  assert.equal(read.blocks[0]!.text, "Second block.");
+});
+
+test("expandDocument rejects passing both file and citationKey", () => {
   assert.throws(
     () =>
       expandDocument(
         {
           file: "/tmp/doc.pdf",
-          itemKey: "ITEM1",
+          citationKey: "smith2024doc",
           blockStart: 0,
           blockEnd: 0,
           radius: 0,
         },
         {},
       ),
-    /Provide exactly one of --file <path> or --item-key <key>, not both\./,
+    /Provide exactly one of --file <path>, --item-key <key>, or --citation-key <key>\./,
   );
 });

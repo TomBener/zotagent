@@ -20,11 +20,19 @@ function readManifest(path: string): AttachmentManifest {
 }
 
 function resolveReadyEntry(
-  fileOrItem: { file?: string; itemKey?: string },
+  fileOrItem: { file?: string; itemKey?: string; citationKey?: string },
   entries: CatalogEntry[],
 ): CatalogEntry {
-  if (fileOrItem.file && fileOrItem.itemKey) {
-    throw new Error("Provide exactly one of --file <path> or --item-key <key>, not both.");
+  const selectors = [
+    fileOrItem.file ? "--file <path>" : null,
+    fileOrItem.itemKey ? "--item-key <key>" : null,
+    fileOrItem.citationKey ? "--citation-key <key>" : null,
+  ].filter((value): value is string => value !== null);
+
+  if (selectors.length > 1) {
+    throw new Error(
+      "Provide exactly one of --file <path>, --item-key <key>, or --citation-key <key>.",
+    );
   }
 
   if (fileOrItem.file) {
@@ -52,7 +60,23 @@ function resolveReadyEntry(
     return matched[0]!;
   }
 
-  throw new Error("Provide either --file or --item-key.");
+  if (fileOrItem.citationKey) {
+    const matched = entries.filter((entry) => entry.citationKey === fileOrItem.citationKey);
+    if (matched.length === 0) {
+      throw new Error(`No indexed attachment found for citationKey: ${fileOrItem.citationKey}`);
+    }
+    if (matched.length > 1) {
+      throw new Error(
+        JSON.stringify({
+          message: `Multiple indexed attachments found for citationKey: ${fileOrItem.citationKey}`,
+          files: matched.map((entry) => compactHomePath(entry.filePath)),
+        }),
+      );
+    }
+    return matched[0]!;
+  }
+
+  throw new Error("Provide one of --file <path>, --item-key <key>, or --citation-key <key>.");
 }
 
 export function mapChunkToBlockRange(
@@ -222,7 +246,7 @@ export async function searchLiterature(
 }
 
 export function readDocument(
-  input: { file?: string; itemKey?: string; offsetBlock: number; limitBlocks: number },
+  input: { file?: string; itemKey?: string; citationKey?: string; offsetBlock: number; limitBlocks: number },
   overrides: ConfigOverrides = {},
 ): {
   itemKey: string;
@@ -271,7 +295,7 @@ export function readDocument(
 }
 
 export function expandDocument(
-  input: { file?: string; itemKey?: string; blockStart: number; blockEnd: number; radius: number },
+  input: { file?: string; itemKey?: string; citationKey?: string; blockStart: number; blockEnd: number; radius: number },
   overrides: ConfigOverrides = {},
 ): {
   itemKey: string;
@@ -297,7 +321,10 @@ export function expandDocument(
 } {
   const config = resolveConfig(overrides);
   const catalog = readCatalogFile(getDataPaths(config.dataDir).catalogPath);
-  const entry = resolveReadyEntry({ file: input.file, itemKey: input.itemKey }, getReadyEntries(catalog));
+  const entry = resolveReadyEntry(
+    { file: input.file, itemKey: input.itemKey, citationKey: input.citationKey },
+    getReadyEntries(catalog),
+  );
   if (!entry.manifestPath || !exists(entry.manifestPath)) {
     throw new Error(`Indexed manifest not found for file: ${entry.filePath}`);
   }

@@ -46,6 +46,7 @@ function readyEntry(
   dataDir: string,
   docKey: string,
   itemKey: string,
+  citationKey: string,
   title: string,
   filePath: string,
   manifestPath: string,
@@ -53,6 +54,7 @@ function readyEntry(
   return {
     docKey,
     itemKey,
+    citationKey,
     title,
     authors: ["A"],
     filePath,
@@ -75,6 +77,7 @@ async function createIndexedFixture(): Promise<{
   attachmentsRoot: string;
   dataDir: string;
   filePath: string;
+  citationKey: string;
 }> {
   const root = mkdtempSync(join(tmpdir(), "zotlit-cli-indexed-"));
   const attachmentsRoot = join(root, "attachments");
@@ -85,6 +88,7 @@ async function createIndexedFixture(): Promise<{
   const docKey = "9".repeat(40);
   const filePath = join(attachmentsRoot, "paper.pdf");
   const manifestPath = join(manifestsDir, `${docKey}.json`);
+  const citationKey = "lee2024party";
 
   mkdirSync(attachmentsRoot, { recursive: true });
   mkdirSync(indexDir, { recursive: true });
@@ -94,6 +98,7 @@ async function createIndexedFixture(): Promise<{
   writeManifest(manifestPath, {
     docKey,
     itemKey: "ITEM9",
+    citationKey,
     title: "Exact match",
     authors: ["A"],
     filePath,
@@ -127,7 +132,7 @@ async function createIndexedFixture(): Promise<{
   const catalog: CatalogFile = {
     version: 1,
     generatedAt: new Date().toISOString(),
-    entries: [readyEntry(dataDir, docKey, "ITEM9", "Exact match", filePath, manifestPath)],
+    entries: [readyEntry(dataDir, docKey, "ITEM9", citationKey, "Exact match", filePath, manifestPath)],
   };
   writeCatalogFile(join(indexDir, "catalog.json"), catalog);
 
@@ -138,7 +143,7 @@ async function createIndexedFixture(): Promise<{
     await exactIndex.close();
   }
 
-  return { root, bibliographyPath, attachmentsRoot, dataDir, filePath };
+  return { root, bibliographyPath, attachmentsRoot, dataDir, filePath, citationKey };
 }
 
 test("help summarizes current commands and keeps config-only overrides out of the main listing", () => {
@@ -172,9 +177,10 @@ test("help summarizes current commands and keeps config-only overrides out of th
   assert.match(result.stdout, /--rerank\s+Enable qmd reranking/);
   assert.match(result.stdout, /--field <field>\s+Limit metadata search/);
   assert.match(result.stdout, /--has-pdf\s+Keep only metadata results/);
-  assert.match(result.stdout, /zotlit expand \(\[?--file <path> \| --item-key <key>\)?/);
-  assert.match(result.stdout, /Use either --file or --item-key\./);
+  assert.match(result.stdout, /zotlit expand \(\[?--file <path> \| --item-key <key> \| --citation-key <key>\)?/);
+  assert.match(result.stdout, /Use one of --file, --item-key, or --citation-key\./);
   assert.match(result.stdout, /--item-key <key>\s+Resolve an indexed attachment by Zotero item key/);
+  assert.match(result.stdout, /--citation-key <key>\s+Resolve an indexed attachment by citation key/);
   assert.match(result.stdout, /zoteroLibraryType supports both user and group\./);
   assert.match(result.stdout, /zoteroCollectionKey sets the default collection/);
   assert.match(result.stdout, /Paths and other defaults are read from \~\/\.zotlit\/config\.json\./);
@@ -322,7 +328,7 @@ test("read rejects conflicting selectors and invalid numeric values", () => {
 
   assert.equal(conflict.status, 1);
   assert.match(conflict.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
-  assert.match(conflict.stdout, /Provide exactly one of --file <path> or --item-key <key>, not both\./);
+  assert.match(conflict.stdout, /Provide exactly one of --file <path>, --item-key <key>, or --citation-key <key>\./);
 
   const invalidOffset = runCli(["read", "--item-key", "ITEM1", "--offset-block", "-1"]);
 
@@ -344,7 +350,7 @@ test("expand rejects conflicting selectors and invalid numeric values", () => {
 
   assert.equal(conflict.status, 1);
   assert.match(conflict.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
-  assert.match(conflict.stdout, /Provide exactly one of --file <path> or --item-key <key>, not both\./);
+  assert.match(conflict.stdout, /Provide exactly one of --file <path>, --item-key <key>, or --citation-key <key>\./);
 
   const invalidRange = runCli(["expand", "--item-key", "ITEM1", "--block-start", "2", "--block-end", "1"]);
 
@@ -473,4 +479,77 @@ test("expand resolves a unique attachment by itemKey", async () => {
   assert.equal(parsed.data.contextStart, 0);
   assert.equal(parsed.data.contextEnd, 1);
   assert.match(parsed.data.passage, /Party organization shapes firm governance\./);
+});
+
+test("read resolves a unique attachment by citationKey", async () => {
+  const fixture = await createIndexedFixture();
+
+  const result = runCli([
+    "read",
+    "--citation-key",
+    fixture.citationKey,
+    "--limit-blocks",
+    "1",
+    "--bibliography",
+    fixture.bibliographyPath,
+    "--attachments-root",
+    fixture.attachmentsRoot,
+    "--data-dir",
+    fixture.dataDir,
+  ]);
+
+  assert.equal(result.status, 0);
+  const parsed = JSON.parse(result.stdout) as {
+    ok: boolean;
+    data: {
+      itemKey: string;
+      citationKey?: string;
+      file: string;
+      blocks: Array<{ text: string }>;
+    };
+  };
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.data.itemKey, "ITEM9");
+  assert.equal(parsed.data.citationKey, fixture.citationKey);
+  assert.equal(parsed.data.file, fixture.filePath);
+  assert.equal(parsed.data.blocks.length, 1);
+  assert.match(parsed.data.blocks[0]!.text, /company party secretary/);
+});
+
+test("expand resolves a unique attachment by citationKey", async () => {
+  const fixture = await createIndexedFixture();
+
+  const result = runCli([
+    "expand",
+    "--citation-key",
+    fixture.citationKey,
+    "--block-start",
+    "1",
+    "--radius",
+    "1",
+    "--bibliography",
+    fixture.bibliographyPath,
+    "--attachments-root",
+    fixture.attachmentsRoot,
+    "--data-dir",
+    fixture.dataDir,
+  ]);
+
+  assert.equal(result.status, 0);
+  const parsed = JSON.parse(result.stdout) as {
+    ok: boolean;
+    data: {
+      itemKey: string;
+      citationKey?: string;
+      file: string;
+      contextStart: number;
+      contextEnd: number;
+    };
+  };
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.data.itemKey, "ITEM9");
+  assert.equal(parsed.data.citationKey, fixture.citationKey);
+  assert.equal(parsed.data.file, fixture.filePath);
+  assert.equal(parsed.data.contextStart, 0);
+  assert.equal(parsed.data.contextEnd, 1);
 });

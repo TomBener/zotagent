@@ -184,8 +184,8 @@ Usage:
   zotlit s2 "<text>" [--limit <n>]
   zotlit search "<text>" [--exact] [--limit <n>] [--min-score <n>] [--rerank]
   zotlit metadata "<text>" [--limit <n>] [--field <field>] [--has-pdf]
-  zotlit read (--file <path> | --item-key <key>) [--offset-block <n>] [--limit-blocks <n>]
-  zotlit expand (--file <path> | --item-key <key>) --block-start <n> [--block-end <n>] [--radius <n>]
+  zotlit read (--file <path> | --item-key <key> | --citation-key <key>) [--offset-block <n>] [--limit-blocks <n>]
+  zotlit expand (--file <path> | --item-key <key> | --citation-key <key>) --block-start <n> [--block-end <n>] [--radius <n>]
 
 Commands:
   sync
@@ -220,11 +220,11 @@ Commands:
 
   read
     Read blocks directly from a local manifest.
-    Use either --file or --item-key.
+    Use one of --file, --item-key, or --citation-key.
 
   expand
     Expand around a search hit or block range from a local manifest.
-    Use either --file or --item-key.
+    Use one of --file, --item-key, or --citation-key.
 
 Options:
   --attachments-root <path>   Limit sync to a Zotero subfolder.
@@ -242,6 +242,7 @@ Options:
   --collection-key <key>      Add the new item to a Zotero collection by collection key.
   --item-type <type>          Override the Zotero item type. Default: journalArticle or webpage.
   --item-key <key>            Resolve an indexed attachment by Zotero item key for read or expand.
+  --citation-key <key>        Resolve an indexed attachment by citation key for read or expand.
   --exact                     Use Tantivy-based lexical search for search.
   --limit <n>                 Return up to n search results. Default: 10 for search, 20 for metadata.
   --min-score <n>             Drop lower-scoring search hits before mapping.
@@ -263,8 +264,9 @@ Examples:
   zotlit search "dangwei shuji" --exact
   zotlit search "state-owned enterprise governance" --limit 5 --min-score 0.4
   zotlit metadata "American Journal of Political Science" --field journal
-  zotlit expand --item-key KG326EEI --block-start 10 --radius 2
   zotlit read --item-key KG326EEI
+  zotlit read --citation-key lee2024aging
+  zotlit expand --item-key KG326EEI --block-start 10 --radius 2
   zotlit status
   zotlit version
   zotlit sync --attachments-root "/path/to/zotero/subfolder"
@@ -599,12 +601,17 @@ async function main(): Promise<void> {
       case "read": {
         const file = getStringFlag(parsed.flags, "file");
         const itemKey = getStringFlag(parsed.flags, "item-key");
-        if (file && itemKey) {
-          emitError("UNEXPECTED_ARGUMENT", "Provide exactly one of --file <path> or --item-key <key>, not both.");
+        const citationKey = getStringFlag(parsed.flags, "citation-key");
+        const selectorCount = Number(Boolean(file)) + Number(Boolean(itemKey)) + Number(Boolean(citationKey));
+        if (selectorCount > 1) {
+          emitError(
+            "UNEXPECTED_ARGUMENT",
+            "Provide exactly one of --file <path>, --item-key <key>, or --citation-key <key>.",
+          );
           return;
         }
-        if (!file && !itemKey) {
-          emitError("MISSING_ARGUMENT", "Provide either --file <path> or --item-key <key>.");
+        if (selectorCount === 0) {
+          emitError("MISSING_ARGUMENT", "Provide one of --file <path>, --item-key <key>, or --citation-key <key>.");
           return;
         }
         const offsetBlockInput = parseNumericFlag(parsed.flags, "offset-block", {
@@ -632,6 +639,7 @@ async function main(): Promise<void> {
             {
               file,
               itemKey,
+              citationKey,
               offsetBlock: offsetBlockInput.value ?? 0,
               limitBlocks: limitBlocksInput.value ?? 20,
             },
@@ -648,8 +656,13 @@ async function main(): Promise<void> {
       case "expand": {
         const file = getStringFlag(parsed.flags, "file");
         const itemKey = getStringFlag(parsed.flags, "item-key");
-        if (file && itemKey) {
-          emitError("UNEXPECTED_ARGUMENT", "Provide exactly one of --file <path> or --item-key <key>, not both.");
+        const citationKey = getStringFlag(parsed.flags, "citation-key");
+        const selectorCount = Number(Boolean(file)) + Number(Boolean(itemKey)) + Number(Boolean(citationKey));
+        if (selectorCount > 1) {
+          emitError(
+            "UNEXPECTED_ARGUMENT",
+            "Provide exactly one of --file <path>, --item-key <key>, or --citation-key <key>.",
+          );
           return;
         }
         const blockStartInput = parseNumericFlag(parsed.flags, "block-start", {
@@ -682,10 +695,10 @@ async function main(): Promise<void> {
           emitError("INVALID_ARGUMENT", radiusInput.error);
           return;
         }
-        if ((!file && !itemKey) || blockStartInput.value === undefined) {
+        if (selectorCount === 0 || blockStartInput.value === undefined) {
           emitError(
             "MISSING_ARGUMENT",
-            "Provide either --file <path> or --item-key <key>, and --block-start <n> for expand.",
+            "Provide one of --file <path>, --item-key <key>, or --citation-key <key>, and --block-start <n> for expand.",
           );
           return;
         }
@@ -700,6 +713,7 @@ async function main(): Promise<void> {
             {
               ...(file ? { file } : {}),
               ...(itemKey ? { itemKey } : {}),
+              ...(citationKey ? { citationKey } : {}),
               blockStart: blockStartValue,
               blockEnd: blockEndValue,
               radius: radiusInput.value ?? 2,
