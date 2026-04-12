@@ -13,7 +13,7 @@ It focuses on a small set of tasks:
 - index local Zotero PDFs
 - search indexed PDFs
 - search bibliography metadata
-- read or expand local passages by `itemKey`, `citationKey`, or file
+- read, expand, or export agent-friendly full text by `itemKey`, `citationKey`, or file
 
 ## Features
 
@@ -27,8 +27,8 @@ It focuses on a small set of tasks:
   Search indexed PDFs with default no-rerank hybrid search, optional `--rerank`, or `--exact` lexical search.
 - `metadata`
   Search bibliography metadata without running `sync`.
-- `read` / `expand`
-  Read blocks from local manifests and expand around a hit.
+- `read` / `fulltext` / `expand`
+  Read blocks from local manifests, export cleaner full text for agents, and expand around a hit.
 
 Current scope:
 
@@ -114,6 +114,7 @@ zotlit s2 "<text>" [--limit <n>]
 zotlit search "<text>" [--exact] [--limit <n>] [--min-score <n>] [--rerank]
 zotlit metadata "<text>" [--limit <n>] [--field <field>] [--has-pdf]
 zotlit read (--file <path> | --item-key <key> | --citation-key <key>) [--offset-block <n>] [--limit-blocks <n>]
+zotlit fulltext (--file <path> | --item-key <key> | --citation-key <key>)
 zotlit expand (--file <path> | --item-key <key> | --citation-key <key>) --block-start <n> [--block-end <n>] [--radius <n>]
 ```
 
@@ -189,12 +190,13 @@ zotlit search "how do party secretaries shape SOE governance" --rerank
 
 Default `search` skips qmd reranking for lower latency. Use `--rerank` only for narrower queries when ranking quality matters more than speed.
 
-Follow a search hit with `read` or `expand`:
+Follow a search hit with `read`, `fulltext`, or `expand`:
 
 ```bash
 zotlit search "dangwei shuji" --exact
 zotlit read --item-key KG326EEI
 zotlit read --citation-key lee2024aging
+zotlit fulltext --item-key KG326EEI
 zotlit expand --item-key KG326EEI --block-start 10 --radius 2
 ```
 
@@ -209,6 +211,8 @@ Read and expand:
 ```bash
 zotlit read --item-key KG326EEI
 zotlit read --citation-key lee2024aging
+zotlit fulltext --item-key KG326EEI
+zotlit fulltext --file "~/Library/.../paper.pdf"
 zotlit expand --item-key KG326EEI --block-start 10 --radius 2
 zotlit expand --file "~/Library/.../paper.pdf" --block-start 10 --radius 2
 ```
@@ -220,7 +224,7 @@ zotlit expand --file "~/Library/.../paper.pdf" --block-start 10 --radius 2
 - `add` writes to the library root by default. Set `zoteroCollectionKey` in config or pass `--collection-key <key>` to place new items in a collection.
 - New items created by `add` receive the tag `Added by AI Agent`.
 - Creating an item in Zotero does not make it instantly searchable in local PDF search. `metadata` depends on your exported bibliography JSON, and PDF search depends on `sync`.
-- `search`, `read`, and `expand` only work on the local index. Run `zotlit sync` first when PDFs or manifests are stale.
+- `search`, `read`, `fulltext`, and `expand` only work on the local index. Run `zotlit sync` first when PDFs or manifests are stale.
 - Missing Zotero or Semantic Scholar credentials fail fast with explicit config errors instead of partial results.
 - `journalArticle` items keep `publicationTitle` but do not write `publisher`.
 

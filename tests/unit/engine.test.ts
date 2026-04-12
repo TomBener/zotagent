@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { expandDocument, readDocument, searchLiterature } from "../../src/engine.js";
+import { expandDocument, fullTextDocument, readDocument, searchLiterature } from "../../src/engine.js";
 import { writeCatalogFile } from "../../src/state.js";
 import type { AttachmentManifest, CatalogFile } from "../../src/types.js";
 
@@ -766,6 +766,146 @@ test("readDocument resolves a unique attachment by citationKey", () => {
   assert.equal(read.file, "/tmp/doc-six.pdf");
   assert.equal(read.blocks.length, 1);
   assert.equal(read.blocks[0]!.text, "Second block.");
+});
+
+test("fullTextDocument returns cleaner markdown for agents", () => {
+  const root = mkdtempSync(join(tmpdir(), "zotlit-fulltext-"));
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docKey = "a".repeat(40);
+  const manifestPath = join(manifestsDir, `${docKey}.json`);
+
+  writeManifest(manifestPath, {
+    docKey,
+    itemKey: "ITEMA",
+    citationKey: "lee2024agent",
+    title: "Agent Readable Doc",
+    authors: ["C"],
+    filePath: "/tmp/agent.pdf",
+    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+    blocks: [
+      {
+        blockIndex: 0,
+        blockType: "heading",
+        sectionPath: ["Introduction"],
+        text: "Introduction",
+        charStart: 0,
+        charEnd: 12,
+        lineStart: 1,
+        lineEnd: 1,
+        isReferenceLike: false,
+      },
+      {
+        blockIndex: 1,
+        blockType: "paragraph",
+        sectionPath: ["Introduction"],
+        text: "The top leader is the company party secretary, dangwei shuji.",
+        charStart: 14,
+        charEnd: 77,
+        lineStart: 3,
+        lineEnd: 3,
+        isReferenceLike: false,
+      },
+      {
+        blockIndex: 2,
+        blockType: "paragraph",
+        sectionPath: ["Introduction"],
+        text: "Party organization shapes firm governance.",
+        charStart: 79,
+        charEnd: 120,
+        lineStart: 5,
+        lineEnd: 5,
+        isReferenceLike: false,
+      },
+      {
+        blockIndex: 3,
+        blockType: "paragraph",
+        sectionPath: ["Front Matter"],
+        text: "To cite this article, please use the publisher PDF.",
+        charStart: 122,
+        charEnd: 175,
+        lineStart: 7,
+        lineEnd: 7,
+        isReferenceLike: false,
+      },
+      {
+        blockIndex: 4,
+        blockType: "paragraph",
+        sectionPath: ["Introduction"],
+        text: "Party organization shapes firm governance.",
+        charStart: 177,
+        charEnd: 218,
+        lineStart: 9,
+        lineEnd: 9,
+        isReferenceLike: false,
+      },
+      {
+        blockIndex: 5,
+        blockType: "paragraph",
+        sectionPath: ["References"],
+        text: "Smith, J. (2022). Ageing in China. Journal of Ageing.",
+        charStart: 220,
+        charEnd: 274,
+        lineStart: 11,
+        lineEnd: 11,
+        isReferenceLike: true,
+      },
+    ],
+  });
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [
+      {
+        docKey,
+        itemKey: "ITEMA",
+        citationKey: "lee2024agent",
+        title: "Agent Readable Doc",
+        authors: ["C"],
+        filePath: "/tmp/agent.pdf",
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: 1,
+        mtimeMs: 1,
+        sourceHash: "hash-agent",
+        lastIndexedAt: new Date().toISOString(),
+        normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+        manifestPath,
+      },
+    ],
+  });
+
+  const fullText = fullTextDocument(
+    {
+      citationKey: "lee2024agent",
+    },
+    {
+      bibliographyJsonPath: join(root, "bibliography.json"),
+      attachmentsRoot: root,
+      dataDir,
+    },
+  );
+
+  assert.equal(fullText.itemKey, "ITEMA");
+  assert.equal(fullText.citationKey, "lee2024agent");
+  assert.equal(fullText.format, "markdown");
+  assert.equal(fullText.source, "manifest");
+  assert.equal(fullText.keptBlocks, 3);
+  assert.equal(fullText.skippedBoilerplateBlocks, 1);
+  assert.equal(fullText.skippedDuplicateBlocks, 1);
+  assert.equal(fullText.skippedReferenceBlocks, 1);
+  assert.match(fullText.content, /^# Introduction/m);
+  assert.match(fullText.content, /dangwei shuji/);
+  assert.equal(fullText.content.match(/Party organization shapes firm governance\./g)?.length, 1);
+  assert.doesNotMatch(fullText.content, /To cite this article/i);
+  assert.doesNotMatch(fullText.content, /Smith, J\./);
 });
 
 test("expandDocument rejects passing both file and citationKey", () => {

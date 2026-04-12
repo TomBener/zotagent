@@ -2,11 +2,12 @@ import { readFileSync } from "node:fs";
 
 import { getDataPaths, resolveConfig, type ConfigOverrides } from "./config.js";
 import { findExactPhraseBlockRange } from "./exact.js";
+import { isBoilerplateLikeText, isReferenceLikeBlock, isTableOfContentsLikeText } from "./heuristics.js";
 import { openQmdClient, type QmdFactory } from "./qmd.js";
 import { getReadyEntries, readCatalogFile, summarizeCatalog } from "./state.js";
 import { openExactIndex, type ExactIndexFactory } from "./tantivy.js";
-import type { AttachmentManifest, CatalogEntry, SearchResultRow } from "./types.js";
-import { compactHomePath, exists, normalizePathForLookup, overlap } from "./utils.js";
+import type { AttachmentManifest, CatalogEntry, ManifestBlock, SearchResultRow } from "./types.js";
+import { cleanText, compactHomePath, exists, normalizePathForLookup, overlap } from "./utils.js";
 
 interface SearchBehaviorOptions {
   rerank?: boolean;
@@ -160,6 +161,21 @@ function docKeyFromSearchResultPath(resultPath: string): string | undefined {
   return match?.[1];
 }
 
+function renderMarkdownBlock(block: ManifestBlock): string {
+  if (block.blockType === "heading") {
+    const level = Math.max(1, Math.min(6, block.sectionPath.length || 1));
+    return `${"#".repeat(level)} ${block.text}`;
+  }
+  if (block.blockType === "list item") {
+    return `- ${block.text}`;
+  }
+  return block.text;
+}
+
+function normalizeBlockText(text: string): string {
+  return cleanText(text).replace(/\s+/g, " ").trim().toLowerCase();
+}
+
 export async function searchLiterature(
   query: string,
   limit: number,
@@ -290,6 +306,101 @@ export function readDocument(
       pageStart: block.pageStart,
       pageEnd: block.pageEnd,
     })),
+    warnings: config.warnings,
+  };
+}
+
+export function fullTextDocument(
+  input: { file?: string; itemKey?: string; citationKey?: string },
+  overrides: ConfigOverrides = {},
+): {
+  itemKey: string;
+  citationKey?: string;
+  title: string;
+  authors: string[];
+  year?: string;
+  file: string;
+  format: "markdown";
+  source: "manifest" | "normalized";
+  totalBlocks: number;
+  keptBlocks: number;
+  skippedReferenceBlocks: number;
+  skippedBoilerplateBlocks: number;
+  skippedDuplicateBlocks: number;
+  content: string;
+  warnings: string[];
+} {
+  const config = resolveConfig(overrides);
+  const catalog = readCatalogFile(getDataPaths(config.dataDir).catalogPath);
+  const entry = resolveReadyEntry(input, getReadyEntries(catalog));
+  if (!entry.manifestPath || !exists(entry.manifestPath)) {
+    throw new Error(`Indexed manifest not found for file: ${entry.filePath}`);
+  }
+
+  const manifest = readManifest(entry.manifestPath);
+  const earlyNoiseWindow = Math.max(8, Math.min(30, Math.ceil(manifest.blocks.length * 0.15)));
+  const seenBodyBlocks = new Set<string>();
+  const snippets: string[] = [];
+  let skippedReferenceBlocks = 0;
+  let skippedBoilerplateBlocks = 0;
+  let skippedDuplicateBlocks = 0;
+
+  for (const block of manifest.blocks) {
+    const text = cleanText(block.text);
+    if (!text) continue;
+
+    if (isReferenceLikeBlock(block)) {
+      skippedReferenceBlocks += 1;
+      continue;
+    }
+
+    const looksLikeBoilerplate =
+      isBoilerplateLikeText(text) ||
+      (block.blockIndex < earlyNoiseWindow && isTableOfContentsLikeText(text));
+    if (looksLikeBoilerplate) {
+      skippedBoilerplateBlocks += 1;
+      continue;
+    }
+
+    if (block.blockType !== "heading") {
+      const dedupeKey = `${block.blockType}:${normalizeBlockText(text)}`;
+      if (seenBodyBlocks.has(dedupeKey)) {
+        skippedDuplicateBlocks += 1;
+        continue;
+      }
+      seenBodyBlocks.add(dedupeKey);
+    }
+
+    const snippet = renderMarkdownBlock({ ...block, text }).trim();
+    if (!snippet) continue;
+    snippets.push(snippet);
+  }
+
+  let content = cleanText(snippets.join("\n\n"));
+  let source: "manifest" | "normalized" = "manifest";
+  if (!content && entry.normalizedPath && exists(entry.normalizedPath)) {
+    content = cleanText(readFileSync(entry.normalizedPath, "utf-8"));
+    source = "normalized";
+  }
+  if (!content) {
+    throw new Error(`No readable full text found for file: ${entry.filePath}`);
+  }
+
+  return {
+    itemKey: entry.itemKey,
+    ...(entry.citationKey ? { citationKey: entry.citationKey } : {}),
+    title: entry.title,
+    authors: entry.authors,
+    ...(entry.year ? { year: entry.year } : {}),
+    file: compactHomePath(entry.filePath),
+    format: "markdown",
+    source,
+    totalBlocks: manifest.blocks.length,
+    keptBlocks: snippets.length,
+    skippedReferenceBlocks,
+    skippedBoilerplateBlocks,
+    skippedDuplicateBlocks,
+    content,
     warnings: config.warnings,
   };
 }

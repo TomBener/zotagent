@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 
 import { addS2PaperToZotero, addToZotero } from "./add.js";
 import { getDataPaths, type ConfigOverrides } from "./config.js";
-import { expandDocument, getIndexStatus, readDocument, searchLiterature } from "./engine.js";
+import { expandDocument, fullTextDocument, getIndexStatus, readDocument, searchLiterature } from "./engine.js";
 import { emitError, emitOk } from "./json.js";
 import { searchMetadata } from "./metadata.js";
 import { openQmdClient } from "./qmd.js";
@@ -185,6 +185,7 @@ Usage:
   zotlit search "<text>" [--exact] [--limit <n>] [--min-score <n>] [--rerank]
   zotlit metadata "<text>" [--limit <n>] [--field <field>] [--has-pdf]
   zotlit read (--file <path> | --item-key <key> | --citation-key <key>) [--offset-block <n>] [--limit-blocks <n>]
+  zotlit fulltext (--file <path> | --item-key <key> | --citation-key <key>)
   zotlit expand (--file <path> | --item-key <key> | --citation-key <key>) --block-start <n> [--block-end <n>] [--radius <n>]
 
 Commands:
@@ -222,6 +223,11 @@ Commands:
     Read blocks directly from a local manifest.
     Use one of --file, --item-key, or --citation-key.
 
+  fulltext
+    Output agent-friendly full text from a local manifest.
+    Filters repeated blocks, references, and common boilerplate.
+    Use one of --file, --item-key, or --citation-key.
+
   expand
     Expand around a search hit or block range from a local manifest.
     Use one of --file, --item-key, or --citation-key.
@@ -241,8 +247,8 @@ Options:
   --url-date <date>           Set the access date for the URL.
   --collection-key <key>      Add the new item to a Zotero collection by collection key.
   --item-type <type>          Override the Zotero item type. Default: journalArticle or webpage.
-  --item-key <key>            Resolve an indexed attachment by Zotero item key for read or expand.
-  --citation-key <key>        Resolve an indexed attachment by citation key for read or expand.
+  --item-key <key>            Resolve an indexed attachment by Zotero item key for read, fulltext, or expand.
+  --citation-key <key>        Resolve an indexed attachment by citation key for read, fulltext, or expand.
   --exact                     Use Tantivy-based lexical search for search.
   --limit <n>                 Return up to n search results. Default: 10 for search, 20 for metadata.
   --min-score <n>             Drop lower-scoring search hits before mapping.
@@ -266,6 +272,7 @@ Examples:
   zotlit metadata "American Journal of Political Science" --field journal
   zotlit read --item-key KG326EEI
   zotlit read --citation-key lee2024aging
+  zotlit fulltext --item-key KG326EEI
   zotlit expand --item-key KG326EEI --block-start 10 --radius 2
   zotlit status
   zotlit version
@@ -296,7 +303,7 @@ function compactPathMap(paths: ReturnType<typeof getDataPaths>): ReturnType<type
   };
 }
 
-function emitDocumentLookupError(prefix: "READ" | "EXPAND", error: unknown): void {
+function emitDocumentLookupError(prefix: "READ" | "FULLTEXT" | "EXPAND", error: unknown): void {
   const message = error instanceof Error ? error.message : String(error);
   try {
     const parsedError = JSON.parse(message) as { message?: string; files?: string[] };
@@ -649,6 +656,39 @@ async function main(): Promise<void> {
           return;
         } catch (error) {
           emitDocumentLookupError("READ", error);
+          return;
+        }
+      }
+
+      case "fulltext": {
+        const file = getStringFlag(parsed.flags, "file");
+        const itemKey = getStringFlag(parsed.flags, "item-key");
+        const citationKey = getStringFlag(parsed.flags, "citation-key");
+        const selectorCount = Number(Boolean(file)) + Number(Boolean(itemKey)) + Number(Boolean(citationKey));
+        if (selectorCount > 1) {
+          emitError(
+            "UNEXPECTED_ARGUMENT",
+            "Provide exactly one of --file <path>, --item-key <key>, or --citation-key <key>.",
+          );
+          return;
+        }
+        if (selectorCount === 0) {
+          emitError("MISSING_ARGUMENT", "Provide one of --file <path>, --item-key <key>, or --citation-key <key>.");
+          return;
+        }
+        try {
+          const data = fullTextDocument(
+            {
+              ...(file ? { file } : {}),
+              ...(itemKey ? { itemKey } : {}),
+              ...(citationKey ? { citationKey } : {}),
+            },
+            overrides,
+          );
+          emitOk(data, { elapsedMs: Date.now() - startedAt });
+          return;
+        } catch (error) {
+          emitDocumentLookupError("FULLTEXT", error);
           return;
         }
       }

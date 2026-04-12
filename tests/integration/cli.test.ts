@@ -126,6 +126,39 @@ async function createIndexedFixture(): Promise<{
         lineEnd: 3,
         isReferenceLike: false,
       },
+      {
+        blockIndex: 2,
+        blockType: "paragraph",
+        sectionPath: ["Front Matter"],
+        text: "To cite this article, please use the publisher PDF.",
+        charStart: 108,
+        charEnd: 161,
+        lineStart: 5,
+        lineEnd: 5,
+        isReferenceLike: false,
+      },
+      {
+        blockIndex: 3,
+        blockType: "paragraph",
+        sectionPath: ["Body"],
+        text: "Party organization shapes firm governance.",
+        charStart: 163,
+        charEnd: 204,
+        lineStart: 7,
+        lineEnd: 7,
+        isReferenceLike: false,
+      },
+      {
+        blockIndex: 4,
+        blockType: "paragraph",
+        sectionPath: ["References"],
+        text: "Smith, J. (2022). Ageing in China. Journal of Ageing.",
+        charStart: 206,
+        charEnd: 260,
+        lineStart: 9,
+        lineEnd: 9,
+        isReferenceLike: true,
+      },
     ],
   });
 
@@ -160,6 +193,7 @@ test("help summarizes current commands and keeps config-only overrides out of th
   assert.match(result.stdout, /zotlit s2 "<text>" \[--limit <n>\]/);
   assert.match(result.stdout, /zotlit search "<text>" \[--exact\] \[--limit <n>\]/);
   assert.match(result.stdout, /zotlit metadata "<text>" \[--limit <n>\] \[--field <field>\] \[--has-pdf\]/);
+  assert.match(result.stdout, /zotlit fulltext \(\[?--file <path> \| --item-key <key> \| --citation-key <key>\)?/);
   assert.match(result.stdout, /Options:/);
   assert.match(result.stdout, /--doi <doi>\s+Import from DOI metadata when possible\./);
   assert.match(result.stdout, /--s2-paper-id <id>\s+Import a Semantic Scholar paper by paperId\./);
@@ -179,6 +213,7 @@ test("help summarizes current commands and keeps config-only overrides out of th
   assert.match(result.stdout, /--has-pdf\s+Keep only metadata results/);
   assert.match(result.stdout, /zotlit expand \(\[?--file <path> \| --item-key <key> \| --citation-key <key>\)?/);
   assert.match(result.stdout, /Use one of --file, --item-key, or --citation-key\./);
+  assert.match(result.stdout, /fulltext\s+Output agent-friendly full text from a local manifest\./);
   assert.match(result.stdout, /--item-key <key>\s+Resolve an indexed attachment by Zotero item key/);
   assert.match(result.stdout, /--citation-key <key>\s+Resolve an indexed attachment by citation key/);
   assert.match(result.stdout, /zoteroLibraryType supports both user and group\./);
@@ -359,6 +394,14 @@ test("expand rejects conflicting selectors and invalid numeric values", () => {
   assert.match(invalidRange.stdout, /`--block-end` must be greater than or equal to `--block-start`\./);
 });
 
+test("fulltext rejects conflicting selectors", () => {
+  const conflict = runCli(["fulltext", "--file", "/tmp/paper.pdf", "--item-key", "ITEM1"]);
+
+  assert.equal(conflict.status, 1);
+  assert.match(conflict.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
+  assert.match(conflict.stdout, /Provide exactly one of --file <path>, --item-key <key>, or --citation-key <key>\./);
+});
+
 test("metadata accumulates repeated field filters", () => {
   const root = mkdtempSync(join(tmpdir(), "zotlit-cli-metadata-"));
   const attachmentsRoot = join(root, "attachments");
@@ -477,7 +520,7 @@ test("expand resolves a unique attachment by itemKey", async () => {
   assert.equal(parsed.data.itemKey, "ITEM9");
   assert.equal(parsed.data.file, fixture.filePath);
   assert.equal(parsed.data.contextStart, 0);
-  assert.equal(parsed.data.contextEnd, 1);
+  assert.equal(parsed.data.contextEnd, 2);
   assert.match(parsed.data.passage, /Party organization shapes firm governance\./);
 });
 
@@ -516,6 +559,49 @@ test("read resolves a unique attachment by citationKey", async () => {
   assert.match(parsed.data.blocks[0]!.text, /company party secretary/);
 });
 
+test("fulltext returns agent-friendly markdown", async () => {
+  const fixture = await createIndexedFixture();
+
+  const result = runCli([
+    "fulltext",
+    "--item-key",
+    "ITEM9",
+    "--bibliography",
+    fixture.bibliographyPath,
+    "--attachments-root",
+    fixture.attachmentsRoot,
+    "--data-dir",
+    fixture.dataDir,
+  ]);
+
+  assert.equal(result.status, 0);
+  const parsed = JSON.parse(result.stdout) as {
+    ok: boolean;
+    data: {
+      itemKey: string;
+      file: string;
+      format: string;
+      keptBlocks: number;
+      skippedBoilerplateBlocks: number;
+      skippedDuplicateBlocks: number;
+      skippedReferenceBlocks: number;
+      content: string;
+    };
+  };
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.data.itemKey, "ITEM9");
+  assert.equal(parsed.data.file, fixture.filePath);
+  assert.equal(parsed.data.format, "markdown");
+  assert.equal(parsed.data.keptBlocks, 2);
+  assert.equal(parsed.data.skippedBoilerplateBlocks, 1);
+  assert.equal(parsed.data.skippedDuplicateBlocks, 1);
+  assert.equal(parsed.data.skippedReferenceBlocks, 1);
+  assert.match(parsed.data.content, /dangwei shuji/);
+  assert.equal(parsed.data.content.match(/Party organization shapes firm governance\./g)?.length, 1);
+  assert.doesNotMatch(parsed.data.content, /To cite this article/i);
+  assert.doesNotMatch(parsed.data.content, /Smith, J\./);
+});
+
 test("expand resolves a unique attachment by citationKey", async () => {
   const fixture = await createIndexedFixture();
 
@@ -551,5 +637,5 @@ test("expand resolves a unique attachment by citationKey", async () => {
   assert.equal(parsed.data.citationKey, fixture.citationKey);
   assert.equal(parsed.data.file, fixture.filePath);
   assert.equal(parsed.data.contextStart, 0);
-  assert.equal(parsed.data.contextEnd, 1);
+  assert.equal(parsed.data.contextEnd, 2);
 });
