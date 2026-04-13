@@ -20,10 +20,11 @@ function readManifest(path: string): AttachmentManifest {
   return JSON.parse(readFileSync(path, "utf-8")) as AttachmentManifest;
 }
 
-function resolveReadyEntry(
+function resolveReadyEntries(
   fileOrItem: { file?: string; itemKey?: string; citationKey?: string },
   entries: CatalogEntry[],
-): CatalogEntry {
+  options: { allowMultipleMatches?: boolean } = {},
+): CatalogEntry[] {
   const selectors = [
     fileOrItem.file ? "--file <path>" : null,
     fileOrItem.itemKey ? "--item-key <key>" : null,
@@ -42,7 +43,7 @@ function resolveReadyEntry(
     if (!matched) {
       throw new Error(`Indexed attachment not found for file: ${fileOrItem.file}`);
     }
-    return matched;
+    return [matched];
   }
 
   if (fileOrItem.itemKey) {
@@ -50,7 +51,7 @@ function resolveReadyEntry(
     if (matched.length === 0) {
       throw new Error(`No indexed attachment found for itemKey: ${fileOrItem.itemKey}`);
     }
-    if (matched.length > 1) {
+    if (matched.length > 1 && !options.allowMultipleMatches) {
       throw new Error(
         JSON.stringify({
           message: `Multiple indexed attachments found for itemKey: ${fileOrItem.itemKey}`,
@@ -58,7 +59,7 @@ function resolveReadyEntry(
         }),
       );
     }
-    return matched[0]!;
+    return matched;
   }
 
   if (fileOrItem.citationKey) {
@@ -66,7 +67,7 @@ function resolveReadyEntry(
     if (matched.length === 0) {
       throw new Error(`No indexed attachment found for citationKey: ${fileOrItem.citationKey}`);
     }
-    if (matched.length > 1) {
+    if (matched.length > 1 && !options.allowMultipleMatches) {
       throw new Error(
         JSON.stringify({
           message: `Multiple indexed attachments found for citationKey: ${fileOrItem.citationKey}`,
@@ -74,10 +75,17 @@ function resolveReadyEntry(
         }),
       );
     }
-    return matched[0]!;
+    return matched;
   }
 
   throw new Error("Provide one of --file <path>, --item-key <key>, or --citation-key <key>.");
+}
+
+function resolveReadyEntry(
+  fileOrItem: { file?: string; itemKey?: string; citationKey?: string },
+  entries: CatalogEntry[],
+): CatalogEntry {
+  return resolveReadyEntries(fileOrItem, entries)[0]!;
 }
 
 export function mapChunkToBlockRange(
@@ -175,6 +183,23 @@ function renderMarkdownBlock(block: ManifestBlock): string {
 function normalizeBlockText(text: string): string {
   return cleanText(text).replace(/\s+/g, " ").trim().toLowerCase();
 }
+
+type FullTextRow = {
+  itemKey: string;
+  citationKey?: string;
+  title: string;
+  authors: string[];
+  year?: string;
+  file: string;
+  format: "markdown";
+  source: "manifest" | "normalized";
+  totalBlocks: number;
+  keptBlocks: number;
+  skippedReferenceBlocks: number;
+  skippedBoilerplateBlocks: number;
+  skippedDuplicateBlocks: number;
+  content: string;
+};
 
 export async function searchLiterature(
   query: string,
@@ -310,29 +335,7 @@ export function readDocument(
   };
 }
 
-export function fullTextDocument(
-  input: { file?: string; itemKey?: string; citationKey?: string },
-  overrides: ConfigOverrides = {},
-): {
-  itemKey: string;
-  citationKey?: string;
-  title: string;
-  authors: string[];
-  year?: string;
-  file: string;
-  format: "markdown";
-  source: "manifest" | "normalized";
-  totalBlocks: number;
-  keptBlocks: number;
-  skippedReferenceBlocks: number;
-  skippedBoilerplateBlocks: number;
-  skippedDuplicateBlocks: number;
-  content: string;
-  warnings: string[];
-} {
-  const config = resolveConfig(overrides);
-  const catalog = readCatalogFile(getDataPaths(config.dataDir).catalogPath);
-  const entry = resolveReadyEntry(input, getReadyEntries(catalog));
+function buildFullTextRow(entry: CatalogEntry): FullTextRow {
   if (!entry.manifestPath || !exists(entry.manifestPath)) {
     throw new Error(`Indexed manifest not found for file: ${entry.filePath}`);
   }
@@ -401,8 +404,31 @@ export function fullTextDocument(
     skippedBoilerplateBlocks,
     skippedDuplicateBlocks,
     content,
+  };
+}
+
+export function fullTextDocuments(
+  input: { file?: string; itemKey?: string; citationKey?: string },
+  overrides: ConfigOverrides = {},
+): {
+  results: FullTextRow[];
+  warnings: string[];
+} {
+  const config = resolveConfig(overrides);
+  const catalog = readCatalogFile(getDataPaths(config.dataDir).catalogPath);
+  const entries = resolveReadyEntries(input, getReadyEntries(catalog), { allowMultipleMatches: true });
+
+  return {
+    results: entries.map((entry) => buildFullTextRow(entry)),
     warnings: config.warnings,
   };
+}
+
+export function fullTextDocument(
+  input: { file?: string; itemKey?: string; citationKey?: string },
+  overrides: ConfigOverrides = {},
+): FullTextRow {
+  return fullTextDocuments(input, overrides).results[0]!;
 }
 
 export function expandDocument(

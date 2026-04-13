@@ -225,6 +225,7 @@ zotlit expand --file "~/Library/.../paper.pdf" --block-start 10 --radius 2
 - New items created by `add` receive the tag `Added by AI Agent`.
 - Creating an item in Zotero does not make it instantly searchable in local PDF search. `metadata` depends on your exported bibliography JSON, and PDF search depends on `sync`.
 - `search`, `read`, `fulltext`, and `expand` only work on the local index. Run `zotlit sync` first when PDFs or manifests are stale.
+- `fulltext` returns `results[]`. When one `itemKey` or `citationKey` maps to multiple indexed PDFs, all matching attachments are included instead of raising a conflict.
 - Missing Zotero or Semantic Scholar credentials fail fast with explicit config errors instead of partial results.
 - `journalArticle` items keep `publicationTitle` but do not write `publisher`.
 

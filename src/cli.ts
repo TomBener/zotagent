@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 
 import { addS2PaperToZotero, addToZotero } from "./add.js";
 import { getDataPaths, type ConfigOverrides } from "./config.js";
-import { expandDocument, fullTextDocument, getIndexStatus, readDocument, searchLiterature } from "./engine.js";
+import { expandDocument, fullTextDocuments, getIndexStatus, readDocument, searchLiterature } from "./engine.js";
 import { emitError, emitOk } from "./json.js";
 import { searchMetadata } from "./metadata.js";
 import { openQmdClient } from "./qmd.js";
@@ -226,6 +226,7 @@ Commands:
   fulltext
     Output agent-friendly full text from a local manifest.
     Filters repeated blocks, references, and common boilerplate.
+    Returns all matching attachments for --item-key or --citation-key.
     Use one of --file, --item-key, or --citation-key.
 
   expand
@@ -677,7 +678,7 @@ async function main(): Promise<void> {
           return;
         }
         try {
-          const data = fullTextDocument(
+          const data = fullTextDocuments(
             {
               ...(file ? { file } : {}),
               ...(itemKey ? { itemKey } : {}),

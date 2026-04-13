@@ -179,6 +179,73 @@ async function createIndexedFixture(): Promise<{
   return { root, bibliographyPath, attachmentsRoot, dataDir, filePath, citationKey };
 }
 
+async function createMultiIndexedFixture(): Promise<{
+  bibliographyPath: string;
+  attachmentsRoot: string;
+  dataDir: string;
+  citationKey: string;
+  filePaths: string[];
+}> {
+  const root = mkdtempSync(join(tmpdir(), "zotlit-cli-multi-"));
+  const attachmentsRoot = join(root, "attachments");
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  const bibliographyPath = join(root, "bibliography.json");
+  const citationKey = "lee2024multi";
+  const filePaths = [join(attachmentsRoot, "paper-one.pdf"), join(attachmentsRoot, "paper-two.pdf")];
+  const docKeys = ["1".repeat(40), "2".repeat(40)];
+
+  mkdirSync(attachmentsRoot, { recursive: true });
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+  writeFileSync(bibliographyPath, "[]", "utf-8");
+
+  for (const [index, docKey] of docKeys.entries()) {
+    const manifestPath = join(manifestsDir, `${docKey}.json`);
+    writeManifest(manifestPath, {
+      docKey,
+      itemKey: "ITEMM",
+      citationKey,
+      title: `Multi ${index + 1}`,
+      authors: ["A"],
+      filePath: filePaths[index]!,
+      normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+      blocks: [
+        {
+          blockIndex: 0,
+          blockType: "paragraph",
+          sectionPath: ["Body"],
+          text: `Unique paragraph ${index + 1}.`,
+          charStart: 0,
+          charEnd: 19,
+          lineStart: 1,
+          lineEnd: 1,
+          isReferenceLike: false,
+        },
+      ],
+    });
+  }
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: docKeys.map((docKey, index) =>
+      readyEntry(
+        dataDir,
+        docKey,
+        "ITEMM",
+        citationKey,
+        `Multi ${index + 1}`,
+        filePaths[index]!,
+        join(manifestsDir, `${docKey}.json`),
+      ),
+    ),
+  });
+
+  return { bibliographyPath, attachmentsRoot, dataDir, citationKey, filePaths };
+}
+
 test("help summarizes current commands and keeps config-only overrides out of the main listing", () => {
   const result = runCli(["help"]);
 
@@ -578,28 +645,83 @@ test("fulltext returns agent-friendly markdown", async () => {
   const parsed = JSON.parse(result.stdout) as {
     ok: boolean;
     data: {
-      itemKey: string;
-      file: string;
-      format: string;
-      keptBlocks: number;
-      skippedBoilerplateBlocks: number;
-      skippedDuplicateBlocks: number;
-      skippedReferenceBlocks: number;
-      content: string;
+      results: Array<{
+        itemKey: string;
+        file: string;
+        format: string;
+        keptBlocks: number;
+        skippedBoilerplateBlocks: number;
+        skippedDuplicateBlocks: number;
+        skippedReferenceBlocks: number;
+        content: string;
+      }>;
     };
   };
   assert.equal(parsed.ok, true);
-  assert.equal(parsed.data.itemKey, "ITEM9");
-  assert.equal(parsed.data.file, fixture.filePath);
-  assert.equal(parsed.data.format, "markdown");
-  assert.equal(parsed.data.keptBlocks, 2);
-  assert.equal(parsed.data.skippedBoilerplateBlocks, 1);
-  assert.equal(parsed.data.skippedDuplicateBlocks, 1);
-  assert.equal(parsed.data.skippedReferenceBlocks, 1);
-  assert.match(parsed.data.content, /dangwei shuji/);
-  assert.equal(parsed.data.content.match(/Party organization shapes firm governance\./g)?.length, 1);
-  assert.doesNotMatch(parsed.data.content, /To cite this article/i);
-  assert.doesNotMatch(parsed.data.content, /Smith, J\./);
+  assert.equal(parsed.data.results.length, 1);
+  assert.equal(parsed.data.results[0]!.itemKey, "ITEM9");
+  assert.equal(parsed.data.results[0]!.file, fixture.filePath);
+  assert.equal(parsed.data.results[0]!.format, "markdown");
+  assert.equal(parsed.data.results[0]!.keptBlocks, 2);
+  assert.equal(parsed.data.results[0]!.skippedBoilerplateBlocks, 1);
+  assert.equal(parsed.data.results[0]!.skippedDuplicateBlocks, 1);
+  assert.equal(parsed.data.results[0]!.skippedReferenceBlocks, 1);
+  assert.match(parsed.data.results[0]!.content, /dangwei shuji/);
+  assert.equal(parsed.data.results[0]!.content.match(/Party organization shapes firm governance\./g)?.length, 1);
+  assert.doesNotMatch(parsed.data.results[0]!.content, /To cite this article/i);
+  assert.doesNotMatch(parsed.data.results[0]!.content, /Smith, J\./);
+});
+
+test("fulltext returns all matched attachments for duplicate itemKey or citationKey", async () => {
+  const fixture = await createMultiIndexedFixture();
+
+  const byItemKey = runCli([
+    "fulltext",
+    "--item-key",
+    "ITEMM",
+    "--bibliography",
+    fixture.bibliographyPath,
+    "--attachments-root",
+    fixture.attachmentsRoot,
+    "--data-dir",
+    fixture.dataDir,
+  ]);
+  const byCitationKey = runCli([
+    "fulltext",
+    "--citation-key",
+    fixture.citationKey,
+    "--bibliography",
+    fixture.bibliographyPath,
+    "--attachments-root",
+    fixture.attachmentsRoot,
+    "--data-dir",
+    fixture.dataDir,
+  ]);
+
+  assert.equal(byItemKey.status, 0);
+  assert.equal(byCitationKey.status, 0);
+
+  const parsedItem = JSON.parse(byItemKey.stdout) as {
+    ok: boolean;
+    data: { results: Array<{ file: string; content: string }> };
+  };
+  const parsedCitation = JSON.parse(byCitationKey.stdout) as {
+    ok: boolean;
+    data: { results: Array<{ file: string; content: string }> };
+  };
+
+  assert.equal(parsedItem.ok, true);
+  assert.equal(parsedCitation.ok, true);
+  assert.deepEqual(
+    parsedItem.data.results.map((row) => row.file),
+    fixture.filePaths,
+  );
+  assert.deepEqual(
+    parsedCitation.data.results.map((row) => row.file),
+    fixture.filePaths,
+  );
+  assert.match(parsedItem.data.results[0]!.content, /Unique paragraph 1\./);
+  assert.match(parsedItem.data.results[1]!.content, /Unique paragraph 2\./);
 });
 
 test("expand resolves a unique attachment by citationKey", async () => {

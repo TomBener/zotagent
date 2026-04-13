@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { expandDocument, fullTextDocument, readDocument, searchLiterature } from "../../src/engine.js";
+import { expandDocument, fullTextDocument, fullTextDocuments, readDocument, searchLiterature } from "../../src/engine.js";
 import { writeCatalogFile } from "../../src/state.js";
 import type { AttachmentManifest, CatalogFile } from "../../src/types.js";
 
@@ -906,6 +906,142 @@ test("fullTextDocument returns cleaner markdown for agents", () => {
   assert.equal(fullText.content.match(/Party organization shapes firm governance\./g)?.length, 1);
   assert.doesNotMatch(fullText.content, /To cite this article/i);
   assert.doesNotMatch(fullText.content, /Smith, J\./);
+});
+
+test("fullTextDocuments returns all matches for duplicate itemKey and citationKey", () => {
+  const root = mkdtempSync(join(tmpdir(), "zotlit-fulltext-multi-"));
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docOne = "b".repeat(40);
+  const docTwo = "c".repeat(40);
+  const manifestOnePath = join(manifestsDir, `${docOne}.json`);
+  const manifestTwoPath = join(manifestsDir, `${docTwo}.json`);
+
+  writeManifest(manifestOnePath, {
+    docKey: docOne,
+    itemKey: "ITEMM",
+    citationKey: "lee2024multi",
+    title: "Doc One",
+    authors: ["A"],
+    filePath: "/tmp/multi-one.pdf",
+    normalizedPath: join(dataDir, "normalized", `${docOne}.md`),
+    blocks: [
+      {
+        blockIndex: 0,
+        blockType: "paragraph",
+        sectionPath: ["Body"],
+        text: "Unique paragraph one.",
+        charStart: 0,
+        charEnd: 21,
+        lineStart: 1,
+        lineEnd: 1,
+        isReferenceLike: false,
+      },
+    ],
+  });
+  writeManifest(manifestTwoPath, {
+    docKey: docTwo,
+    itemKey: "ITEMM",
+    citationKey: "lee2024multi",
+    title: "Doc Two",
+    authors: ["B"],
+    filePath: "/tmp/multi-two.pdf",
+    normalizedPath: join(dataDir, "normalized", `${docTwo}.md`),
+    blocks: [
+      {
+        blockIndex: 0,
+        blockType: "paragraph",
+        sectionPath: ["Body"],
+        text: "Unique paragraph two.",
+        charStart: 0,
+        charEnd: 21,
+        lineStart: 1,
+        lineEnd: 1,
+        isReferenceLike: false,
+      },
+    ],
+  });
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [
+      {
+        docKey: docOne,
+        itemKey: "ITEMM",
+        citationKey: "lee2024multi",
+        title: "Doc One",
+        authors: ["A"],
+        filePath: "/tmp/multi-one.pdf",
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: 1,
+        mtimeMs: 1,
+        sourceHash: "hash-multi-one",
+        lastIndexedAt: new Date().toISOString(),
+        normalizedPath: join(dataDir, "normalized", `${docOne}.md`),
+        manifestPath: manifestOnePath,
+      },
+      {
+        docKey: docTwo,
+        itemKey: "ITEMM",
+        citationKey: "lee2024multi",
+        title: "Doc Two",
+        authors: ["B"],
+        filePath: "/tmp/multi-two.pdf",
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: 1,
+        mtimeMs: 1,
+        sourceHash: "hash-multi-two",
+        lastIndexedAt: new Date().toISOString(),
+        normalizedPath: join(dataDir, "normalized", `${docTwo}.md`),
+        manifestPath: manifestTwoPath,
+      },
+    ],
+  });
+
+  const fullTextsByItemKey = fullTextDocuments(
+    {
+      itemKey: "ITEMM",
+    },
+    {
+      bibliographyJsonPath: join(root, "bibliography.json"),
+      attachmentsRoot: root,
+      dataDir,
+    },
+  );
+  const fullTextsByCitationKey = fullTextDocuments(
+    {
+      citationKey: "lee2024multi",
+    },
+    {
+      bibliographyJsonPath: join(root, "bibliography.json"),
+      attachmentsRoot: root,
+      dataDir,
+    },
+  );
+
+  assert.equal(fullTextsByItemKey.results.length, 2);
+  assert.equal(fullTextsByCitationKey.results.length, 2);
+  assert.deepEqual(
+    fullTextsByItemKey.results.map((row) => row.file),
+    ["/tmp/multi-one.pdf", "/tmp/multi-two.pdf"],
+  );
+  assert.deepEqual(
+    fullTextsByCitationKey.results.map((row) => row.file),
+    ["/tmp/multi-one.pdf", "/tmp/multi-two.pdf"],
+  );
+  assert.match(fullTextsByItemKey.results[0]!.content, /Unique paragraph one\./);
+  assert.match(fullTextsByItemKey.results[1]!.content, /Unique paragraph two\./);
 });
 
 test("expandDocument rejects passing both file and citationKey", () => {
