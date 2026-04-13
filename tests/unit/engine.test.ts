@@ -768,16 +768,37 @@ test("readDocument resolves a unique attachment by citationKey", () => {
   assert.equal(read.blocks[0]!.text, "Second block.");
 });
 
-test("fullTextDocument returns cleaner markdown for agents", () => {
+test("fullTextDocument keeps boilerplate and references by default", () => {
   const root = mkdtempSync(join(tmpdir(), "zotlit-fulltext-"));
   const dataDir = join(root, "data");
   const indexDir = join(dataDir, "index");
   const manifestsDir = join(dataDir, "manifests");
+  const normalizedDir = join(dataDir, "normalized");
   mkdirSync(indexDir, { recursive: true });
   mkdirSync(manifestsDir, { recursive: true });
+  mkdirSync(normalizedDir, { recursive: true });
 
   const docKey = "a".repeat(40);
   const manifestPath = join(manifestsDir, `${docKey}.json`);
+  const normalizedPath = join(normalizedDir, `${docKey}.md`);
+
+  writeFileSync(
+    normalizedPath,
+    [
+      "# Introduction",
+      "",
+      "The top leader is the company party secretary, dangwei shuji.",
+      "",
+      "Party organization shapes firm governance.",
+      "",
+      "To cite this article, please use the publisher PDF.",
+      "",
+      "Party organization shapes firm governance.",
+      "",
+      "Smith, J. (2022). Ageing in China. Journal of Ageing.",
+    ].join("\n"),
+    "utf-8",
+  );
 
   writeManifest(manifestPath, {
     docKey,
@@ -786,7 +807,7 @@ test("fullTextDocument returns cleaner markdown for agents", () => {
     title: "Agent Readable Doc",
     authors: ["C"],
     filePath: "/tmp/agent.pdf",
-    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+    normalizedPath,
     blocks: [
       {
         blockIndex: 0,
@@ -876,7 +897,7 @@ test("fullTextDocument returns cleaner markdown for agents", () => {
         mtimeMs: 1,
         sourceHash: "hash-agent",
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+        normalizedPath,
         manifestPath,
       },
     ],
@@ -896,16 +917,103 @@ test("fullTextDocument returns cleaner markdown for agents", () => {
   assert.equal(fullText.itemKey, "ITEMA");
   assert.equal(fullText.citationKey, "lee2024agent");
   assert.equal(fullText.format, "markdown");
-  assert.equal(fullText.source, "manifest");
-  assert.equal(fullText.keptBlocks, 3);
-  assert.equal(fullText.skippedBoilerplateBlocks, 1);
-  assert.equal(fullText.skippedDuplicateBlocks, 1);
-  assert.equal(fullText.skippedReferenceBlocks, 1);
+  assert.equal(fullText.source, "normalized");
+  assert.equal(fullText.keptBlocks, 6);
+  assert.equal(fullText.skippedBoilerplateBlocks, 0);
+  assert.equal(fullText.skippedDuplicateBlocks, 0);
   assert.match(fullText.content, /^# Introduction/m);
   assert.match(fullText.content, /dangwei shuji/);
-  assert.equal(fullText.content.match(/Party organization shapes firm governance\./g)?.length, 1);
+  assert.equal(fullText.content.match(/Party organization shapes firm governance\./g)?.length, 2);
+  assert.match(fullText.content, /To cite this article/i);
+  assert.match(fullText.content, /Smith, J\./);
+});
+
+test("fullTextDocument strips boilerplate when clean is enabled", () => {
+  const root = mkdtempSync(join(tmpdir(), "zotlit-fulltext-clean-"));
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docKey = "d".repeat(40);
+  const manifestPath = join(manifestsDir, `${docKey}.json`);
+
+  writeManifest(manifestPath, {
+    docKey,
+    itemKey: "ITEMC",
+    citationKey: "lee2024clean",
+    title: "Clean Doc",
+    authors: ["C"],
+    filePath: "/tmp/clean.pdf",
+    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+    blocks: [
+      {
+        blockIndex: 0,
+        blockType: "paragraph",
+        sectionPath: ["Front Matter"],
+        text: "To cite this article, please use the publisher PDF.",
+        charStart: 0,
+        charEnd: 53,
+        lineStart: 1,
+        lineEnd: 1,
+        isReferenceLike: false,
+      },
+      {
+        blockIndex: 1,
+        blockType: "paragraph",
+        sectionPath: ["Body"],
+        text: "Main body paragraph.",
+        charStart: 55,
+        charEnd: 75,
+        lineStart: 3,
+        lineEnd: 3,
+        isReferenceLike: false,
+      },
+    ],
+  });
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [
+      {
+        docKey,
+        itemKey: "ITEMC",
+        citationKey: "lee2024clean",
+        title: "Clean Doc",
+        authors: ["C"],
+        filePath: "/tmp/clean.pdf",
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: 1,
+        mtimeMs: 1,
+        sourceHash: "hash-clean",
+        lastIndexedAt: new Date().toISOString(),
+        normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+        manifestPath,
+      },
+    ],
+  });
+
+  const fullText = fullTextDocument(
+    {
+      citationKey: "lee2024clean",
+      clean: true,
+    },
+    {
+      bibliographyJsonPath: join(root, "bibliography.json"),
+      attachmentsRoot: root,
+      dataDir,
+    },
+  );
+
+  assert.equal(fullText.keptBlocks, 1);
+  assert.equal(fullText.skippedBoilerplateBlocks, 1);
+  assert.match(fullText.content, /Main body paragraph\./);
   assert.doesNotMatch(fullText.content, /To cite this article/i);
-  assert.doesNotMatch(fullText.content, /Smith, J\./);
 });
 
 test("fullTextDocuments returns all matches for duplicate itemKey and citationKey", () => {

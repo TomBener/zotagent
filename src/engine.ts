@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 
 import { getDataPaths, resolveConfig, type ConfigOverrides } from "./config.js";
 import { findExactPhraseBlockRange } from "./exact.js";
-import { isBoilerplateLikeText, isReferenceLikeBlock, isTableOfContentsLikeText } from "./heuristics.js";
+import { isBoilerplateLikeText, isTableOfContentsLikeText } from "./heuristics.js";
 import { openQmdClient, type QmdFactory } from "./qmd.js";
 import { getReadyEntries, readCatalogFile, summarizeCatalog } from "./state.js";
 import { openExactIndex, type ExactIndexFactory } from "./tantivy.js";
@@ -195,11 +195,22 @@ type FullTextRow = {
   source: "manifest" | "normalized";
   totalBlocks: number;
   keptBlocks: number;
-  skippedReferenceBlocks: number;
   skippedBoilerplateBlocks: number;
   skippedDuplicateBlocks: number;
   content: string;
 };
+
+function renderManifestMarkdown(manifest: AttachmentManifest): string {
+  const snippets: string[] = [];
+  for (const block of manifest.blocks) {
+    const text = cleanText(block.text);
+    if (!text) continue;
+    const snippet = renderMarkdownBlock({ ...block, text }).trim();
+    if (!snippet) continue;
+    snippets.push(snippet);
+  }
+  return cleanText(snippets.join("\n\n"));
+}
 
 export async function searchLiterature(
   query: string,
@@ -335,16 +346,50 @@ export function readDocument(
   };
 }
 
-function buildFullTextRow(entry: CatalogEntry): FullTextRow {
+function buildFullTextRow(
+  entry: CatalogEntry,
+  options: { clean?: boolean } = {},
+): FullTextRow {
   if (!entry.manifestPath || !exists(entry.manifestPath)) {
     throw new Error(`Indexed manifest not found for file: ${entry.filePath}`);
   }
 
   const manifest = readManifest(entry.manifestPath);
+  if (!options.clean) {
+    let content = "";
+    let source: "manifest" | "normalized" = "manifest";
+
+    if (entry.normalizedPath && exists(entry.normalizedPath)) {
+      content = cleanText(readFileSync(entry.normalizedPath, "utf-8"));
+      source = "normalized";
+    } else {
+      content = renderManifestMarkdown(manifest);
+    }
+
+    if (!content) {
+      throw new Error(`No readable full text found for file: ${entry.filePath}`);
+    }
+
+    return {
+      itemKey: entry.itemKey,
+      ...(entry.citationKey ? { citationKey: entry.citationKey } : {}),
+      title: entry.title,
+      authors: entry.authors,
+      ...(entry.year ? { year: entry.year } : {}),
+      file: compactHomePath(entry.filePath),
+      format: "markdown",
+      source,
+      totalBlocks: manifest.blocks.length,
+      keptBlocks: manifest.blocks.length,
+      skippedBoilerplateBlocks: 0,
+      skippedDuplicateBlocks: 0,
+      content,
+    };
+  }
+
   const earlyNoiseWindow = Math.max(8, Math.min(30, Math.ceil(manifest.blocks.length * 0.15)));
   const seenBodyBlocks = new Set<string>();
   const snippets: string[] = [];
-  let skippedReferenceBlocks = 0;
   let skippedBoilerplateBlocks = 0;
   let skippedDuplicateBlocks = 0;
 
@@ -352,14 +397,11 @@ function buildFullTextRow(entry: CatalogEntry): FullTextRow {
     const text = cleanText(block.text);
     if (!text) continue;
 
-    if (isReferenceLikeBlock(block)) {
-      skippedReferenceBlocks += 1;
-      continue;
-    }
-
-    const looksLikeBoilerplate =
-      isBoilerplateLikeText(text) ||
-      (block.blockIndex < earlyNoiseWindow && isTableOfContentsLikeText(text));
+    const looksLikeBoilerplate = options.clean
+      && (
+        isBoilerplateLikeText(text)
+        || (block.blockIndex < earlyNoiseWindow && isTableOfContentsLikeText(text))
+      );
     if (looksLikeBoilerplate) {
       skippedBoilerplateBlocks += 1;
       continue;
@@ -400,7 +442,6 @@ function buildFullTextRow(entry: CatalogEntry): FullTextRow {
     source,
     totalBlocks: manifest.blocks.length,
     keptBlocks: snippets.length,
-    skippedReferenceBlocks,
     skippedBoilerplateBlocks,
     skippedDuplicateBlocks,
     content,
@@ -408,7 +449,7 @@ function buildFullTextRow(entry: CatalogEntry): FullTextRow {
 }
 
 export function fullTextDocuments(
-  input: { file?: string; itemKey?: string; citationKey?: string },
+  input: { file?: string; itemKey?: string; citationKey?: string; clean?: boolean },
   overrides: ConfigOverrides = {},
 ): {
   results: FullTextRow[];
@@ -419,13 +460,13 @@ export function fullTextDocuments(
   const entries = resolveReadyEntries(input, getReadyEntries(catalog), { allowMultipleMatches: true });
 
   return {
-    results: entries.map((entry) => buildFullTextRow(entry)),
+    results: entries.map((entry) => buildFullTextRow(entry, { clean: input.clean })),
     warnings: config.warnings,
   };
 }
 
 export function fullTextDocument(
-  input: { file?: string; itemKey?: string; citationKey?: string },
+  input: { file?: string; itemKey?: string; citationKey?: string; clean?: boolean },
   overrides: ConfigOverrides = {},
 ): FullTextRow {
   return fullTextDocuments(input, overrides).results[0]!;

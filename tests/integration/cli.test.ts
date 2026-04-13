@@ -84,16 +84,34 @@ async function createIndexedFixture(): Promise<{
   const dataDir = join(root, "data");
   const indexDir = join(dataDir, "index");
   const manifestsDir = join(dataDir, "manifests");
+  const normalizedDir = join(dataDir, "normalized");
   const bibliographyPath = join(root, "bibliography.json");
   const docKey = "9".repeat(40);
   const filePath = join(attachmentsRoot, "paper.pdf");
   const manifestPath = join(manifestsDir, `${docKey}.json`);
+  const normalizedPath = join(normalizedDir, `${docKey}.md`);
   const citationKey = "lee2024party";
 
   mkdirSync(attachmentsRoot, { recursive: true });
   mkdirSync(indexDir, { recursive: true });
   mkdirSync(manifestsDir, { recursive: true });
+  mkdirSync(normalizedDir, { recursive: true });
   writeFileSync(bibliographyPath, "[]", "utf-8");
+  writeFileSync(
+    normalizedPath,
+    [
+      "The top leader is the company party secretary, dangwei shuji.",
+      "",
+      "Party organization shapes firm governance.",
+      "",
+      "To cite this article, please use the publisher PDF.",
+      "",
+      "Party organization shapes firm governance.",
+      "",
+      "Smith, J. (2022). Ageing in China. Journal of Ageing.",
+    ].join("\n"),
+    "utf-8",
+  );
 
   writeManifest(manifestPath, {
     docKey,
@@ -102,7 +120,7 @@ async function createIndexedFixture(): Promise<{
     title: "Exact match",
     authors: ["A"],
     filePath,
-    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+    normalizedPath,
     blocks: [
       {
         blockIndex: 0,
@@ -260,7 +278,7 @@ test("help summarizes current commands and keeps config-only overrides out of th
   assert.match(result.stdout, /zotlit s2 "<text>" \[--limit <n>\]/);
   assert.match(result.stdout, /zotlit search "<text>" \[--exact\] \[--limit <n>\]/);
   assert.match(result.stdout, /zotlit metadata "<text>" \[--limit <n>\] \[--field <field>\] \[--has-pdf\]/);
-  assert.match(result.stdout, /zotlit fulltext \(\[?--file <path> \| --item-key <key> \| --citation-key <key>\)?/);
+  assert.match(result.stdout, /zotlit fulltext \(\[?--file <path> \| --item-key <key> \| --citation-key <key>\)? \[--clean\]/);
   assert.match(result.stdout, /Options:/);
   assert.match(result.stdout, /--doi <doi>\s+Import from DOI metadata when possible\./);
   assert.match(result.stdout, /--s2-paper-id <id>\s+Import a Semantic Scholar paper by paperId\./);
@@ -281,6 +299,7 @@ test("help summarizes current commands and keeps config-only overrides out of th
   assert.match(result.stdout, /zotlit expand \(\[?--file <path> \| --item-key <key> \| --citation-key <key>\)?/);
   assert.match(result.stdout, /Use one of --file, --item-key, or --citation-key\./);
   assert.match(result.stdout, /fulltext\s+Output agent-friendly full text from a local manifest\./);
+  assert.match(result.stdout, /--clean\s+For fulltext, apply heuristic cleanup/);
   assert.match(result.stdout, /--item-key <key>\s+Resolve an indexed attachment by Zotero item key/);
   assert.match(result.stdout, /--citation-key <key>\s+Resolve an indexed attachment by citation key/);
   assert.match(result.stdout, /zoteroLibraryType supports both user and group\./);
@@ -649,10 +668,10 @@ test("fulltext returns agent-friendly markdown", async () => {
         itemKey: string;
         file: string;
         format: string;
+        source: string;
         keptBlocks: number;
         skippedBoilerplateBlocks: number;
         skippedDuplicateBlocks: number;
-        skippedReferenceBlocks: number;
         content: string;
       }>;
     };
@@ -662,14 +681,50 @@ test("fulltext returns agent-friendly markdown", async () => {
   assert.equal(parsed.data.results[0]!.itemKey, "ITEM9");
   assert.equal(parsed.data.results[0]!.file, fixture.filePath);
   assert.equal(parsed.data.results[0]!.format, "markdown");
-  assert.equal(parsed.data.results[0]!.keptBlocks, 2);
+  assert.equal(parsed.data.results[0]!.source, "normalized");
+  assert.equal(parsed.data.results[0]!.keptBlocks, 5);
+  assert.equal(parsed.data.results[0]!.skippedBoilerplateBlocks, 0);
+  assert.equal(parsed.data.results[0]!.skippedDuplicateBlocks, 0);
+  assert.match(parsed.data.results[0]!.content, /dangwei shuji/);
+  assert.equal(parsed.data.results[0]!.content.match(/Party organization shapes firm governance\./g)?.length, 2);
+  assert.match(parsed.data.results[0]!.content, /To cite this article/i);
+  assert.match(parsed.data.results[0]!.content, /Smith, J\./);
+});
+
+test("fulltext clean strips common boilerplate", async () => {
+  const fixture = await createIndexedFixture();
+
+  const result = runCli([
+    "fulltext",
+    "--item-key",
+    "ITEM9",
+    "--clean",
+    "--bibliography",
+    fixture.bibliographyPath,
+    "--attachments-root",
+    fixture.attachmentsRoot,
+    "--data-dir",
+    fixture.dataDir,
+  ]);
+
+  assert.equal(result.status, 0);
+  const parsed = JSON.parse(result.stdout) as {
+    ok: boolean;
+    data: {
+      results: Array<{
+        keptBlocks: number;
+        skippedBoilerplateBlocks: number;
+        skippedDuplicateBlocks: number;
+        content: string;
+      }>;
+    };
+  };
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.data.results[0]!.keptBlocks, 3);
   assert.equal(parsed.data.results[0]!.skippedBoilerplateBlocks, 1);
   assert.equal(parsed.data.results[0]!.skippedDuplicateBlocks, 1);
-  assert.equal(parsed.data.results[0]!.skippedReferenceBlocks, 1);
-  assert.match(parsed.data.results[0]!.content, /dangwei shuji/);
-  assert.equal(parsed.data.results[0]!.content.match(/Party organization shapes firm governance\./g)?.length, 1);
   assert.doesNotMatch(parsed.data.results[0]!.content, /To cite this article/i);
-  assert.doesNotMatch(parsed.data.results[0]!.content, /Smith, J\./);
+  assert.match(parsed.data.results[0]!.content, /Smith, J\./);
 });
 
 test("fulltext returns all matched attachments for duplicate itemKey or citationKey", async () => {

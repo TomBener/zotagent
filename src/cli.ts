@@ -21,6 +21,7 @@ interface ParsedArgs {
 }
 
 const BOOLEAN_FLAGS = new Set([
+  "clean",
   "exact",
   "has-pdf",
   "help",
@@ -185,7 +186,7 @@ Usage:
   zotlit search "<text>" [--exact] [--limit <n>] [--min-score <n>] [--rerank]
   zotlit metadata "<text>" [--limit <n>] [--field <field>] [--has-pdf]
   zotlit read (--file <path> | --item-key <key> | --citation-key <key>) [--offset-block <n>] [--limit-blocks <n>]
-  zotlit fulltext (--file <path> | --item-key <key> | --citation-key <key>)
+  zotlit fulltext (--file <path> | --item-key <key> | --citation-key <key>) [--clean]
   zotlit expand (--file <path> | --item-key <key> | --citation-key <key>) --block-start <n> [--block-end <n>] [--radius <n>]
 
 Commands:
@@ -225,7 +226,8 @@ Commands:
 
   fulltext
     Output agent-friendly full text from a local manifest.
-    Filters repeated blocks, references, and common boilerplate.
+    Returns the original normalized markdown by default, without content filtering.
+    Use --clean to remove duplicate blocks and common boilerplate such as citation notices and table-of-contents lines.
     Returns all matching attachments for --item-key or --citation-key.
     Use one of --file, --item-key, or --citation-key.
 
@@ -250,6 +252,7 @@ Options:
   --item-type <type>          Override the Zotero item type. Default: journalArticle or webpage.
   --item-key <key>            Resolve an indexed attachment by Zotero item key for read, fulltext, or expand.
   --citation-key <key>        Resolve an indexed attachment by citation key for read, fulltext, or expand.
+  --clean                     For fulltext, apply heuristic cleanup instead of returning the original normalized markdown.
   --exact                     Use Tantivy-based lexical search for search.
   --limit <n>                 Return up to n search results. Default: 10 for search, 20 for metadata.
   --min-score <n>             Drop lower-scoring search hits before mapping.
@@ -274,6 +277,7 @@ Examples:
   zotlit read --item-key KG326EEI
   zotlit read --citation-key lee2024aging
   zotlit fulltext --item-key KG326EEI
+  zotlit fulltext --item-key KG326EEI --clean
   zotlit expand --item-key KG326EEI --block-start 10 --radius 2
   zotlit status
   zotlit version
@@ -683,6 +687,7 @@ async function main(): Promise<void> {
               ...(file ? { file } : {}),
               ...(itemKey ? { itemKey } : {}),
               ...(citationKey ? { citationKey } : {}),
+              clean: getBooleanFlag(parsed.flags, "clean"),
             },
             overrides,
           );
