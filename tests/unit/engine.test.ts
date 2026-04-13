@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { expandDocument, fullTextDocument, fullTextDocuments, readDocument, searchLiterature } from "../../src/engine.js";
+import { expandDocument, fullTextDocument, fullTextDocuments, readDocument, searchLiterature, searchWithinDocuments } from "../../src/engine.js";
 import { writeCatalogFile } from "../../src/state.js";
 import type { AttachmentManifest, CatalogFile } from "../../src/types.js";
 
@@ -437,6 +437,224 @@ test("searchLiterature exact mode uses the exact index and skips qmd", async () 
   assert.equal(result.results.length, 1);
   assert.equal(result.results[0]!.itemKey, "ITEM9");
   assert.match(result.results[0]!.passage, /dangwei shuji/i);
+});
+
+test("searchWithinDocuments returns passages from the selected attachment", () => {
+  const root = mkdtempSync(join(tmpdir(), "zotlit-search-in-"));
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docKey = "f".repeat(40);
+  const manifestPath = join(manifestsDir, `${docKey}.json`);
+
+  writeManifest(manifestPath, {
+    docKey,
+    itemKey: "ITEMS",
+    citationKey: "lee2024searchin",
+    title: "Search In",
+    authors: ["A"],
+    filePath: "/tmp/search-in.pdf",
+    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+    blocks: [
+      {
+        blockIndex: 0,
+        blockType: "heading",
+        sectionPath: ["Governance"],
+        text: "Governance",
+        charStart: 0,
+        charEnd: 10,
+        lineStart: 1,
+        lineEnd: 1,
+        isReferenceLike: false,
+      },
+      {
+        blockIndex: 1,
+        blockType: "paragraph",
+        sectionPath: ["Governance"],
+        text: "The top leader is the company party secretary, dangwei shuji.",
+        charStart: 12,
+        charEnd: 75,
+        lineStart: 3,
+        lineEnd: 3,
+        isReferenceLike: false,
+      },
+      {
+        blockIndex: 2,
+        blockType: "paragraph",
+        sectionPath: ["Governance"],
+        text: "Party organization shapes firm governance.",
+        charStart: 77,
+        charEnd: 118,
+        lineStart: 5,
+        lineEnd: 5,
+        isReferenceLike: false,
+      },
+    ],
+  });
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [
+      {
+        docKey,
+        itemKey: "ITEMS",
+        citationKey: "lee2024searchin",
+        title: "Search In",
+        authors: ["A"],
+        filePath: "/tmp/search-in.pdf",
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: 1,
+        mtimeMs: 1,
+        sourceHash: "hash-search-in",
+        lastIndexedAt: new Date().toISOString(),
+        normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+        manifestPath,
+      },
+    ],
+  });
+
+  const result = searchWithinDocuments(
+    "dangwei shuji",
+    { itemKey: "ITEMS" },
+    10,
+    {
+      bibliographyJsonPath: join(root, "bibliography.json"),
+      attachmentsRoot: root,
+      dataDir,
+    },
+  );
+
+  assert.equal(result.results.length > 0, true);
+  assert.equal(result.results[0]!.itemKey, "ITEMS");
+  assert.match(result.results[0]!.passage, /dangwei shuji/i);
+  assert.equal(result.results[0]!.blockStart, 1);
+  assert.equal(result.results[0]!.blockEnd, 1);
+});
+
+test("searchWithinDocuments searches across multiple attachments for the same key", () => {
+  const root = mkdtempSync(join(tmpdir(), "zotlit-search-in-multi-"));
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docOne = "g".repeat(40);
+  const docTwo = "h".repeat(40);
+  const manifestOnePath = join(manifestsDir, `${docOne}.json`);
+  const manifestTwoPath = join(manifestsDir, `${docTwo}.json`);
+
+  writeManifest(manifestOnePath, {
+    docKey: docOne,
+    itemKey: "ITEMS",
+    citationKey: "lee2024multi-search",
+    title: "Doc One",
+    authors: ["A"],
+    filePath: "/tmp/search-one.pdf",
+    normalizedPath: join(dataDir, "normalized", `${docOne}.md`),
+    blocks: [
+      {
+        blockIndex: 0,
+        blockType: "paragraph",
+        sectionPath: ["Body"],
+        text: "Unique paragraph one.",
+        charStart: 0,
+        charEnd: 21,
+        lineStart: 1,
+        lineEnd: 1,
+        isReferenceLike: false,
+      },
+    ],
+  });
+  writeManifest(manifestTwoPath, {
+    docKey: docTwo,
+    itemKey: "ITEMS",
+    citationKey: "lee2024multi-search",
+    title: "Doc Two",
+    authors: ["B"],
+    filePath: "/tmp/search-two.pdf",
+    normalizedPath: join(dataDir, "normalized", `${docTwo}.md`),
+    blocks: [
+      {
+        blockIndex: 0,
+        blockType: "paragraph",
+        sectionPath: ["Body"],
+        text: "Unique paragraph two.",
+        charStart: 0,
+        charEnd: 21,
+        lineStart: 1,
+        lineEnd: 1,
+        isReferenceLike: false,
+      },
+    ],
+  });
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [
+      {
+        docKey: docOne,
+        itemKey: "ITEMS",
+        citationKey: "lee2024multi-search",
+        title: "Doc One",
+        authors: ["A"],
+        filePath: "/tmp/search-one.pdf",
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: 1,
+        mtimeMs: 1,
+        sourceHash: "hash-search-one",
+        lastIndexedAt: new Date().toISOString(),
+        normalizedPath: join(dataDir, "normalized", `${docOne}.md`),
+        manifestPath: manifestOnePath,
+      },
+      {
+        docKey: docTwo,
+        itemKey: "ITEMS",
+        citationKey: "lee2024multi-search",
+        title: "Doc Two",
+        authors: ["B"],
+        filePath: "/tmp/search-two.pdf",
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: 1,
+        mtimeMs: 1,
+        sourceHash: "hash-search-two",
+        lastIndexedAt: new Date().toISOString(),
+        normalizedPath: join(dataDir, "normalized", `${docTwo}.md`),
+        manifestPath: manifestTwoPath,
+      },
+    ],
+  });
+
+  const result = searchWithinDocuments(
+    "unique paragraph",
+    { itemKey: "ITEMS" },
+    10,
+    {
+      bibliographyJsonPath: join(root, "bibliography.json"),
+      attachmentsRoot: root,
+      dataDir,
+    },
+  );
+
+  assert.equal(result.results.length, 2);
+  assert.deepEqual(
+    result.results.map((row) => row.file),
+    ["/tmp/search-one.pdf", "/tmp/search-two.pdf"],
+  );
 });
 
 test("readDocument reports multi-attachment conflict and expandDocument returns context blocks", () => {

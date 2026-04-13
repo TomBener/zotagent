@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 
 import { getDataPaths, resolveConfig, type ConfigOverrides } from "./config.js";
-import { findExactPhraseBlockRange } from "./exact.js";
+import { findExactPhraseBlockRange, normalizeExactText } from "./exact.js";
 import { isBoilerplateLikeText, isTableOfContentsLikeText } from "./heuristics.js";
 import { openQmdClient, type QmdFactory } from "./qmd.js";
 import { getReadyEntries, readCatalogFile, summarizeCatalog } from "./state.js";
@@ -184,6 +184,17 @@ function normalizeBlockText(text: string): string {
   return cleanText(text).replace(/\s+/g, " ").trim().toLowerCase();
 }
 
+function countOccurrences(haystack: string, needle: string): number {
+  if (!needle) return 0;
+  let count = 0;
+  let index = haystack.indexOf(needle);
+  while (index !== -1) {
+    count += 1;
+    index = haystack.indexOf(needle, index + needle.length);
+  }
+  return count;
+}
+
 type FullTextRow = {
   itemKey: string;
   citationKey?: string;
@@ -294,6 +305,89 @@ export async function searchLiterature(
   return {
     results: ordered.slice(0, limit).map(({ referenceOnly: _referenceOnly, ...row }) => row),
     ...(config.warnings.length > 0 ? { warnings: config.warnings } : {}),
+  };
+}
+
+export function searchWithinDocuments(
+  query: string,
+  input: { file?: string; itemKey?: string; citationKey?: string },
+  limit: number,
+  overrides: ConfigOverrides = {},
+): {
+  results: SearchResultRow[];
+  warnings: string[];
+} {
+  const normalizedQuery = normalizeExactText(query);
+  if (!normalizedQuery) {
+    throw new Error("Missing search text. Use: zotlit search-in \"<text>\" (--file <path> | --item-key <key> | --citation-key <key>)");
+  }
+
+  const queryTerms = [...new Set(normalizedQuery.split(" ").filter((term) => term.length > 0))];
+  const config = resolveConfig(overrides);
+  const catalog = readCatalogFile(getDataPaths(config.dataDir).catalogPath);
+  const entries = resolveReadyEntries(input, getReadyEntries(catalog), { allowMultipleMatches: true });
+  const mapped: Array<SearchResultRow & { referenceOnly: boolean }> = [];
+
+  for (const entry of entries) {
+    if (!entry.manifestPath || !exists(entry.manifestPath)) {
+      throw new Error(`Indexed manifest not found for file: ${entry.filePath}`);
+    }
+
+    const manifest = readManifest(entry.manifestPath);
+    const candidates = new Map<string, { range: { blockStart: number; blockEnd: number }; score: number }>();
+    const exactRange = findExactPhraseBlockRange(manifest, query);
+    if (exactRange) {
+      candidates.set(`${exactRange.blockStart}:${exactRange.blockEnd}`, {
+        range: exactRange,
+        score: 100 - (exactRange.blockEnd - exactRange.blockStart),
+      });
+    }
+
+    for (const block of manifest.blocks) {
+      const haystack = normalizeExactText(`${block.sectionPath.join(" ")} ${block.text}`);
+      if (!haystack) continue;
+
+      const phraseHits = countOccurrences(haystack, normalizedQuery);
+      let matchedTerms = 0;
+      let totalTermHits = 0;
+      for (const term of queryTerms) {
+        const hits = countOccurrences(haystack, term);
+        if (hits > 0) {
+          matchedTerms += 1;
+          totalTermHits += hits;
+        }
+      }
+      if (phraseHits === 0 && matchedTerms === 0) continue;
+
+      const score =
+        phraseHits * 10
+        + (queryTerms.length > 0 ? (matchedTerms / queryTerms.length) * 4 : 0)
+        + Math.min(totalTermHits, 5)
+        + (block.blockType === "heading" ? 0.5 : 0);
+      const key = `${block.blockIndex}:${block.blockIndex}`;
+      const existing = candidates.get(key);
+      if (!existing || score > existing.score) {
+        candidates.set(key, {
+          range: { blockStart: block.blockIndex, blockEnd: block.blockIndex },
+          score,
+        });
+      }
+    }
+
+    mapped.push(
+      ...[...candidates.values()]
+        .sort((a, b) => b.score - a.score || a.range.blockStart - b.range.blockStart)
+        .map((candidate) => buildSearchRow(entry, manifest, candidate.range, candidate.score)),
+    );
+  }
+
+  const substantive = mapped.filter((row) => !row.referenceOnly);
+  const references = mapped.filter((row) => row.referenceOnly);
+  const ordered = substantive.length > 0 ? [...substantive, ...references] : mapped;
+
+  return {
+    results: ordered.slice(0, limit).map(({ referenceOnly: _referenceOnly, ...row }) => row),
+    warnings: config.warnings,
   };
 }
 

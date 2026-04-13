@@ -277,6 +277,7 @@ test("help summarizes current commands and keeps config-only overrides out of th
   assert.match(result.stdout, /zotlit add \[--doi <doi> \| --s2-paper-id <id>\] \[--title <text>\]/);
   assert.match(result.stdout, /zotlit s2 "<text>" \[--limit <n>\]/);
   assert.match(result.stdout, /zotlit search "<text>" \[--exact\] \[--limit <n>\]/);
+  assert.match(result.stdout, /zotlit search-in "<text>" \(\[?--file <path> \| --item-key <key> \| --citation-key <key>\)? \[--limit <n>\]/);
   assert.match(result.stdout, /zotlit metadata "<text>" \[--limit <n>\] \[--field <field>\] \[--has-pdf\]/);
   assert.match(result.stdout, /zotlit fulltext \(\[?--file <path> \| --item-key <key> \| --citation-key <key>\)? \[--clean\]/);
   assert.match(result.stdout, /Options:/);
@@ -293,6 +294,7 @@ test("help summarizes current commands and keeps config-only overrides out of th
     /--limit <n>\s+Return up to n search results\. Default: 10 for search, 20 for metadata\./,
   );
   assert.match(result.stdout, /qmd reranking is skipped by default/);
+  assert.match(result.stdout, /search-in\s+Search within one indexed document or a selected set of matching attachments\./);
   assert.match(result.stdout, /--rerank\s+Enable qmd reranking/);
   assert.match(result.stdout, /--field <field>\s+Limit metadata search/);
   assert.match(result.stdout, /--has-pdf\s+Keep only metadata results/);
@@ -436,6 +438,20 @@ test("search rejects invalid limit and min-score values", () => {
   assert.match(invalidScore.stdout, /`--min-score` must be a finite number\./);
 });
 
+test("search-in rejects conflicting selectors and invalid limit values", () => {
+  const conflict = runCli(["search-in", "party", "--file", "/tmp/paper.pdf", "--item-key", "ITEM1"]);
+
+  assert.equal(conflict.status, 1);
+  assert.match(conflict.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
+  assert.match(conflict.stdout, /Provide exactly one of --file <path>, --item-key <key>, or --citation-key <key>\./);
+
+  const invalidLimit = runCli(["search-in", "party", "--item-key", "ITEM1", "--limit", "0"]);
+
+  assert.equal(invalidLimit.status, 1);
+  assert.match(invalidLimit.stdout, /"code": "INVALID_ARGUMENT"/);
+  assert.match(invalidLimit.stdout, /`--limit` must be a positive integer\./);
+});
+
 test("metadata rejects invalid limit values", () => {
   const result = runCli(["metadata", "aging in China", "--limit"]);
 
@@ -570,6 +586,78 @@ test("search exact returns elapsedMs in meta", async () => {
   assert.equal(parsed.ok, true);
   assert.deepEqual(parsed.data.results.map((row) => row.itemKey), ["ITEM9"]);
   assert.equal(typeof parsed.meta?.elapsedMs, "number");
+});
+
+test("search-in returns passages within a selected document", async () => {
+  const fixture = await createIndexedFixture();
+
+  const result = runCli([
+    "search-in",
+    "dangwei shuji",
+    "--item-key",
+    "ITEM9",
+    "--bibliography",
+    fixture.bibliographyPath,
+    "--attachments-root",
+    fixture.attachmentsRoot,
+    "--data-dir",
+    fixture.dataDir,
+  ]);
+
+  assert.equal(result.status, 0);
+  const parsed = JSON.parse(result.stdout) as {
+    ok: boolean;
+    data: {
+      results: Array<{
+        itemKey: string;
+        file: string;
+        passage: string;
+        blockStart: number;
+        blockEnd: number;
+      }>;
+    };
+    meta?: { elapsedMs?: number };
+  };
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.data.results.length > 0, true);
+  assert.equal(parsed.data.results[0]!.itemKey, "ITEM9");
+  assert.equal(parsed.data.results[0]!.file, fixture.filePath);
+  assert.match(parsed.data.results[0]!.passage, /dangwei shuji/i);
+  assert.equal(parsed.data.results[0]!.blockStart, 0);
+  assert.equal(parsed.data.results[0]!.blockEnd, 0);
+  assert.equal(typeof parsed.meta?.elapsedMs, "number");
+});
+
+test("search-in searches across all attachments when one key maps to multiple PDFs", async () => {
+  const fixture = await createMultiIndexedFixture();
+
+  const result = runCli([
+    "search-in",
+    "unique paragraph",
+    "--item-key",
+    "ITEMM",
+    "--bibliography",
+    fixture.bibliographyPath,
+    "--attachments-root",
+    fixture.attachmentsRoot,
+    "--data-dir",
+    fixture.dataDir,
+    "--limit",
+    "10",
+  ]);
+
+  assert.equal(result.status, 0);
+  const parsed = JSON.parse(result.stdout) as {
+    ok: boolean;
+    data: {
+      results: Array<{ file: string; passage: string }>;
+    };
+  };
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.data.results.length, 2);
+  assert.deepEqual(parsed.data.results.map((row) => row.file), fixture.filePaths);
+  assert.match(parsed.data.results[0]!.passage, /Unique paragraph 1\./);
+  assert.match(parsed.data.results[1]!.passage, /Unique paragraph 2\./);
 });
 
 test("expand resolves a unique attachment by itemKey", async () => {

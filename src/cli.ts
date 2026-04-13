@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 
 import { addS2PaperToZotero, addToZotero } from "./add.js";
 import { getDataPaths, type ConfigOverrides } from "./config.js";
-import { expandDocument, fullTextDocuments, getIndexStatus, readDocument, searchLiterature } from "./engine.js";
+import { expandDocument, fullTextDocuments, getIndexStatus, readDocument, searchLiterature, searchWithinDocuments } from "./engine.js";
 import { emitError, emitOk } from "./json.js";
 import { searchMetadata } from "./metadata.js";
 import { openQmdClient } from "./qmd.js";
@@ -184,6 +184,7 @@ Usage:
   zotlit add [--doi <doi> | --s2-paper-id <id>] [--title <text>] [--author <name>] [--year <text>] [--publication <text>] [--url <url>] [--url-date <date>] [--collection-key <key>] [--item-type <type>]
   zotlit s2 "<text>" [--limit <n>]
   zotlit search "<text>" [--exact] [--limit <n>] [--min-score <n>] [--rerank]
+  zotlit search-in "<text>" (--file <path> | --item-key <key> | --citation-key <key>) [--limit <n>]
   zotlit metadata "<text>" [--limit <n>] [--field <field>] [--has-pdf]
   zotlit read (--file <path> | --item-key <key> | --citation-key <key>) [--offset-block <n>] [--limit-blocks <n>]
   zotlit fulltext (--file <path> | --item-key <key> | --citation-key <key>) [--clean]
@@ -214,6 +215,10 @@ Commands:
     --exact uses Tantivy-based lexical search.
     qmd reranking is skipped by default; --rerank enables it for narrower queries.
     --exact cannot be combined with --rerank.
+
+  search-in
+    Search within one indexed document or a selected set of matching attachments.
+    Use one of --file, --item-key, or --citation-key to limit the search scope.
 
   metadata
     Search Zotero bibliography metadata from bibliography.json.
@@ -250,8 +255,8 @@ Options:
   --url-date <date>           Set the access date for the URL.
   --collection-key <key>      Add the new item to a Zotero collection by collection key.
   --item-type <type>          Override the Zotero item type. Default: journalArticle or webpage.
-  --item-key <key>            Resolve an indexed attachment by Zotero item key for read, fulltext, or expand.
-  --citation-key <key>        Resolve an indexed attachment by citation key for read, fulltext, or expand.
+  --item-key <key>            Resolve an indexed attachment by Zotero item key for search-in, read, fulltext, or expand.
+  --citation-key <key>        Resolve an indexed attachment by citation key for search-in, read, fulltext, or expand.
   --clean                     For fulltext, apply heuristic cleanup instead of returning the original normalized markdown.
   --exact                     Use Tantivy-based lexical search for search.
   --limit <n>                 Return up to n search results. Default: 10 for search, 20 for metadata.
@@ -272,6 +277,7 @@ Examples:
   zotlit add --title "Working Paper" --author "Jane Doe" --year 2026 --collection-key "ABCD1234" --url "https://example.com"
   zotlit s2 "state-owned enterprise governance" --limit 5
   zotlit search "dangwei shuji" --exact
+  zotlit search-in "dangwei shuji" --item-key KG326EEI
   zotlit search "state-owned enterprise governance" --limit 5 --min-score 0.4
   zotlit metadata "American Journal of Political Science" --field journal
   zotlit read --item-key KG326EEI
@@ -308,7 +314,7 @@ function compactPathMap(paths: ReturnType<typeof getDataPaths>): ReturnType<type
   };
 }
 
-function emitDocumentLookupError(prefix: "READ" | "FULLTEXT" | "EXPAND", error: unknown): void {
+function emitDocumentLookupError(prefix: "SEARCH_IN" | "READ" | "FULLTEXT" | "EXPAND", error: unknown): void {
   const message = error instanceof Error ? error.message : String(error);
   try {
     const parsedError = JSON.parse(message) as { message?: string; files?: string[] };
@@ -549,6 +555,60 @@ async function main(): Promise<void> {
         });
         emitOk(data, { elapsedMs: Date.now() - startedAt });
         return;
+      }
+
+      case "search-in": {
+        if ("query" in parsed.flags) {
+          emitError("UNEXPECTED_ARGUMENT", '`--query` has been removed. Use: zotlit search-in "<text>" (--file <path> | --item-key <key> | --citation-key <key>)');
+          return;
+        }
+        const query = parsed.positionals.slice(1).join(" ");
+        if (!query) {
+          emitError("MISSING_ARGUMENT", 'Missing search text. Use: zotlit search-in "<text>" (--file <path> | --item-key <key> | --citation-key <key>)');
+          return;
+        }
+        const file = getStringFlag(parsed.flags, "file");
+        const itemKey = getStringFlag(parsed.flags, "item-key");
+        const citationKey = getStringFlag(parsed.flags, "citation-key");
+        const selectorCount = Number(Boolean(file)) + Number(Boolean(itemKey)) + Number(Boolean(citationKey));
+        if (selectorCount > 1) {
+          emitError(
+            "UNEXPECTED_ARGUMENT",
+            "Provide exactly one of --file <path>, --item-key <key>, or --citation-key <key>.",
+          );
+          return;
+        }
+        if (selectorCount === 0) {
+          emitError("MISSING_ARGUMENT", "Provide one of --file <path>, --item-key <key>, or --citation-key <key>.");
+          return;
+        }
+        const limitInput = parseNumericFlag(parsed.flags, "limit", {
+          requirement: "a positive integer",
+          constraint: "a positive integer",
+          integer: true,
+          min: 1,
+        });
+        if (limitInput.error) {
+          emitError("INVALID_ARGUMENT", limitInput.error);
+          return;
+        }
+        try {
+          const data = searchWithinDocuments(
+            query,
+            {
+              ...(file ? { file } : {}),
+              ...(itemKey ? { itemKey } : {}),
+              ...(citationKey ? { citationKey } : {}),
+            },
+            limitInput.value ?? 10,
+            overrides,
+          );
+          emitOk(data, { elapsedMs: Date.now() - startedAt });
+          return;
+        } catch (error) {
+          emitDocumentLookupError("SEARCH_IN", error);
+          return;
+        }
       }
 
       case "metadata": {

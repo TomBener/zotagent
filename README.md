@@ -112,6 +112,7 @@ zotlit version
 zotlit add [--doi <doi> | --s2-paper-id <id>] [--title <text>] [--author <name>] [--year <text>] [--publication <text>] [--url <url>] [--url-date <date>] [--collection-key <key>] [--item-type <type>]
 zotlit s2 "<text>" [--limit <n>]
 zotlit search "<text>" [--exact] [--limit <n>] [--min-score <n>] [--rerank]
+zotlit search-in "<text>" (--file <path> | --item-key <key> | --citation-key <key>) [--limit <n>]
 zotlit metadata "<text>" [--limit <n>] [--field <field>] [--has-pdf]
 zotlit read (--file <path> | --item-key <key> | --citation-key <key>) [--offset-block <n>] [--limit-blocks <n>]
 zotlit fulltext (--file <path> | --item-key <key> | --citation-key <key>) [--clean]
@@ -190,6 +191,13 @@ zotlit search "how do party secretaries shape SOE governance" --rerank
 
 Default `search` skips qmd reranking for lower latency. Use `--rerank` only for narrower queries when ranking quality matters more than speed.
 
+Search within one indexed document:
+
+```bash
+zotlit search-in "dangwei shuji" --item-key KG326EEI
+zotlit search-in "firm governance" --file "~/Library/.../paper.pdf" --limit 5
+```
+
 Follow a search hit with `read`, `fulltext`, or `expand`:
 
 ```bash
@@ -227,6 +235,7 @@ zotlit expand --file "~/Library/.../paper.pdf" --block-start 10 --radius 2
 - New items created by `add` receive the tag `Added by AI Agent`.
 - Creating an item in Zotero does not make it instantly searchable in local PDF search. `metadata` depends on your exported bibliography JSON, and PDF search depends on `sync`.
 - `search`, `read`, `fulltext`, and `expand` only work on the local index. Run `zotlit sync` first when PDFs or manifests are stale.
+- `search-in` limits the search scope to one selected document, or to all matching attachments when one `itemKey` or `citationKey` maps to multiple indexed PDFs.
 - `fulltext` returns `results[]`. When one `itemKey` or `citationKey` maps to multiple indexed PDFs, all matching attachments are included instead of raising a conflict.
 - `fulltext` returns the original normalized markdown by default, without content filtering.
 - `fulltext --clean` applies heuristic cleanup, including duplicate-block removal and common boilerplate filtering.
