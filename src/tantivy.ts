@@ -1,4 +1,4 @@
-import { readFileSync, rmSync } from "node:fs";
+import { readFileSync } from "node:fs";
 
 import { getDataPaths } from "./config.js";
 import { buildExactIndexText, buildExactManifestBody, normalizeExactText } from "./exact.js";
@@ -25,6 +25,13 @@ export interface ExactSearchCandidate {
 
 export interface ExactIndexClient {
   rebuildExactIndex(readyEntries: CatalogEntry[]): Promise<void>;
+  syncExactIndex?(
+    readyEntries: CatalogEntry[],
+    changes: {
+      upserts: CatalogEntry[];
+      deleteDocKeys: string[];
+    },
+  ): Promise<void>;
   searchExactCandidates(query: string, limit: number): Promise<ExactSearchCandidate[]>;
   close(): Promise<void>;
 }
@@ -87,40 +94,116 @@ function openExistingIndex(paths: ReturnType<typeof getDataPaths>, tantivy: Tant
   return index;
 }
 
+function openOrCreateIndex(paths: ReturnType<typeof getDataPaths>, tantivy: TantivyModule): TantivyIndex {
+  ensureDir(paths.tantivyDir);
+  if (!exists(paths.tantivyDir) || !tantivy.Index.exists(paths.tantivyDir)) {
+    const index = new tantivy.Index(createExactSchema(tantivy), paths.tantivyDir, false);
+    registerExactTokenizers(index, tantivy);
+    return index;
+  }
+  return openExistingIndex(paths, tantivy);
+}
+
+function buildExactDocument(
+  entry: CatalogEntry,
+  tantivy: TantivyModule,
+): InstanceType<TantivyModule["Document"]> | null {
+  if (!entry.manifestPath || !exists(entry.manifestPath)) return null;
+
+  const manifest = readManifest(entry.manifestPath);
+  return buildExactDocumentFromManifest(entry, manifest, tantivy);
+}
+
+function buildExactDocumentFromManifest(
+  entry: CatalogEntry,
+  manifest: AttachmentManifest,
+  tantivy: TantivyModule,
+): InstanceType<TantivyModule["Document"]> {
+  const document = new tantivy.Document();
+  document.addText(DOC_KEY_FIELD, entry.docKey);
+
+  const title = buildExactIndexText([entry.title]);
+  const body = buildExactManifestBody(manifest);
+  if (title.length > 0) {
+    document.addText(TITLE_FIELD, title);
+  }
+  if (body.length > 0) {
+    document.addText(BODY_FIELD, body);
+  }
+
+  return document;
+}
+
+function exactIndexLooksEmpty(path: string): boolean {
+  if (!exists(path)) return true;
+  const metaPath = `${path}/meta.json`;
+  if (!exists(metaPath)) return true;
+  const meta = JSON.parse(readFileSync(metaPath, "utf-8")) as { segments?: unknown[] };
+  return !Array.isArray(meta.segments) || meta.segments.length === 0;
+}
+
 export async function openExactIndex(config: AppConfig): Promise<ExactIndexClient> {
   const paths = getDataPaths(config.dataDir);
-  ensureDir(paths.indexDir);
+  ensureDir(paths.tantivyDir);
   const tantivy = await loadTantivy();
 
   return {
     rebuildExactIndex: async (readyEntries) => {
-      rmSync(paths.tantivyDir, { recursive: true, force: true });
-      ensureDir(paths.tantivyDir);
-
-      const index = new tantivy.Index(createExactSchema(tantivy), paths.tantivyDir, false);
-      registerExactTokenizers(index, tantivy);
-
+      const index = openOrCreateIndex(paths, tantivy);
       const writer = index.writer();
+      writer.deleteAllDocuments();
+
       for (const entry of readyEntries) {
-        if (!entry.manifestPath || !exists(entry.manifestPath)) continue;
-
-        const manifest = readManifest(entry.manifestPath);
-        const document = new tantivy.Document();
-        document.addText(DOC_KEY_FIELD, entry.docKey);
-
-        const title = buildExactIndexText([entry.title]);
-        const body = buildExactManifestBody(manifest);
-        if (title.length > 0) {
-          document.addText(TITLE_FIELD, title);
-        }
-        if (body.length > 0) {
-          document.addText(BODY_FIELD, body);
-        }
-
+        const document = buildExactDocument(entry, tantivy);
+        if (!document) continue;
         writer.addDocument(document);
       }
 
       writer.commit();
+      writer.waitMergingThreads();
+      index.reload();
+    },
+
+    syncExactIndex: async (readyEntries, changes) => {
+      if (!exists(paths.tantivyDir) || !tantivy.Index.exists(paths.tantivyDir) || (readyEntries.length > 0 && exactIndexLooksEmpty(paths.tantivyDir))) {
+        const index = openOrCreateIndex(paths, tantivy);
+        const writer = index.writer();
+        writer.deleteAllDocuments();
+        for (const entry of readyEntries) {
+          const document = buildExactDocument(entry, tantivy);
+          if (!document) continue;
+          writer.addDocument(document);
+        }
+        writer.commit();
+        writer.waitMergingThreads();
+        index.reload();
+        return;
+      }
+
+      if (changes.upserts.length === 0 && changes.deleteDocKeys.length === 0) {
+        return;
+      }
+
+      const index = openExistingIndex(paths, tantivy);
+      const writer = index.writer();
+      const deleteDocKeys = new Set(changes.deleteDocKeys);
+
+      for (const entry of changes.upserts) {
+        deleteDocKeys.add(entry.docKey);
+      }
+
+      for (const docKey of deleteDocKeys) {
+        writer.deleteDocumentsByTerm(DOC_KEY_FIELD, docKey);
+      }
+
+      for (const entry of changes.upserts) {
+        const document = buildExactDocument(entry, tantivy);
+        if (!document) continue;
+        writer.addDocument(document);
+      }
+
+      writer.commit();
+      writer.waitMergingThreads();
       index.reload();
     },
 

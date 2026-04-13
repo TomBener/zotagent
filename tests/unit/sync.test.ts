@@ -411,6 +411,163 @@ test("runSync skips unchanged ready pdfs and refreshes qmd contexts", async () =
   assert.match(logBody, /paper\.pdf: reused existing indexed output/);
 });
 
+test("runSync sends exact-index deltas when incremental sync is available", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotlit-sync-exact-delta-"));
+  const attachmentsRoot = join(root, "attachments");
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  const normalizedDir = join(dataDir, "normalized");
+  mkdirSync(join(attachmentsRoot, "papers"), { recursive: true });
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+  mkdirSync(normalizedDir, { recursive: true });
+
+  const oldPdfPath = join(attachmentsRoot, "papers", "old.pdf");
+  const newPdfPath = join(attachmentsRoot, "papers", "new.pdf");
+  writeFileSync(oldPdfPath, "old-pdf");
+  writeFileSync(newPdfPath, "new-pdf");
+
+  const oldDocKey = sha1("papers/old.pdf");
+  const newDocKey = sha1("papers/new.pdf");
+  const oldManifestPath = join(manifestsDir, `${oldDocKey}.json`);
+  const oldNormalizedPath = join(normalizedDir, `${oldDocKey}.md`);
+  writeFileSync(oldNormalizedPath, "old body", "utf-8");
+  writeFileSync(
+    oldManifestPath,
+    JSON.stringify({
+      docKey: oldDocKey,
+      itemKey: "OLD1",
+      title: "Old Paper",
+      authors: ["A Author"],
+      filePath: oldPdfPath,
+      normalizedPath: oldNormalizedPath,
+      blocks: [],
+    }),
+    "utf-8",
+  );
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [
+      {
+        docKey: oldDocKey,
+        itemKey: "OLD1",
+        citationKey: "oldcite",
+        title: "Old Paper",
+        authors: ["A Author"],
+        filePath: oldPdfPath,
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: statSync(oldPdfPath).size,
+        mtimeMs: Math.trunc(statSync(oldPdfPath).mtimeMs),
+        sourceHash: "oldhash",
+        lastIndexedAt: new Date().toISOString(),
+        normalizedPath: oldNormalizedPath,
+        manifestPath: oldManifestPath,
+      },
+    ],
+  });
+
+  const bibliographyPath = join(root, "bibliography.json");
+  writeFileSync(
+    bibliographyPath,
+    JSON.stringify([
+      {
+        id: "newcite",
+        title: "New Paper",
+        author: [{ family: "B", given: "Author" }],
+        file: newPdfPath,
+        "zotero-item-key": "NEW1",
+      },
+    ]),
+    "utf-8",
+  );
+
+  let captured:
+    | {
+        readyDocKeys: string[];
+        upsertDocKeys: string[];
+        deleteDocKeys: string[];
+      }
+    | undefined;
+  let rebuildCalls = 0;
+
+  const fakeFactory = async () => ({
+    search: async () => [],
+    searchLex: async () => [],
+    update: async () => ({}),
+    embed: async () => ({}),
+    getStatus: async () => ({ documents: 1, collections: [], embeddings: { total: 1, stale: 0 } }),
+    listContexts: async () => [],
+    addContext: async () => true,
+    removeContext: async () => true,
+    close: async () => {},
+  });
+  const fakeExactFactory = async () => ({
+    rebuildExactIndex: async () => {
+      rebuildCalls += 1;
+    },
+    syncExactIndex: async (
+      readyEntries: Array<{ docKey: string }>,
+      changes: { upserts: Array<{ docKey: string }>; deleteDocKeys: string[] },
+    ) => {
+      captured = {
+        readyDocKeys: readyEntries.map((entry) => entry.docKey),
+        upsertDocKeys: changes.upserts.map((entry) => entry.docKey),
+        deleteDocKeys: changes.deleteDocKeys,
+      };
+    },
+    searchExactCandidates: async () => [],
+    close: async () => {},
+  });
+  const fakeExtractBatch = async (batch: Array<{ docKey: string; filePath: string; itemKey: string }>) => {
+    const out = new Map<string, { manifestPath: string; normalizedPath: string }>();
+    for (const attachment of batch) {
+      const normalizedPath = join(normalizedDir, `${attachment.docKey}.md`);
+      const manifestPath = join(manifestsDir, `${attachment.docKey}.json`);
+      writeFileSync(normalizedPath, "new body", "utf-8");
+      writeFileSync(
+        manifestPath,
+        JSON.stringify({
+          docKey: attachment.docKey,
+          itemKey: attachment.itemKey,
+          title: "New Paper",
+          authors: ["B Author"],
+          filePath: attachment.filePath,
+          normalizedPath,
+          blocks: [],
+        }),
+        "utf-8",
+      );
+      out.set(attachment.docKey, { manifestPath, normalizedPath });
+    }
+    return out;
+  };
+
+  const result = await runSync(
+    {
+      bibliographyJsonPath: bibliographyPath,
+      attachmentsRoot,
+      dataDir,
+    },
+    fakeFactory,
+    fakeExactFactory,
+    fakeExtractBatch,
+  );
+
+  assert.equal(result.stats.readyAttachments, 1);
+  assert.equal(rebuildCalls, 0);
+  assert.deepEqual(captured, {
+    readyDocKeys: [newDocKey],
+    upsertDocKeys: [newDocKey],
+    deleteDocKeys: [oldDocKey],
+  });
+});
+
 test("runSync resumes from existing normalized and manifest outputs when catalog state is missing", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotlit-sync-resume-"));
   const attachmentsRoot = join(root, "attachments");

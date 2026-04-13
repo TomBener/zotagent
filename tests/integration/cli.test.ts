@@ -76,7 +76,9 @@ async function createIndexedFixture(): Promise<{
   bibliographyPath: string;
   attachmentsRoot: string;
   dataDir: string;
+  docKey: string;
   filePath: string;
+  manifestPath: string;
   citationKey: string;
 }> {
   const root = mkdtempSync(join(tmpdir(), "zotlit-cli-indexed-"));
@@ -194,7 +196,7 @@ async function createIndexedFixture(): Promise<{
     await exactIndex.close();
   }
 
-  return { root, bibliographyPath, attachmentsRoot, dataDir, filePath, citationKey };
+  return { root, bibliographyPath, attachmentsRoot, dataDir, docKey, filePath, manifestPath, citationKey };
 }
 
 async function createMultiIndexedFixture(): Promise<{
@@ -586,6 +588,34 @@ test("search exact returns elapsedMs in meta", async () => {
   assert.equal(parsed.ok, true);
   assert.deepEqual(parsed.data.results.map((row) => row.itemKey), ["ITEM9"]);
   assert.equal(typeof parsed.meta?.elapsedMs, "number");
+});
+
+test("exact index client rebuilds a searchable on-disk index", async () => {
+  const fixture = await createIndexedFixture();
+  const config = createConfig(fixture.bibliographyPath, fixture.attachmentsRoot, fixture.dataDir);
+  const exactIndex = await openExactIndex(config);
+
+  try {
+    const firstPass = await exactIndex.searchExactCandidates("dangwei shuji", 10);
+    assert.deepEqual(firstPass.map((row) => row.docKey), [fixture.docKey]);
+
+    await exactIndex.rebuildExactIndex([
+      readyEntry(
+        fixture.dataDir,
+        fixture.docKey,
+        "ITEM9",
+        fixture.citationKey,
+        "Exact match",
+        fixture.filePath,
+        fixture.manifestPath,
+      ),
+    ]);
+
+    const secondPass = await exactIndex.searchExactCandidates("dangwei shuji", 10);
+    assert.deepEqual(secondPass.map((row) => row.docKey), [fixture.docKey]);
+  } finally {
+    await exactIndex.close();
+  }
 });
 
 test("search-in returns passages within a selected document", async () => {

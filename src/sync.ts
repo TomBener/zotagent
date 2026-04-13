@@ -793,6 +793,8 @@ export async function runSync(
     const previousCatalog = readCatalogFile(paths.catalogPath);
     const previousByDocKey = mapEntriesByDocKey(previousCatalog);
     const nextEntries: CatalogEntry[] = [];
+    const exactUpserts = new Map<string, CatalogEntry>();
+    const exactDeletes = new Set<string>();
     const changedAttachments: AttachmentCatalogEntry[] = [];
     const staleDocKeys = new Set(previousCatalog.entries.map((entry) => entry.docKey));
     const fileOutcomes: SyncFileOutcome[] = [];
@@ -829,6 +831,9 @@ export async function runSync(
       if (attachment.supported) stats.supportedAttachments += 1;
 
       if (!attachment.supported) {
+        if (previousByDocKey.get(attachment.docKey)?.extractStatus === "ready") {
+          exactDeletes.add(attachment.docKey);
+        }
         fileOutcomes.push({
           kind: "unsupported",
           filePath: attachment.filePath,
@@ -845,6 +850,9 @@ export async function runSync(
 
       const current = statSync(attachment.filePath, { throwIfNoEntry: false });
       if (!current || !attachment.exists) {
+        if (previousByDocKey.get(attachment.docKey)?.extractStatus === "ready") {
+          exactDeletes.add(attachment.docKey);
+        }
         fileOutcomes.push({
           kind: "missing",
           filePath: attachment.filePath,
@@ -906,17 +914,19 @@ export async function runSync(
         continue;
       }
 
-      nextEntries.push(
-        toCatalogEntry(attachment, {
-          extractStatus: "ready",
-          size: current.size,
-          mtimeMs: currentMtimeMs,
-          sourceHash: previousIsReadyAndUnchanged ? previous.sourceHash ?? null : null,
-          lastIndexedAt: previousIsReadyAndUnchanged ? previous.lastIndexedAt ?? null : null,
-          normalizedPath: previousIsReadyAndUnchanged ? previous.normalizedPath : fallbackNormalizedPath,
-          manifestPath: previousIsReadyAndUnchanged ? previous.manifestPath : fallbackManifestPath,
-        }),
-      );
+      const nextEntry = toCatalogEntry(attachment, {
+        extractStatus: "ready",
+        size: current.size,
+        mtimeMs: currentMtimeMs,
+        sourceHash: previousIsReadyAndUnchanged ? previous.sourceHash ?? null : null,
+        lastIndexedAt: previousIsReadyAndUnchanged ? previous.lastIndexedAt ?? null : null,
+        normalizedPath: previousIsReadyAndUnchanged ? previous.normalizedPath : fallbackNormalizedPath,
+        manifestPath: previousIsReadyAndUnchanged ? previous.manifestPath : fallbackManifestPath,
+      });
+      nextEntries.push(nextEntry);
+      if (!previousIsReadyAndUnchanged) {
+        exactUpserts.set(nextEntry.docKey, nextEntry);
+      }
       fileOutcomes.push({
         kind: "skipped",
         filePath: attachment.filePath,
@@ -940,17 +950,17 @@ export async function runSync(
       const current = statSync(attachment.filePath);
       const sourceHash = await sha1File(attachment.filePath);
 
-      nextEntries.push(
-        toCatalogEntry(attachment, {
-          extractStatus: "ready",
-          size: current.size,
-          mtimeMs: Math.trunc(current.mtimeMs),
-          sourceHash,
-          lastIndexedAt: new Date().toISOString(),
-          normalizedPath: written.normalizedPath,
-          manifestPath: written.manifestPath,
-        }),
-      );
+      const nextEntry = toCatalogEntry(attachment, {
+        extractStatus: "ready",
+        size: current.size,
+        mtimeMs: Math.trunc(current.mtimeMs),
+        sourceHash,
+        lastIndexedAt: new Date().toISOString(),
+        normalizedPath: written.normalizedPath,
+        manifestPath: written.manifestPath,
+      });
+      nextEntries.push(nextEntry);
+      exactUpserts.set(nextEntry.docKey, nextEntry);
       stats.readyAttachments += 1;
       stats.updatedAttachments += 1;
       stats.indexedAttachments += 1;
@@ -958,6 +968,9 @@ export async function runSync(
 
     function recordErroredAttachment(attachment: AttachmentCatalogEntry, error: unknown): void {
       const previous = previousByDocKey.get(attachment.docKey);
+      if (previous?.extractStatus === "ready") {
+        exactDeletes.add(attachment.docKey);
+      }
       deleteIfExists(previous?.normalizedPath);
       deleteIfExists(previous?.manifestPath);
 
@@ -1143,6 +1156,7 @@ export async function runSync(
     }
 
     for (const docKey of staleDocKeys) {
+      exactDeletes.add(docKey);
       stats.removedAttachments += 1;
     }
 
@@ -1157,8 +1171,17 @@ export async function runSync(
     const readyEntries = nextEntries.filter((entry) => entry.extractStatus === "ready");
     const exactIndex = await exactFactory(config);
     try {
-      logger.info("Rebuilding exact search index...", { console: true });
-      await exactIndex.rebuildExactIndex(readyEntries);
+      const deleteDocKeys = [...exactDeletes].filter((docKey) => !exactUpserts.has(docKey));
+      if (exactIndex.syncExactIndex) {
+        logger.info("Updating exact search index...", { console: true });
+        await exactIndex.syncExactIndex(readyEntries, {
+          upserts: [...exactUpserts.values()],
+          deleteDocKeys,
+        });
+      } else {
+        logger.info("Rebuilding exact search index...", { console: true });
+        await exactIndex.rebuildExactIndex(readyEntries);
+      }
     } finally {
       await exactIndex.close();
     }

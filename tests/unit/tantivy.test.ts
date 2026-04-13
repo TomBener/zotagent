@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -206,6 +206,166 @@ test("rebuildExactIndex replaces stale documents on full rebuild", async () => {
     assert.deepEqual(
       (await client.searchExactCandidates("dangwei shuji", 10)).map((candidate) => candidate.docKey),
       [newDocKey],
+    );
+  } finally {
+    await client.close();
+  }
+});
+
+test("syncExactIndex upserts changed documents and deletes stale ones", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotlit-tantivy-incremental-"));
+  const dataDir = join(root, "data");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const oldDocKey = "e".repeat(40);
+  const keptDocKey = "f".repeat(40);
+  const newDocKey = "g".repeat(40);
+  const oldManifestPath = join(manifestsDir, `${oldDocKey}.json`);
+  const keptManifestPath = join(manifestsDir, `${keptDocKey}.json`);
+  const newManifestPath = join(manifestsDir, `${newDocKey}.json`);
+
+  writeManifest(oldManifestPath, {
+    docKey: oldDocKey,
+    itemKey: "OLD1",
+    title: "Old",
+    authors: ["Old"],
+    filePath: "/tmp/old.pdf",
+    normalizedPath: join(dataDir, "normalized", `${oldDocKey}.md`),
+    blocks: [
+      {
+        blockIndex: 0,
+        blockType: "paragraph",
+        sectionPath: ["Body"],
+        text: "This old document mentions cadres only.",
+        charStart: 0,
+        charEnd: 39,
+        lineStart: 1,
+        lineEnd: 1,
+        isReferenceLike: false,
+      },
+    ],
+  });
+  writeManifest(keptManifestPath, {
+    docKey: keptDocKey,
+    itemKey: "KEEP1",
+    title: "Kept",
+    authors: ["Keep"],
+    filePath: "/tmp/kept.pdf",
+    normalizedPath: join(dataDir, "normalized", `${keptDocKey}.md`),
+    blocks: [
+      {
+        blockIndex: 0,
+        blockType: "paragraph",
+        sectionPath: ["Body"],
+        text: "The company party secretary is the dangwei shuji.",
+        charStart: 0,
+        charEnd: 50,
+        lineStart: 1,
+        lineEnd: 1,
+        isReferenceLike: false,
+      },
+    ],
+  });
+  writeManifest(newManifestPath, {
+    docKey: newDocKey,
+    itemKey: "NEW1",
+    title: "New",
+    authors: ["New"],
+    filePath: "/tmp/new.pdf",
+    normalizedPath: join(dataDir, "normalized", `${newDocKey}.md`),
+    blocks: [
+      {
+        blockIndex: 0,
+        blockType: "paragraph",
+        sectionPath: ["Body"],
+        text: "Xie Shuqing visited the work team.",
+        charStart: 0,
+        charEnd: 35,
+        lineStart: 1,
+        lineEnd: 1,
+        isReferenceLike: false,
+      },
+    ],
+  });
+
+  const client = await openExactIndex(createConfig(dataDir));
+  try {
+    await client.rebuildExactIndex([
+      readyEntry(dataDir, oldDocKey, "OLD1", "Old", "/tmp/old.pdf", oldManifestPath),
+      readyEntry(dataDir, keptDocKey, "KEEP1", "Kept", "/tmp/kept.pdf", keptManifestPath),
+    ]);
+
+    await client.syncExactIndex?.(
+      [
+        readyEntry(dataDir, keptDocKey, "KEEP1", "Kept", "/tmp/kept.pdf", keptManifestPath),
+        readyEntry(dataDir, newDocKey, "NEW1", "New", "/tmp/new.pdf", newManifestPath),
+      ],
+      {
+        upserts: [readyEntry(dataDir, newDocKey, "NEW1", "New", "/tmp/new.pdf", newManifestPath)],
+        deleteDocKeys: [oldDocKey],
+      },
+    );
+
+    assert.deepEqual(await client.searchExactCandidates("cadres", 10), []);
+    assert.deepEqual(
+      (await client.searchExactCandidates("dangwei shuji", 10)).map((candidate) => candidate.docKey),
+      [keptDocKey],
+    );
+    assert.deepEqual(
+      (await client.searchExactCandidates("xie shuqing", 10)).map((candidate) => candidate.docKey),
+      [newDocKey],
+    );
+  } finally {
+    await client.close();
+  }
+});
+
+test("syncExactIndex rebuilds from ready entries when the on-disk index is missing", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotlit-tantivy-missing-"));
+  const dataDir = join(root, "data");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docKey = "h".repeat(40);
+  const manifestPath = join(manifestsDir, `${docKey}.json`);
+  writeManifest(manifestPath, {
+    docKey,
+    itemKey: "ITEM1",
+    title: "Missing index",
+    authors: ["A"],
+    filePath: "/tmp/missing.pdf",
+    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+    blocks: [
+      {
+        blockIndex: 0,
+        blockType: "paragraph",
+        sectionPath: ["Body"],
+        text: "The company party secretary is the dangwei shuji.",
+        charStart: 0,
+        charEnd: 50,
+        lineStart: 1,
+        lineEnd: 1,
+        isReferenceLike: false,
+      },
+    ],
+  });
+
+  const client = await openExactIndex(createConfig(dataDir));
+  try {
+    rmSync(getDataPaths(dataDir).tantivyDir, { recursive: true, force: true });
+
+    await client.syncExactIndex?.(
+      [readyEntry(dataDir, docKey, "ITEM1", "Missing index", "/tmp/missing.pdf", manifestPath)],
+      {
+        upserts: [],
+        deleteDocKeys: [],
+      },
+    );
+
+    assert.deepEqual(
+      (await client.searchExactCandidates("dangwei shuji", 10)).map((candidate) => candidate.docKey),
+      [docKey],
     );
   } finally {
     await client.close();
