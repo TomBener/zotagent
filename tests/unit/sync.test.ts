@@ -665,6 +665,290 @@ test("runSync resumes from existing normalized and manifest outputs when catalog
   assert.equal(nextCatalog.entries[0]?.manifestPath, manifestPath);
 });
 
+test("runSync re-extracts attachments when fallback normalized output is empty", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotlit-sync-empty-fallback-"));
+  const attachmentsRoot = join(root, "attachments");
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  const normalizedDir = join(dataDir, "normalized");
+  mkdirSync(join(attachmentsRoot, "papers"), { recursive: true });
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+  mkdirSync(normalizedDir, { recursive: true });
+
+  const pdfPath = join(attachmentsRoot, "papers", "paper.pdf");
+  writeFileSync(pdfPath, "pdf");
+  const docKey = sha1("papers/paper.pdf");
+  const normalizedPath = join(normalizedDir, `${docKey}.md`);
+  const manifestPath = join(manifestsDir, `${docKey}.json`);
+  writeFileSync(normalizedPath, "", "utf-8");
+  writeFileSync(
+    manifestPath,
+    JSON.stringify({
+      docKey,
+      itemKey: "ITEM1",
+      title: "Paper",
+      authors: ["A Author"],
+      filePath: pdfPath,
+      normalizedPath,
+      blocks: [],
+    }),
+    "utf-8",
+  );
+
+  const bibliographyPath = join(root, "bibliography.json");
+  writeFileSync(
+    bibliographyPath,
+    JSON.stringify([
+      {
+        id: "cite",
+        title: "Paper",
+        author: [{ family: "A", given: "Author" }],
+        file: pdfPath,
+        "zotero-item-key": "ITEM1",
+      },
+    ]),
+    "utf-8",
+  );
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [],
+  });
+
+  let extractCalls = 0;
+  const fakeFactory = async () => ({
+    search: async () => [],
+    searchLex: async () => [],
+    update: async () => ({}),
+    embed: async () => ({}),
+    getStatus: async () => ({ totalDocuments: 1, needsEmbedding: 0, hasVectorIndex: true, collections: [] }),
+    listContexts: async () => [],
+    addContext: async () => true,
+    removeContext: async () => true,
+    close: async () => {},
+  });
+  const fakeExactFactory = async () => ({
+    rebuildExactIndex: async () => {},
+    searchExactCandidates: async () => [],
+    close: async () => {},
+  });
+  const fakeExtractBatch = async (batch: Array<{ docKey: string; filePath: string; itemKey: string }>) => {
+    extractCalls += 1;
+    const attachment = batch[0]!;
+    writeFileSync(normalizedPath, "Recovered body", "utf-8");
+    writeFileSync(
+      manifestPath,
+      JSON.stringify({
+        docKey: attachment.docKey,
+        itemKey: attachment.itemKey,
+        title: "Paper",
+        authors: ["A Author"],
+        filePath: attachment.filePath,
+        normalizedPath,
+        blocks: [],
+      }),
+      "utf-8",
+    );
+    return new Map([[attachment.docKey, { manifestPath, normalizedPath }]]);
+  };
+
+  const result = await runSync(
+    {
+      bibliographyJsonPath: bibliographyPath,
+      attachmentsRoot,
+      dataDir,
+    },
+    fakeFactory,
+    fakeExactFactory,
+    fakeExtractBatch,
+  );
+
+  assert.equal(extractCalls, 1);
+  assert.equal(result.stats.readyAttachments, 1);
+  assert.equal(result.stats.updatedAttachments, 1);
+  assert.equal(result.stats.skippedAttachments, 0);
+  assert.equal(readFileSync(normalizedPath, "utf-8"), "Recovered body");
+});
+
+test("runSync keeps embedding until qmd no longer reports pending documents", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotlit-sync-embed-loop-"));
+  const attachmentsRoot = join(root, "attachments");
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  const normalizedDir = join(dataDir, "normalized");
+  mkdirSync(join(attachmentsRoot, "papers"), { recursive: true });
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+  mkdirSync(normalizedDir, { recursive: true });
+
+  const pdfPath = join(attachmentsRoot, "papers", "paper.pdf");
+  writeFileSync(pdfPath, "pdf");
+  const currentStat = statSync(pdfPath);
+  const docKey = sha1("papers/paper.pdf");
+  const normalizedPath = join(normalizedDir, `${docKey}.md`);
+  const manifestPath = join(manifestsDir, `${docKey}.json`);
+  writeFileSync(normalizedPath, "Body", "utf-8");
+  writeFileSync(
+    manifestPath,
+    JSON.stringify({
+      docKey,
+      itemKey: "ITEM1",
+      title: "Paper",
+      authors: ["A"],
+      filePath: pdfPath,
+      normalizedPath,
+      blocks: [],
+    }),
+    "utf-8",
+  );
+
+  const bibliographyPath = join(root, "bibliography.json");
+  writeFileSync(
+    bibliographyPath,
+    JSON.stringify([
+      {
+        id: "cite",
+        title: "Paper",
+        author: [{ family: "A", given: "Author" }],
+        file: pdfPath,
+        "zotero-item-key": "ITEM1",
+      },
+    ]),
+    "utf-8",
+  );
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [
+      {
+        docKey,
+        itemKey: "ITEM1",
+        citationKey: "cite",
+        title: "Paper",
+        authors: ["A Author"],
+        filePath: pdfPath,
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: currentStat.size,
+        mtimeMs: Math.trunc(currentStat.mtimeMs),
+        sourceHash: "existinghash",
+        lastIndexedAt: new Date().toISOString(),
+        normalizedPath,
+        manifestPath,
+      },
+    ],
+  });
+
+  let embedCalls = 0;
+  let needsEmbedding = 5;
+  const fakeFactory = async () => ({
+    search: async () => [],
+    searchLex: async () => [],
+    update: async () => ({}),
+    embed: async () => {
+      embedCalls += 1;
+      needsEmbedding = Math.max(0, needsEmbedding - 2);
+      return {};
+    },
+    getStatus: async () => ({
+      totalDocuments: 1,
+      needsEmbedding,
+      hasVectorIndex: needsEmbedding < 5,
+      collections: [],
+    }),
+    listContexts: async () => [],
+    addContext: async () => true,
+    removeContext: async () => true,
+    close: async () => {},
+  });
+  const fakeExactFactory = async () => ({
+    rebuildExactIndex: async () => {},
+    searchExactCandidates: async () => [],
+    close: async () => {},
+  });
+
+  await runSync(
+    {
+      bibliographyJsonPath: bibliographyPath,
+      attachmentsRoot,
+      dataDir,
+    },
+    fakeFactory,
+    fakeExactFactory,
+  );
+
+  assert.equal(embedCalls, 3);
+  assert.equal(needsEmbedding, 0);
+});
+
+test("runSync marks empty txt extraction output as error", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotlit-sync-empty-txt-"));
+  const attachmentsRoot = join(root, "attachments");
+  const dataDir = join(root, "data");
+  mkdirSync(join(attachmentsRoot, "notes"), { recursive: true });
+
+  const txtPath = join(attachmentsRoot, "notes", "empty.txt");
+  writeFileSync(txtPath, "", "utf-8");
+
+  const bibliographyPath = join(root, "bibliography.json");
+  writeFileSync(
+    bibliographyPath,
+    JSON.stringify([
+      {
+        id: "cite",
+        title: "Empty Transcript",
+        author: [{ family: "A", given: "Author" }],
+        file: txtPath,
+        "zotero-item-key": "ITEM1",
+      },
+    ]),
+    "utf-8",
+  );
+
+  const fakeFactory = async () => ({
+    search: async () => [],
+    searchLex: async () => [],
+    update: async () => ({}),
+    embed: async () => ({}),
+    getStatus: async () => ({ totalDocuments: 0, needsEmbedding: 0, hasVectorIndex: false, collections: [] }),
+    listContexts: async () => [],
+    addContext: async () => true,
+    removeContext: async () => true,
+    close: async () => {},
+  });
+  const fakeExactFactory = async () => ({
+    rebuildExactIndex: async () => {},
+    searchExactCandidates: async () => [],
+    close: async () => {},
+  });
+
+  const result = await runSync(
+    {
+      bibliographyJsonPath: bibliographyPath,
+      attachmentsRoot,
+      dataDir,
+    },
+    fakeFactory,
+    fakeExactFactory,
+    () => Promise.resolve(new Map()),
+    () => {},
+  );
+
+  assert.equal(result.stats.readyAttachments, 0);
+  assert.equal(result.stats.errorAttachments, 1);
+
+  const catalog = readCatalogFile(join(dataDir, "index", "catalog.json"));
+  assert.equal(catalog.entries[0]?.extractStatus, "error");
+  assert.match(catalog.entries[0]?.error || "", /Extracted output was empty/);
+});
+
 test("runSync indexes txt attachments without Java extraction", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotlit-sync-txt-"));
   const attachmentsRoot = join(root, "attachments");

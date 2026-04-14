@@ -475,6 +475,21 @@ function tryReadManifest(path: string): AttachmentManifest | undefined {
   }
 }
 
+function hasReusableNormalizedOutput(path: string): boolean {
+  const stats = statSync(path, { throwIfNoEntry: false });
+  return Boolean(stats && stats.size > 0);
+}
+
+function assertNonEmptyExtractedOutput(
+  filePath: string,
+  built: { markdown: string; manifest: AttachmentManifest },
+): void {
+  if (built.markdown.trim().length > 0 && built.manifest.blocks.length > 0) {
+    return;
+  }
+  throw new Error(`Extracted output was empty for ${filePath}`);
+}
+
 function hasReusableArtifacts(
   attachment: AttachmentCatalogEntry,
   normalizedPath: string | undefined,
@@ -482,6 +497,7 @@ function hasReusableArtifacts(
 ): normalizedPath is string {
   if (!normalizedPath || !manifestPath) return false;
   if (!exists(normalizedPath) || !exists(manifestPath)) return false;
+  if (!hasReusableNormalizedOutput(normalizedPath)) return false;
 
   const manifest = tryReadManifest(manifestPath);
   if (!manifest) return false;
@@ -632,6 +648,7 @@ async function extractBatch(
         readFileSync(jsonPath, "utf-8"),
         normalizedPath,
       );
+      assertNonEmptyExtractedOutput(attachment.filePath, built);
 
       writeFileSync(normalizedPath, built.markdown, "utf-8");
       writeFileSync(manifestPath, JSON.stringify(built.manifest, null, 2), "utf-8");
@@ -693,6 +710,7 @@ async function extractNonPdfAttachment(
   ensureParentDir(manifestPath);
 
   const built = buildMarkdownManifest(attachment, markdown, normalizedPath);
+  assertNonEmptyExtractedOutput(attachment.filePath, built);
   writeFileSync(normalizedPath, built.markdown, "utf-8");
   writeFileSync(manifestPath, JSON.stringify(built.manifest, null, 2), "utf-8");
 
@@ -728,6 +746,48 @@ async function syncQmdContexts(qmd: Awaited<ReturnType<QmdFactory>>, readyEntrie
 
   for (const entry of readyEntries) {
     await qmd.addContext("library", `/${entry.docKey}.md`, buildContext(entry));
+  }
+}
+
+async function embedQmdUntilSettled(
+  qmd: Awaited<ReturnType<QmdFactory>>,
+  logger: SyncLogger,
+): Promise<void> {
+  let pass = 0;
+
+  while (true) {
+    const before = await qmd.getStatus();
+    if (before.needsEmbedding <= 0) return;
+
+    pass += 1;
+    logger.info(
+      pass === 1
+        ? `Generating embeddings for ${before.needsEmbedding} document(s).`
+        : `Continuing embeddings (pass ${pass}, ${before.needsEmbedding} document(s) remaining).`,
+      { console: true },
+    );
+
+    await qmd.embed();
+
+    const after = await qmd.getStatus();
+    if (after.needsEmbedding <= 0) {
+      if (pass > 1) {
+        logger.info(`Embedding complete after ${pass} pass(es).`, { console: true });
+      }
+      return;
+    }
+
+    if (after.needsEmbedding >= before.needsEmbedding) {
+      logger.warn(
+        `Embedding made no further progress; ${after.needsEmbedding} document(s) still need embeddings.`,
+      );
+      return;
+    }
+
+    logger.info(
+      `Embedding pass ${pass} finished: ${before.needsEmbedding - after.needsEmbedding} document(s) completed, ${after.needsEmbedding} remaining.`,
+      { console: true },
+    );
   }
 }
 
@@ -1242,8 +1302,7 @@ export async function runSync(
       await qmd.update();
       await syncQmdContexts(qmd, readyEntries);
       if (readyEntries.length > 0) {
-        logger.info("Generating embeddings...", { console: true });
-        await qmd.embed();
+        await embedQmdUntilSettled(qmd, logger);
       }
     } finally {
       await qmd.close();

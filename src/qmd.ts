@@ -4,6 +4,19 @@ import { getDataPaths } from "./config.js";
 import type { AppConfig } from "./types.js";
 import { ensureDir } from "./utils.js";
 
+export interface QmdStatus {
+  totalDocuments: number;
+  needsEmbedding: number;
+  hasVectorIndex: boolean;
+  collections: Array<{
+    name: string;
+    path: string | null;
+    pattern: string | null;
+    documents: number;
+    lastUpdated: string;
+  }>;
+}
+
 export interface QmdClient {
   search(options: {
     query?: string;
@@ -25,7 +38,7 @@ export interface QmdClient {
   >;
   update(): Promise<unknown>;
   embed(): Promise<unknown>;
-  getStatus(): Promise<unknown>;
+  getStatus(): Promise<QmdStatus>;
   listContexts(): Promise<Array<{ collection: string; path: string; context: string }>>;
   addContext(collectionName: string, pathPrefix: string, contextText: string): Promise<boolean>;
   removeContext(collectionName: string, pathPrefix: string): Promise<boolean>;
