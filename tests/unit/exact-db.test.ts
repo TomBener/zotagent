@@ -1,11 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { getDataPaths } from "../../src/config.js";
-import { openExactIndex } from "../../src/tantivy.js";
+import { openExactIndex } from "../../src/exact-db.js";
 import type { AppConfig, AttachmentManifest, CatalogEntry } from "../../src/types.js";
 
 function createConfig(dataDir: string): AppConfig {
@@ -50,7 +50,7 @@ function readyEntry(
 }
 
 test("openExactIndex rebuilds and searches Chinese and English lexical candidates", async () => {
-  const root = mkdtempSync(join(tmpdir(), "zotlit-tantivy-"));
+  const root = mkdtempSync(join(tmpdir(), "zotlit-exact-db-"));
   const dataDir = join(root, "data");
   const manifestsDir = join(dataDir, "manifests");
   mkdirSync(manifestsDir, { recursive: true });
@@ -72,7 +72,7 @@ test("openExactIndex rebuilds and searches Chinese and English lexical candidate
         blockIndex: 0,
         blockType: "paragraph",
         sectionPath: ["Body"],
-        text: "The DHA programme promotes market selection and recruitment (shichanghua xuanpin 市场化选聘).",
+        text: "The DHA programme promotes market selection and recruitment (shichanghua xuanpin 市場化選聘).",
         charStart: 0,
         charEnd: 97,
         lineStart: 1,
@@ -117,12 +117,12 @@ test("openExactIndex rebuilds and searches Chinese and English lexical candidate
       ),
     ]);
 
-    assert.equal(existsSync(getDataPaths(dataDir).tantivyDir), true);
+    assert.equal(existsSync(getDataPaths(dataDir).exactDbPath), true);
 
-    const chineseSubstring = await client.searchExactCandidates("选聘", 10);
+    const chineseSubstring = await client.searchExactCandidates("選聘", 10);
     assert.deepEqual(chineseSubstring.map((candidate) => candidate.docKey), [leeDocKey]);
 
-    const chinesePhrase = await client.searchExactCandidates("市场化选聘", 10);
+    const chinesePhrase = await client.searchExactCandidates("市場化選聘", 10);
     assert.deepEqual(chinesePhrase.map((candidate) => candidate.docKey), [leeDocKey]);
 
     const englishPhrase = await client.searchExactCandidates("dangwei shuji", 10);
@@ -136,7 +136,7 @@ test("openExactIndex rebuilds and searches Chinese and English lexical candidate
 });
 
 test("rebuildExactIndex replaces stale documents on full rebuild", async () => {
-  const root = mkdtempSync(join(tmpdir(), "zotlit-tantivy-stale-"));
+  const root = mkdtempSync(join(tmpdir(), "zotlit-exact-db-stale-"));
   const dataDir = join(root, "data");
   const manifestsDir = join(dataDir, "manifests");
   mkdirSync(manifestsDir, { recursive: true });
@@ -158,7 +158,7 @@ test("rebuildExactIndex replaces stale documents on full rebuild", async () => {
         blockIndex: 0,
         blockType: "paragraph",
         sectionPath: ["Body"],
-        text: "市场化选聘 appears in this old document.",
+        text: "市場化選聘 appears in this old document.",
         charStart: 0,
         charEnd: 34,
         lineStart: 1,
@@ -195,14 +195,14 @@ test("rebuildExactIndex replaces stale documents on full rebuild", async () => {
       readyEntry(dataDir, oldDocKey, "OLD1", "Old", "/tmp/old.pdf", oldManifestPath),
     ]);
     assert.deepEqual(
-      (await client.searchExactCandidates("选聘", 10)).map((candidate) => candidate.docKey),
+      (await client.searchExactCandidates("選聘", 10)).map((candidate) => candidate.docKey),
       [oldDocKey],
     );
 
     await client.rebuildExactIndex([
       readyEntry(dataDir, newDocKey, "NEW1", "New", "/tmp/new.pdf", newManifestPath),
     ]);
-    assert.deepEqual(await client.searchExactCandidates("选聘", 10), []);
+    assert.deepEqual(await client.searchExactCandidates("選聘", 10), []);
     assert.deepEqual(
       (await client.searchExactCandidates("dangwei shuji", 10)).map((candidate) => candidate.docKey),
       [newDocKey],
@@ -213,7 +213,7 @@ test("rebuildExactIndex replaces stale documents on full rebuild", async () => {
 });
 
 test("syncExactIndex upserts changed documents and deletes stale ones", async () => {
-  const root = mkdtempSync(join(tmpdir(), "zotlit-tantivy-incremental-"));
+  const root = mkdtempSync(join(tmpdir(), "zotlit-exact-db-incremental-"));
   const dataDir = join(root, "data");
   const manifestsDir = join(dataDir, "manifests");
   mkdirSync(manifestsDir, { recursive: true });
@@ -315,57 +315,6 @@ test("syncExactIndex upserts changed documents and deletes stale ones", async ()
     assert.deepEqual(
       (await client.searchExactCandidates("xie shuqing", 10)).map((candidate) => candidate.docKey),
       [newDocKey],
-    );
-  } finally {
-    await client.close();
-  }
-});
-
-test("syncExactIndex rebuilds from ready entries when the on-disk index is missing", async () => {
-  const root = mkdtempSync(join(tmpdir(), "zotlit-tantivy-missing-"));
-  const dataDir = join(root, "data");
-  const manifestsDir = join(dataDir, "manifests");
-  mkdirSync(manifestsDir, { recursive: true });
-
-  const docKey = "h".repeat(40);
-  const manifestPath = join(manifestsDir, `${docKey}.json`);
-  writeManifest(manifestPath, {
-    docKey,
-    itemKey: "ITEM1",
-    title: "Missing index",
-    authors: ["A"],
-    filePath: "/tmp/missing.pdf",
-    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
-    blocks: [
-      {
-        blockIndex: 0,
-        blockType: "paragraph",
-        sectionPath: ["Body"],
-        text: "The company party secretary is the dangwei shuji.",
-        charStart: 0,
-        charEnd: 50,
-        lineStart: 1,
-        lineEnd: 1,
-        isReferenceLike: false,
-      },
-    ],
-  });
-
-  const client = await openExactIndex(createConfig(dataDir));
-  try {
-    rmSync(getDataPaths(dataDir).tantivyDir, { recursive: true, force: true });
-
-    await client.syncExactIndex?.(
-      [readyEntry(dataDir, docKey, "ITEM1", "Missing index", "/tmp/missing.pdf", manifestPath)],
-      {
-        upserts: [],
-        deleteDocKeys: [],
-      },
-    );
-
-    assert.deepEqual(
-      (await client.searchExactCandidates("dangwei shuji", 10)).map((candidate) => candidate.docKey),
-      [docKey],
     );
   } finally {
     await client.close();

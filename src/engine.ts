@@ -5,7 +5,7 @@ import { findExactPhraseBlockRange, normalizeExactText } from "./exact.js";
 import { isBoilerplateLikeText, isTableOfContentsLikeText } from "./heuristics.js";
 import { openQmdClient, type QmdFactory } from "./qmd.js";
 import { getReadyEntries, readCatalogFile, summarizeCatalog } from "./state.js";
-import { openExactIndex, type ExactIndexFactory } from "./tantivy.js";
+import { openExactIndex, type ExactIndexFactory } from "./exact-db.js";
 import type { AttachmentManifest, CatalogEntry, ManifestBlock, SearchResultRow } from "./types.js";
 import { cleanText, compactHomePath, exists, normalizePathForLookup, overlap } from "./utils.js";
 

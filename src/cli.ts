@@ -212,7 +212,7 @@ Commands:
 
   search
     Search indexed Zotero PDFs.
-    --exact uses Tantivy-based lexical search.
+    --exact uses exact substring search.
     qmd reranking is skipped by default; --rerank enables it for narrower queries.
     --exact cannot be combined with --rerank.
 
@@ -258,7 +258,7 @@ Options:
   --item-key <key>            Resolve an indexed attachment by Zotero item key for search-in, read, fulltext, or expand.
   --citation-key <key>        Resolve an indexed attachment by citation key for search-in, read, fulltext, or expand.
   --clean                     For fulltext, apply heuristic cleanup instead of returning the original normalized markdown.
-  --exact                     Use Tantivy-based lexical search for search.
+  --exact                     Use exact substring search.
   --limit <n>                 Return up to n search results. Default: 10 for search, 20 for metadata.
   --min-score <n>             Drop lower-scoring search hits before mapping.
   --rerank                    Enable qmd reranking for search. Slower, useful for narrower queries.
@@ -307,7 +307,7 @@ function compactPathMap(paths: ReturnType<typeof getDataPaths>): ReturnType<type
     normalizedDir: compactHomePath(paths.normalizedDir),
     manifestsDir: compactHomePath(paths.manifestsDir),
     indexDir: compactHomePath(paths.indexDir),
-    tantivyDir: compactHomePath(paths.tantivyDir),
+    exactDbPath: compactHomePath(paths.exactDbPath),
     tempDir: compactHomePath(paths.tempDir),
     qmdDbPath: compactHomePath(paths.qmdDbPath),
     catalogPath: compactHomePath(paths.catalogPath),

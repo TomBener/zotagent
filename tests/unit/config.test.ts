@@ -29,8 +29,8 @@ test("getDataPaths keeps index outputs in dataDir but uses system temp for extra
     "/Users/example/Library/Mobile Documents/com~apple~CloudDocs/Zotlit/index",
   );
   assert.equal(
-    paths.tantivyDir,
-    "/Users/example/Library/Mobile Documents/com~apple~CloudDocs/Zotlit/index/tantivy",
+    paths.exactDbPath,
+    "/Users/example/Library/Mobile Documents/com~apple~CloudDocs/Zotlit/index/exact.sqlite",
   );
   assert.equal(paths.tempDir, resolve(tmpdir(), "zotlit"));
 });

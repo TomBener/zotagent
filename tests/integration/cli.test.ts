@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { openExactIndex } from "../../src/tantivy.js";
+import { openExactIndex } from "../../src/exact-db.js";
 import { writeCatalogFile } from "../../src/state.js";
 import type { AppConfig, AttachmentManifest, CatalogEntry, CatalogFile } from "../../src/types.js";
 

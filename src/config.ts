@@ -156,7 +156,7 @@ export function getDataPaths(dataDir: string): DataPaths {
     normalizedDir: resolve(resolvedDataDir, "normalized"),
     manifestsDir: resolve(resolvedDataDir, "manifests"),
     indexDir,
-    tantivyDir: resolve(indexDir, "tantivy"),
+    exactDbPath: resolve(indexDir, "exact.sqlite"),
     tempDir: resolve(tmpdir(), "zotlit"),
     qmdDbPath: resolve(indexDir, "qmd.sqlite"),
     catalogPath: resolve(indexDir, "catalog.json"),

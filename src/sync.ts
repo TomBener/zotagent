@@ -20,7 +20,7 @@ import { getDataPaths, resolveConfig, type ConfigOverrides } from "./config.js";
 import { buildPdfManifest } from "./manifest.js";
 import { openQmdClient, type QmdFactory } from "./qmd.js";
 import { mapEntriesByDocKey, readCatalogFile, summarizeCatalog, writeCatalogFile } from "./state.js";
-import { openExactIndex, type ExactIndexFactory } from "./tantivy.js";
+import { openExactIndex, type ExactIndexFactory } from "./exact-db.js";
 import type { AttachmentCatalogEntry, AttachmentManifest, CatalogEntry, CatalogFile, SyncStats } from "./types.js";
 import {
   compactHomePath,
