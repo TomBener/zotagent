@@ -320,3 +320,52 @@ test("syncExactIndex upserts changed documents and deletes stale ones", async ()
     await client.close();
   }
 });
+
+test("syncExactIndex rebuilds from ready entries when the exact db starts empty", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotlit-exact-db-missing-"));
+  const dataDir = join(root, "data");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docKey = "h".repeat(40);
+  const manifestPath = join(manifestsDir, `${docKey}.json`);
+  writeManifest(manifestPath, {
+    docKey,
+    itemKey: "ITEM1",
+    title: "Missing index",
+    authors: ["A"],
+    filePath: "/tmp/missing.pdf",
+    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+    blocks: [
+      {
+        blockIndex: 0,
+        blockType: "paragraph",
+        sectionPath: ["Body"],
+        text: "The company party secretary is the dangwei shuji.",
+        charStart: 0,
+        charEnd: 50,
+        lineStart: 1,
+        lineEnd: 1,
+        isReferenceLike: false,
+      },
+    ],
+  });
+
+  const client = await openExactIndex(createConfig(dataDir));
+  try {
+    await client.syncExactIndex?.(
+      [readyEntry(dataDir, docKey, "ITEM1", "Missing index", "/tmp/missing.pdf", manifestPath)],
+      {
+        upserts: [],
+        deleteDocKeys: [],
+      },
+    );
+
+    assert.deepEqual(
+      (await client.searchExactCandidates("dangwei shuji", 10)).map((candidate) => candidate.docKey),
+      [docKey],
+    );
+  } finally {
+    await client.close();
+  }
+});

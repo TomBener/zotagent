@@ -40,6 +40,10 @@ function ensureSchema(db: Database.Database): void {
   }
 }
 
+function exactIndexIsEmpty(db: Database.Database): boolean {
+  return !db.prepare("SELECT 1 FROM exact_fts LIMIT 1").get();
+}
+
 function indexEntry(
   db: Database.Database,
   entry: CatalogEntry,
@@ -55,6 +59,13 @@ function indexEntry(
   );
 }
 
+function rebuildExactIndexRows(db: Database.Database, readyEntries: CatalogEntry[]): void {
+  db.exec("DELETE FROM exact_fts");
+  for (const entry of readyEntries) {
+    indexEntry(db, entry);
+  }
+}
+
 export async function openExactIndex(config: AppConfig): Promise<ExactIndexClient> {
   const paths = getDataPaths(config.dataDir);
   ensureDir(paths.indexDir);
@@ -65,15 +76,20 @@ export async function openExactIndex(config: AppConfig): Promise<ExactIndexClien
   return {
     rebuildExactIndex: async (readyEntries) => {
       const tx = db.transaction(() => {
-        db.exec("DELETE FROM exact_fts");
-        for (const entry of readyEntries) {
-          indexEntry(db, entry);
-        }
+        rebuildExactIndexRows(db, readyEntries);
       });
       tx();
     },
 
-    syncExactIndex: async (_readyEntries, changes) => {
+    syncExactIndex: async (readyEntries, changes) => {
+      if (readyEntries.length > 0 && exactIndexIsEmpty(db)) {
+        const tx = db.transaction(() => {
+          rebuildExactIndexRows(db, readyEntries);
+        });
+        tx();
+        return;
+      }
+
       if (changes.upserts.length === 0 && changes.deleteDocKeys.length === 0) {
         return;
       }
