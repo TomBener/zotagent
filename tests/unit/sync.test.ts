@@ -153,7 +153,7 @@ test("runSync relays SIGINT instead of swallowing it", () => {
         searchLex: async () => [],
         update: async () => ({}),
         embed: async () => ({}),
-        getStatus: async () => ({ documents: 0, collections: [], embeddings: { total: 0, stale: 0 } }),
+        getStatus: async () => ({ totalDocuments: 0, needsEmbedding: 0, hasVectorIndex: false, collections: [] }),
         listContexts: async () => [],
         addContext: async () => true,
         removeContext: async () => true,
@@ -227,7 +227,7 @@ test("runSync does not swallow uncaught exceptions", () => {
         searchLex: async () => [],
         update: async () => ({}),
         embed: async () => ({}),
-        getStatus: async () => ({ documents: 0, collections: [], embeddings: { total: 0, stale: 0 } }),
+        getStatus: async () => ({ totalDocuments: 0, needsEmbedding: 0, hasVectorIndex: false, collections: [] }),
         listContexts: async () => [],
         addContext: async () => true,
         removeContext: async () => true,
@@ -351,6 +351,7 @@ test("runSync skips unchanged ready pdfs and refreshes qmd contexts", async () =
     closed: 0,
   };
 
+  let needsEmbedding = 1;
   const fakeFactory = async () => ({
     search: async () => [],
     searchLex: async () => [],
@@ -360,9 +361,10 @@ test("runSync skips unchanged ready pdfs and refreshes qmd contexts", async () =
     },
     embed: async () => {
       calls.embed += 1;
+      needsEmbedding = 0;
       return {};
     },
-    getStatus: async () => ({ documents: 1, collections: [], embeddings: { total: 1, stale: 0 } }),
+    getStatus: async () => ({ totalDocuments: 1, needsEmbedding, hasVectorIndex: needsEmbedding === 0, collections: [] }),
     listContexts: async () => [{ collection: "library", path: "/old.md", context: "old" }],
     addContext: async () => {
       calls.added += 1;
@@ -501,7 +503,7 @@ test("runSync sends exact-index deltas when incremental sync is available", asyn
     searchLex: async () => [],
     update: async () => ({}),
     embed: async () => ({}),
-    getStatus: async () => ({ documents: 1, collections: [], embeddings: { total: 1, stale: 0 } }),
+    getStatus: async () => ({ totalDocuments: 1, needsEmbedding: 0, hasVectorIndex: true, collections: [] }),
     listContexts: async () => [],
     addContext: async () => true,
     removeContext: async () => true,
@@ -627,7 +629,7 @@ test("runSync resumes from existing normalized and manifest outputs when catalog
     searchLex: async () => [],
     update: async () => ({}),
     embed: async () => ({}),
-    getStatus: async () => ({ documents: 1, collections: [], embeddings: { total: 1, stale: 0 } }),
+    getStatus: async () => ({ totalDocuments: 1, needsEmbedding: 0, hasVectorIndex: true, collections: [] }),
     listContexts: async () => [],
     addContext: async () => true,
     removeContext: async () => true,
@@ -979,7 +981,7 @@ test("runSync indexes txt attachments without Java extraction", async () => {
     searchLex: async () => [],
     update: async () => ({}),
     embed: async () => ({}),
-    getStatus: async () => ({ documents: 1, collections: [], embeddings: { total: 1, stale: 0 } }),
+    getStatus: async () => ({ totalDocuments: 1, needsEmbedding: 0, hasVectorIndex: true, collections: [] }),
     listContexts: async () => [],
     addContext: async () => true,
     removeContext: async () => true,
@@ -1106,6 +1108,7 @@ test("runSync reuses a ready index when bibliography paths come from another mac
     added: 0,
   };
 
+  let needsEmbedding = 1;
   const fakeFactory = async () => ({
     search: async () => [],
     searchLex: async () => [],
@@ -1115,9 +1118,10 @@ test("runSync reuses a ready index when bibliography paths come from another mac
     },
     embed: async () => {
       calls.embed += 1;
+      needsEmbedding = 0;
       return {};
     },
-    getStatus: async () => ({ documents: 1, collections: [], embeddings: { total: 1, stale: 0 } }),
+    getStatus: async () => ({ totalDocuments: 1, needsEmbedding, hasVectorIndex: needsEmbedding === 0, collections: [] }),
     listContexts: async () => [{ collection: "library", path: "/old.md", context: "old" }],
     addContext: async () => {
       calls.added += 1;
@@ -1334,7 +1338,7 @@ test("runSync keeps cached outputs when attachment disappears from the current c
     searchLex: async () => [],
     update: async () => ({}),
     embed: async () => ({}),
-    getStatus: async () => ({ documents: 0, collections: [], embeddings: { total: 0, stale: 0 } }),
+    getStatus: async () => ({ totalDocuments: 0, needsEmbedding: 0, hasVectorIndex: false, collections: [] }),
     listContexts: async () => [],
     addContext: async () => true,
     removeContext: async () => true,
@@ -1439,7 +1443,7 @@ test("runSync reuses cached outputs after an attachment temporarily disappears",
     searchLex: async () => [],
     update: async () => ({}),
     embed: async () => ({}),
-    getStatus: async () => ({ documents: 0, collections: [], embeddings: { total: 0, stale: 0 } }),
+    getStatus: async () => ({ totalDocuments: 0, needsEmbedding: 0, hasVectorIndex: false, collections: [] }),
     listContexts: async () => [],
     addContext: async () => true,
     removeContext: async () => true,
@@ -1547,7 +1551,7 @@ test("runSync skips unchanged previous extraction errors by default", async () =
     searchLex: async () => [],
     update: async () => ({}),
     embed: async () => ({}),
-    getStatus: async () => ({ documents: 0, collections: [], embeddings: { total: 0, stale: 0 } }),
+    getStatus: async () => ({ totalDocuments: 0, needsEmbedding: 0, hasVectorIndex: false, collections: [] }),
     listContexts: async () => [],
     addContext: async () => true,
     removeContext: async () => true,
@@ -1649,7 +1653,7 @@ test("runSync retries unchanged previous errors when requested and passes custom
     searchLex: async () => [],
     update: async () => ({}),
     embed: async () => ({}),
-    getStatus: async () => ({ documents: 1, collections: [], embeddings: { total: 1, stale: 0 } }),
+    getStatus: async () => ({ totalDocuments: 1, needsEmbedding: 0, hasVectorIndex: true, collections: [] }),
     listContexts: async () => [],
     addContext: async () => true,
     removeContext: async () => true,
@@ -1763,7 +1767,7 @@ test("runSync extracts book attachments in single-file batches by default", asyn
     searchLex: async () => [],
     update: async () => ({}),
     embed: async () => ({}),
-    getStatus: async () => ({ documents: 3, collections: [], embeddings: { total: 3, stale: 0 } }),
+    getStatus: async () => ({ totalDocuments: 3, needsEmbedding: 0, hasVectorIndex: true, collections: [] }),
     listContexts: async () => [],
     addContext: async () => true,
     removeContext: async () => true,
@@ -1862,7 +1866,7 @@ test("runSync honors explicit PDF batch size", async () => {
     searchLex: async () => [],
     update: async () => ({}),
     embed: async () => ({}),
-    getStatus: async () => ({ documents: 2, collections: [], embeddings: { total: 2, stale: 0 } }),
+    getStatus: async () => ({ totalDocuments: 2, needsEmbedding: 0, hasVectorIndex: true, collections: [] }),
     listContexts: async () => [],
     addContext: async () => true,
     removeContext: async () => true,
@@ -1960,7 +1964,7 @@ test("runSync records extraction failures per attachment and continues indexing 
     searchLex: async () => [],
     update: async () => ({}),
     embed: async () => ({}),
-    getStatus: async () => ({ documents: 1, collections: [], embeddings: { total: 1, stale: 0 } }),
+    getStatus: async () => ({ totalDocuments: 1, needsEmbedding: 0, hasVectorIndex: true, collections: [] }),
     listContexts: async () => [],
     addContext: async () => true,
     removeContext: async () => true,
@@ -2084,7 +2088,7 @@ test("runSync retries a timed out batch one file at a time", async () => {
     searchLex: async () => [],
     update: async () => ({}),
     embed: async () => ({}),
-    getStatus: async () => ({ documents: 1, collections: [], embeddings: { total: 1, stale: 0 } }),
+    getStatus: async () => ({ totalDocuments: 1, needsEmbedding: 0, hasVectorIndex: true, collections: [] }),
     listContexts: async () => [],
     addContext: async () => true,
     removeContext: async () => true,
