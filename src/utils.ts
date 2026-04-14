@@ -72,6 +72,7 @@ export function toSupportedFileType(filePath: string): SupportedFileType {
   if (/\.pdf$/i.test(filePath)) return "pdf";
   if (/\.epub$/i.test(filePath)) return "epub";
   if (/\.html?$/i.test(filePath)) return "html";
+  if (/\.txt$/i.test(filePath)) return "txt";
   return "other";
 }
 

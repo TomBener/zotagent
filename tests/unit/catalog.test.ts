@@ -144,3 +144,51 @@ test("loadCatalog only relocates files that match the requested Zotero subfolder
   assert.equal(catalog.attachments.length, 1);
   assert.equal(catalog.attachments[0]?.filePath, keptPdfPath);
 });
+
+test("loadCatalog keeps semicolons inside attachment file names", () => {
+  const root = mkdtempSync(join(tmpdir(), "zotlit-catalog-semicolon-"));
+  const attachmentsRoot = join(root, "attachments");
+  mkdirSync(join(attachmentsRoot, "papers"), { recursive: true });
+
+  const semicolonPdfPath = join(
+    attachmentsRoot,
+    "papers",
+    "Nature - 2023 - Tools Such as ChatGPT Threaten Transparent Science; Here Are Our Ground Rules for Their Use.pdf",
+  );
+  const txtPath = join(attachmentsRoot, "papers", "notes.txt");
+  writeFileSync(semicolonPdfPath, "pdf");
+  writeFileSync(txtPath, "plain text");
+
+  const bibliographyPath = join(root, "bibliography.json");
+  writeFileSync(
+    bibliographyPath,
+    JSON.stringify([
+      {
+        id: "citekey",
+        title: "Semicolon Paper",
+        author: [{ family: "Smith", given: "Jane" }],
+        file: `${semicolonPdfPath};${txtPath}`,
+        type: "article-journal",
+        "zotero-item-key": "ITEM1",
+      },
+    ]),
+    "utf-8",
+  );
+
+  const catalog = loadCatalog({
+    bibliographyJsonPath: bibliographyPath,
+    attachmentsRoot,
+    dataDir: join(root, "data"),
+    warnings: [],
+  });
+
+  assert.deepEqual(catalog.records[0]?.attachmentPaths, [semicolonPdfPath, txtPath]);
+  assert.deepEqual(catalog.records[0]?.supportedFiles, [semicolonPdfPath, txtPath]);
+  assert.deepEqual(
+    catalog.attachments.map((entry) => [entry.filePath, entry.fileExt, entry.supported]),
+    [
+      [semicolonPdfPath, "pdf", true],
+      [txtPath, "txt", true],
+    ],
+  );
+});

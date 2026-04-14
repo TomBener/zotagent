@@ -681,6 +681,8 @@ async function extractNonPdfAttachment(
     markdown = await extractEpub(attachment.filePath);
   } else if (attachment.fileExt === "html") {
     markdown = await extractHtml(attachment.filePath);
+  } else if (attachment.fileExt === "txt") {
+    markdown = readFileSync(attachment.filePath, "utf-8");
   } else {
     throw new Error(`Unsupported file type for extraction: ${attachment.fileExt}`);
   }

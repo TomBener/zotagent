@@ -1,4 +1,4 @@
-export type SupportedFileType = "pdf" | "epub" | "html" | "other";
+export type SupportedFileType = "pdf" | "epub" | "html" | "txt" | "other";
 export type ZoteroLibraryType = "user" | "group";
 
 export interface AppConfig {

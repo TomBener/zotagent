@@ -93,10 +93,37 @@ function extractYear(issued?: { "date-parts"?: unknown[] }): string | undefined 
 function splitFileField(file: string | undefined): string[] {
   const raw = (file || "").trim();
   if (!raw) return [];
-  return raw
-    .split(";")
-    .map((part) => normalizePathForLookup(part))
-    .filter((part) => part.length > 0);
+
+  const out: string[] = [];
+  let current = "";
+
+  for (const part of raw.split(";")) {
+    if (current.length === 0) {
+      current = part;
+      continue;
+    }
+
+    const trimmed = part.trimStart();
+    const startsNewPath =
+      trimmed.startsWith("/") ||
+      trimmed.startsWith("~/") ||
+      trimmed.startsWith("file://") ||
+      trimmed.startsWith("\\\\") ||
+      /^[A-Za-z]:[\\/]/u.test(trimmed);
+
+    if (startsNewPath) {
+      const normalized = normalizePathForLookup(current);
+      if (normalized.length > 0) out.push(normalized);
+      current = part;
+      continue;
+    }
+
+    current += `;${part}`;
+  }
+
+  const normalized = normalizePathForLookup(current);
+  if (normalized.length > 0) out.push(normalized);
+  return out;
 }
 
 function firstString(value: string | string[] | undefined): string | undefined {

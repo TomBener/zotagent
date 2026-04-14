@@ -665,6 +665,80 @@ test("runSync resumes from existing normalized and manifest outputs when catalog
   assert.equal(nextCatalog.entries[0]?.manifestPath, manifestPath);
 });
 
+test("runSync indexes txt attachments without Java extraction", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotlit-sync-txt-"));
+  const attachmentsRoot = join(root, "attachments");
+  const dataDir = join(root, "data");
+  mkdirSync(join(attachmentsRoot, "notes"), { recursive: true });
+
+  const txtPath = join(attachmentsRoot, "notes", "transcript.txt");
+  writeFileSync(txtPath, "第一段\n\n第二段", "utf-8");
+
+  const bibliographyPath = join(root, "bibliography.json");
+  writeFileSync(
+    bibliographyPath,
+    JSON.stringify([
+      {
+        id: "cite",
+        title: "Transcript",
+        author: [{ family: "A", given: "Author" }],
+        file: txtPath,
+        "zotero-item-key": "ITEM1",
+      },
+    ]),
+    "utf-8",
+  );
+
+  let extractBatchCalls = 0;
+  const fakeFactory = async () => ({
+    search: async () => [],
+    searchLex: async () => [],
+    update: async () => ({}),
+    embed: async () => ({}),
+    getStatus: async () => ({ documents: 1, collections: [], embeddings: { total: 1, stale: 0 } }),
+    listContexts: async () => [],
+    addContext: async () => true,
+    removeContext: async () => true,
+    close: async () => {},
+  });
+  const fakeExactFactory = async () => ({
+    rebuildExactIndex: async () => {},
+    searchExactCandidates: async () => [],
+    close: async () => {},
+  });
+  const fakeExtractBatch = async () => {
+    extractBatchCalls += 1;
+    return new Map();
+  };
+
+  const result = await runSync(
+    {
+      bibliographyJsonPath: bibliographyPath,
+      attachmentsRoot,
+      dataDir,
+    },
+    fakeFactory,
+    fakeExactFactory,
+    fakeExtractBatch,
+    () => {},
+  );
+
+  assert.equal(extractBatchCalls, 0);
+  assert.equal(result.stats.readyAttachments, 1);
+  assert.equal(result.stats.unsupportedAttachments, 0);
+
+  const catalog = readCatalogFile(join(dataDir, "index", "catalog.json"));
+  assert.equal(catalog.entries[0]?.fileExt, "txt");
+  assert.equal(catalog.entries[0]?.extractStatus, "ready");
+
+  const normalizedPath = catalog.entries[0]?.normalizedPath;
+  const manifestPath = catalog.entries[0]?.manifestPath;
+  assert.equal(typeof normalizedPath, "string");
+  assert.equal(typeof manifestPath, "string");
+  assert.match(readFileSync(normalizedPath!, "utf-8"), /第一段/);
+  assert.match(readFileSync(manifestPath!, "utf-8"), /第二段/);
+});
+
 test("runSync reuses a ready index when bibliography paths come from another machine", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotlit-sync-relocate-"));
   const attachmentsRoot = join(root, "miniagent", "Zotero");

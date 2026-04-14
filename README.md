@@ -10,7 +10,7 @@ It focuses on a small set of tasks:
 
 - add a Zotero item and return its `itemKey`
 - search Semantic Scholar papers and import one into Zotero
-- index local Zotero attachments (PDF, EPUB, HTML)
+- index local Zotero attachments (PDF, EPUB, HTML, TXT)
 - search indexed documents
 - search bibliography metadata
 - read, expand, or export agent-friendly full text by `itemKey`, `citationKey`, or file
@@ -22,7 +22,7 @@ It focuses on a small set of tasks:
 - `s2`
   Search Semantic Scholar and pass a paperId into `add`.
 - `sync`
-  Build or refresh the local index (PDF, EPUB, HTML).
+  Build or refresh the local index (PDF, EPUB, HTML, TXT).
 - `search`
   Search indexed documents with default no-rerank hybrid search, optional `--rerank`, or `--exact` lexical search.
 - `metadata`
@@ -32,7 +32,7 @@ It focuses on a small set of tasks:
 
 Current scope:
 
-- PDF, EPUB, and HTML attachments
+- PDF, EPUB, HTML, and TXT attachments
 - local indexing and search
 - Zotero Web API writes for item creation
 
@@ -43,7 +43,7 @@ Current scope:
 
 Notes:
 
-- `sync` uses Java during PDF extraction; EPUB and HTML extraction runs in-process without Java
+- `sync` uses Java during PDF extraction; EPUB, HTML, and TXT extraction runs in-process without Java
 - `sync` skips files that time out or fail extraction, records them as `error`, and continues the rest of the batch
 - `sync` skips unchanged extraction errors on later runs; use `--retry-errors` to force another attempt
 - `sync` extracts books, chapters, `/Book/` attachments, and large PDFs one at a time instead of batching them with other PDFs
