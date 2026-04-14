@@ -208,9 +208,9 @@ export function loadCatalog(config: AppConfig): CatalogData {
       return out;
     }, []);
     const attachmentPaths = resolvedAttachments.map((attachment) => attachment.absolutePath);
-    const supportedPdfFiles = resolvedAttachments
+    const supportedFiles = resolvedAttachments
       .map((attachment) => attachment.absolutePath)
-      .filter((filePath) => toSupportedFileType(filePath) === "pdf");
+      .filter((filePath) => toSupportedFileType(filePath) !== "other");
     const journal =
       type && JOURNAL_TYPES.has(type) ? firstString(item["container-title"]) : undefined;
     const publisher =
@@ -228,8 +228,8 @@ export function loadCatalog(config: AppConfig): CatalogData {
       ...(publisher ? { publisher } : {}),
       type,
       attachmentPaths,
-      supportedPdfFiles,
-      hasSupportedPdf: supportedPdfFiles.length > 0,
+      supportedFiles,
+      hasSupportedFile: supportedFiles.length > 0,
     });
 
     for (const attachment of resolvedAttachments) {
@@ -247,7 +247,7 @@ export function loadCatalog(config: AppConfig): CatalogData {
         filePath,
         fileExt,
         exists: existsSync(filePath),
-        supported: fileExt === "pdf",
+        supported: fileExt !== "other",
       });
     }
   }

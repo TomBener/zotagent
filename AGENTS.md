@@ -11,8 +11,7 @@ Core design:
 - `add` is speed-first and does not do Zotero-side duplicate checking
 - external search results primarily return `itemKey + file`
 - `citationKey` is a mutable display field only
-- current v1 scope is `PDF` only
-- PDF extraction uses OpenDataLoader
+- PDF extraction uses OpenDataLoader; EPUB and HTML are extracted in-process via jszip/linkedom/readability
 - search uses `qmd`
 - `read` and `expand` do not depend on the search backend; they read local manifests directly
 - the external search interface stays unified instead of splitting keyword search and semantic search into separate commands
@@ -87,7 +86,9 @@ Release notes style:
 - `src/add.ts`: Zotero Web API write flow for DOI import and basic manual item creation
 - `src/config.ts`: config loading and path expansion
 - `src/catalog.ts`: bibliography parsing and attachment mapping
-- `src/manifest.ts`: conversion from ODL JSON into blocks, character ranges, and reference-like markers
+- `src/manifest.ts`: conversion from ODL JSON or plain markdown into blocks, character ranges, and reference-like markers
+- `src/epub.ts`: EPUB extraction (jszip + linkedom XHTML-to-markdown)
+- `src/html-extract.ts`: HTML extraction (@mozilla/readability + linkedom)
 - `src/qmd.ts`: qmd store adapter
 - `src/sync.ts`: syncing, extraction, manifest writing, and qmd updates
 - `src/state.ts`: `catalog.json` reading, writing, and summary stats
@@ -107,7 +108,7 @@ Release notes style:
 
 ## Current Search Logic
 
-- `sync` produces one set of files per PDF:
+- `sync` produces one set of files per supported attachment (PDF, EPUB, HTML):
   - `normalized/<docKey>.md`
   - `manifests/<docKey>.json`
   - `index/catalog.json`
@@ -120,7 +121,7 @@ Release notes style:
 
 - every `sync` reloads the bibliography
 - incremental decisions mainly depend on attachment `size`, `mtime`, and whether the expected index files already exist
-- content changes trigger re-extraction and re-indexing for that PDF
+- content changes trigger re-extraction and re-indexing for that attachment
 - bibliography metadata is rewritten into `catalog.json` and qmd context on every sync
 - `docKey = sha1(filePath)`, so renaming or moving an attachment behaves like "old path removed + new path added"
 

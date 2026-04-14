@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, resolve } from "node:path";
+import type { SupportedFileType } from "./types.js";
 
 export function sha1(input: string): string {
   return createHash("sha1").update(input).digest("hex");
@@ -67,9 +68,10 @@ export function formatAuthors(authors: string[]): string {
   return authors.join("; ");
 }
 
-export function toSupportedFileType(filePath: string): "pdf" | "epub" | "other" {
+export function toSupportedFileType(filePath: string): SupportedFileType {
   if (/\.pdf$/i.test(filePath)) return "pdf";
   if (/\.epub$/i.test(filePath)) return "epub";
+  if (/\.html?$/i.test(filePath)) return "html";
   return "other";
 }
 

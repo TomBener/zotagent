@@ -1179,7 +1179,7 @@ test("runSync skips unchanged previous extraction errors by default", async () =
         mtimeMs: Math.trunc(currentStat.mtimeMs),
         sourceHash: null,
         lastIndexedAt: null,
-        error: "PDF extraction failed for book.pdf: timed out after 180000ms.",
+        error: "Extraction failed for book.pdf: timed out after 180000ms.",
       },
     ],
   });
@@ -1227,7 +1227,7 @@ test("runSync skips unchanged previous extraction errors by default", async () =
 
   const catalog = readCatalogFile(join(indexDir, "catalog.json"));
   assert.equal(catalog.entries[0]?.extractStatus, "error");
-  assert.equal(catalog.entries[0]?.error, "PDF extraction failed for book.pdf: timed out after 180000ms.");
+  assert.equal(catalog.entries[0]?.error, "Extraction failed for book.pdf: timed out after 180000ms.");
 
   const logBody = readFileSync(result.logPath, "utf-8");
   assert.match(logBody, /book\.pdf: skipped unchanged previous extraction error/);
@@ -1281,7 +1281,7 @@ test("runSync retries unchanged previous errors when requested and passes custom
         mtimeMs: Math.trunc(currentStat.mtimeMs),
         sourceHash: null,
         lastIndexedAt: null,
-        error: "PDF extraction failed for book.pdf: timed out after 180000ms.",
+        error: "Extraction failed for book.pdf: timed out after 180000ms.",
       },
     ],
   });
@@ -1671,7 +1671,7 @@ test("runSync records extraction failures per attachment and continues indexing 
   const badEntry = catalog.entries.find((entry) => entry.itemKey === "BAD");
   assert.equal(goodEntry?.extractStatus, "ready");
   assert.equal(badEntry?.extractStatus, "error");
-  assert.match(badEntry?.error || "", /PDF extraction failed/);
+  assert.match(badEntry?.error || "", /Extraction failed/);
   assert.match(badEntry?.error || "", /bad\.pdf/);
   assert.match(badEntry?.error || "", /malformed PDF xref table/);
 
@@ -1681,7 +1681,7 @@ test("runSync records extraction failures per attachment and continues indexing 
   assert.match(logBody, /# zotlit sync log/);
   assert.match(logBody, /Loaded bibliography with 2 records and 2 attachments/);
   assert.match(logBody, /## Errored Files/);
-  assert.match(logBody, /PDF extraction failed for .*bad\.pdf/);
+  assert.match(logBody, /Extraction failed for .*bad\.pdf/);
   assert.match(logBody, /bad\.pdf: java\.lang\.IllegalStateException: malformed PDF xref table/);
   assert.match(logBody, /malformed PDF xref table/);
 });

@@ -239,7 +239,7 @@ export async function searchLiterature(
   const catalog = readCatalogFile(paths.catalogPath);
   const readyEntries = getReadyEntries(catalog);
   if (readyEntries.length === 0) {
-    throw new Error("No indexed PDFs found. Run `zotlit sync` first.");
+    throw new Error("No indexed documents found. Run `zotlit sync` first.");
   }
 
   const entryByDocKey = new Map(readyEntries.map((entry) => [entry.docKey, entry]));

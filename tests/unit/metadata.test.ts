@@ -83,8 +83,8 @@ test("searchMetadata works without sync and returns metadata-only records", asyn
     "Large language models interpret political texts meaningfully and remain scalable for cross-national analysis.",
   );
   assert.equal(result.results[0]?.journal, "American Journal of Political Science");
-  assert.equal(result.results[0]?.hasSupportedPdf, true);
-  assert.deepEqual(result.results[0]?.supportedPdfFiles, [pdfPath]);
+  assert.equal(result.results[0]?.hasSupportedFile, true);
+  assert.deepEqual(result.results[0]?.supportedFiles, [pdfPath, epubPath]);
 
   const metadataOnly = await searchMetadata("China and Political Economy", 10, {
     bibliographyJsonPath: bibliographyPath,
@@ -94,10 +94,10 @@ test("searchMetadata works without sync and returns metadata-only records", asyn
 
   assert.equal(metadataOnly.results.length, 1);
   assert.equal(metadataOnly.results[0]?.itemKey, "ITEM2");
-  assert.equal(metadataOnly.results[0]?.hasSupportedPdf, false);
-  assert.deepEqual(metadataOnly.results[0]?.supportedPdfFiles, []);
+  assert.equal(metadataOnly.results[0]?.hasSupportedFile, false);
+  assert.deepEqual(metadataOnly.results[0]?.supportedFiles, []);
 
-  const hasPdfOnly = await searchMetadata(
+  const hasFileOnly = await searchMetadata(
     "political",
     10,
     {
@@ -105,11 +105,11 @@ test("searchMetadata works without sync and returns metadata-only records", asyn
       attachmentsRoot,
       dataDir,
     },
-    { hasPdf: true },
+    { hasFile: true },
   );
 
   assert.deepEqual(
-    hasPdfOnly.results.map((row) => row.itemKey),
+    hasFileOnly.results.map((row) => row.itemKey),
     ["ITEM1"],
   );
 });

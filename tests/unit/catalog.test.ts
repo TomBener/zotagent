@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { loadCatalog } from "../../src/catalog.js";
 import { sha1 } from "../../src/utils.js";
 
-test("loadCatalog keeps attachments inside root and marks only pdf as supported", () => {
+test("loadCatalog keeps attachments inside root and marks supported file types", () => {
   const root = mkdtempSync(join(tmpdir(), "zotlit-catalog-"));
   const attachmentsRoot = join(root, "attachments");
   mkdirSync(join(attachmentsRoot, "papers"), { recursive: true });
@@ -44,10 +44,10 @@ test("loadCatalog keeps attachments inside root and marks only pdf as supported"
   assert.equal(catalog.records.length, 1);
   assert.deepEqual(catalog.records[0]?.authorSearchTexts, ["Smith Jane", "Jane Smith"]);
   assert.equal(catalog.records[0]?.journal, "Journal of Testing");
-  assert.deepEqual(catalog.records[0]?.supportedPdfFiles, [pdfPath]);
-  assert.equal(catalog.records[0]?.hasSupportedPdf, true);
+  assert.deepEqual(catalog.records[0]?.supportedFiles, [pdfPath, epubPath]);
+  assert.equal(catalog.records[0]?.hasSupportedFile, true);
   assert.equal(catalog.attachments.length, 2);
-  assert.equal(catalog.attachments[0]!.supported, false);
+  assert.equal(catalog.attachments[0]!.supported, true);
   assert.equal(catalog.attachments[0]!.fileExt, "epub");
   assert.equal(catalog.attachments[1]!.supported, true);
   assert.equal(catalog.attachments[1]!.fileExt, "pdf");
@@ -93,7 +93,7 @@ test("loadCatalog remaps bibliography attachment paths into the current attachme
   });
 
   assert.deepEqual(catalog.records[0]?.attachmentPaths, [pdfPath, epubPath]);
-  assert.deepEqual(catalog.records[0]?.supportedPdfFiles, [pdfPath]);
+  assert.deepEqual(catalog.records[0]?.supportedFiles, [pdfPath, epubPath]);
   assert.deepEqual(
     catalog.attachments.map((entry) => entry.docKey),
     [sha1("papers/book.epub"), sha1("papers/paper.pdf")],
@@ -140,7 +140,7 @@ test("loadCatalog only relocates files that match the requested Zotero subfolder
   });
 
   assert.deepEqual(catalog.records[0]?.attachmentPaths, [keptPdfPath]);
-  assert.deepEqual(catalog.records[0]?.supportedPdfFiles, [keptPdfPath]);
+  assert.deepEqual(catalog.records[0]?.supportedFiles, [keptPdfPath]);
   assert.equal(catalog.attachments.length, 1);
   assert.equal(catalog.attachments[0]?.filePath, keptPdfPath);
 });

@@ -1,4 +1,4 @@
-export type SupportedFileType = "pdf" | "epub" | "other";
+export type SupportedFileType = "pdf" | "epub" | "html" | "other";
 export type ZoteroLibraryType = "user" | "group";
 
 export interface AppConfig {
@@ -44,8 +44,8 @@ export interface BibliographyRecord {
   publisher?: string;
   type?: string;
   attachmentPaths: string[];
-  supportedPdfFiles: string[];
-  hasSupportedPdf: boolean;
+  supportedFiles: string[];
+  hasSupportedFile: boolean;
 }
 
 export interface AttachmentCatalogEntry {
@@ -160,8 +160,8 @@ export interface MetadataSearchResultRow {
   authors: string[];
   year?: string;
   abstract?: string;
-  hasSupportedPdf: boolean;
-  supportedPdfFiles: string[];
+  hasSupportedFile: boolean;
+  supportedFiles: string[];
   matchedFields: MetadataField[];
   score: number;
   journal?: string;

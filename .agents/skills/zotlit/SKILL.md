@@ -1,11 +1,11 @@
 ---
 name: zotlit
-description: Use this skill whenever the user wants to use zotlit to add Zotero items, search indexed Zotero PDFs, inspect hits, read blocks from an indexed attachment, expand context around a hit, or turn zotlit results into Markdown notes that keep the itemKey. Use it whenever the user mentions Zotero literature search, DOI import, exact phrase search, passages, itemKey, block ranges, or cited notes from zotlit results.
+description: Use this skill whenever the user wants to use zotlit to add Zotero items, search indexed Zotero documents (PDF, EPUB, HTML), inspect hits, read blocks from an indexed attachment, expand context around a hit, or turn zotlit results into Markdown notes that keep the itemKey. Use it whenever the user mentions Zotero literature search, DOI import, exact phrase search, passages, itemKey, block ranges, or cited notes from zotlit results.
 ---
 
 # zotlit
 
-`zotlit` is a CLI for AI-agent Zotero workflows: add items, search indexed PDFs, search metadata, and read local passages.
+`zotlit` is a CLI for AI-agent Zotero workflows: add items, search indexed documents (PDF, EPUB, HTML), search metadata, and read local passages.
 
 ## Main use
 
@@ -13,7 +13,7 @@ For most agent tasks, use this path:
 
 1. If the user wants to add a source to Zotero, use `zotlit add`
 2. For literature search, start with `zotlit metadata` to find high-confidence title, abstract, author, journal, publisher, and year matches
-3. Then use `zotlit search --exact` for key phrases in indexed PDF full text
+3. Then use `zotlit search --exact` for key phrases in indexed full text
 4. Use default `zotlit search` last for fast semantic full-text recall and missed wording
 5. Take the returned `file` and `blockStart`, then run `zotlit expand`
 6. Use `zotlit read` when the user wants a larger block slice from one indexed attachment

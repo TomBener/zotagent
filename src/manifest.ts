@@ -208,6 +208,30 @@ function annotateBlocks(draftBlocks: DraftBlock[]): { markdown: string; blocks: 
   return { markdown, blocks };
 }
 
+export function buildMarkdownManifest(
+  attachment: AttachmentCatalogEntry,
+  markdown: string,
+  normalizedPath: string,
+): { manifest: AttachmentManifest; markdown: string } {
+  const draftBlocks = splitMarkdownToDraftBlocks(markdown);
+  const annotated = annotateBlocks(draftBlocks);
+  return {
+    markdown: annotated.markdown,
+    manifest: {
+      docKey: attachment.docKey,
+      itemKey: attachment.itemKey,
+      ...(attachment.citationKey ? { citationKey: attachment.citationKey } : {}),
+      title: attachment.title,
+      authors: attachment.authors,
+      ...(attachment.year ? { year: attachment.year } : {}),
+      ...(attachment.abstract ? { abstract: attachment.abstract } : {}),
+      filePath: attachment.filePath,
+      normalizedPath,
+      blocks: annotated.blocks,
+    },
+  };
+}
+
 export function buildPdfManifest(
   attachment: AttachmentCatalogEntry,
   markdown: string,

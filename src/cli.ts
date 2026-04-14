@@ -23,7 +23,7 @@ interface ParsedArgs {
 const BOOLEAN_FLAGS = new Set([
   "clean",
   "exact",
-  "has-pdf",
+  "has-file",
   "help",
   "rerank",
   "retry-errors",
@@ -175,7 +175,7 @@ function overridesFromFlags(flags: Record<string, FlagValue>): ConfigOverrides {
 function printHelp(): void {
   console.log(`zotlit
 
-Search indexed Zotero PDFs or bibliography metadata and follow PDF hits with read or expand.
+Search indexed Zotero documents or bibliography metadata and follow hits with read or expand.
 
 Usage:
   zotlit sync [--attachments-root <path>] [--retry-errors] [--pdf-timeout-ms <n>] [--pdf-batch-size <n>]
@@ -185,7 +185,7 @@ Usage:
   zotlit s2 "<text>" [--limit <n>]
   zotlit search "<text>" [--exact] [--limit <n>] [--min-score <n>] [--rerank]
   zotlit search-in "<text>" (--file <path> | --item-key <key> | --citation-key <key>) [--limit <n>]
-  zotlit metadata "<text>" [--limit <n>] [--field <field>] [--has-pdf]
+  zotlit metadata "<text>" [--limit <n>] [--field <field>] [--has-file]
   zotlit read (--file <path> | --item-key <key> | --citation-key <key>) [--offset-block <n>] [--limit-blocks <n>]
   zotlit fulltext (--file <path> | --item-key <key> | --citation-key <key>) [--clean]
   zotlit expand (--file <path> | --item-key <key> | --citation-key <key>) --block-start <n> [--block-end <n>] [--radius <n>]
@@ -211,7 +211,7 @@ Commands:
     Use a returned paperId with add --s2-paper-id to create a Zotero item.
 
   search
-    Search indexed Zotero PDFs.
+    Search indexed Zotero documents.
     --exact uses exact substring search.
     qmd reranking is skipped by default; --rerank enables it for narrower queries.
     --exact cannot be combined with --rerank.
@@ -223,7 +223,7 @@ Commands:
   metadata
     Search Zotero bibliography metadata from bibliography.json.
     --field can be repeated and supports: title, author, year, abstract, journal, publisher.
-    --has-pdf keeps only results with a supported PDF attachment path.
+    --has-file keeps only results with a supported indexed attachment path.
 
   read
     Read blocks directly from a local manifest.
@@ -242,7 +242,7 @@ Commands:
 
 Options:
   --attachments-root <path>   Limit sync to a Zotero subfolder.
-  --retry-errors              Retry unchanged PDFs that failed extraction earlier.
+  --retry-errors              Retry unchanged files that failed extraction earlier.
   --pdf-timeout-ms <n>        Override the OpenDataLoader timeout for each PDF extraction call.
   --pdf-batch-size <n>        Override the maximum number of PDFs per extraction batch.
   --doi <doi>                 Import from DOI metadata when possible.
@@ -263,7 +263,7 @@ Options:
   --min-score <n>             Drop lower-scoring search hits before mapping.
   --rerank                    Enable qmd reranking for search. Slower, useful for narrower queries.
   --field <field>             Limit metadata search to title, author, year, abstract, journal, or publisher.
-  --has-pdf                   Keep only metadata results with a supported PDF attachment path.
+  --has-file                  Keep only metadata results with a supported indexed attachment.
   --offset-block <n>          Start reading at block n. Default: 0.
   --limit-blocks <n>          Read up to n blocks. Default: 20.
   --block-start <n>           Start block for expand.
@@ -480,7 +480,7 @@ async function main(): Promise<void> {
           emitError("UNEXPECTED_ARGUMENT", '`--query` is not supported. Use: zotlit s2 "<text>"');
           return;
         }
-        const invalidFlags = ["exact", "rerank", "min-score", "field", "has-pdf"].filter(
+        const invalidFlags = ["exact", "rerank", "min-score", "field", "has-file", "has-pdf"].filter(
           (flag) => flag in parsed.flags,
         );
         if (invalidFlags.length > 0) {
@@ -622,7 +622,7 @@ async function main(): Promise<void> {
         if (invalidFlags.length > 0) {
           emitError(
             "UNEXPECTED_ARGUMENT",
-            `metadata only supports --limit, --field, and --has-pdf. Remove: ${invalidFlags
+            `metadata only supports --limit, --field, and --has-file. Remove: ${invalidFlags
               .map((flag) => `--${flag}`)
               .join(", ")}`,
           );
@@ -661,10 +661,14 @@ async function main(): Promise<void> {
           emitError("INVALID_ARGUMENT", limitInput.error);
           return;
         }
+        if ("has-pdf" in parsed.flags) {
+          emitError("RENAMED_FLAG", "`--has-pdf` has been renamed to `--has-file`.");
+          return;
+        }
         const limit = limitInput.value ?? 20;
         const data = await searchMetadata(query, limit, overrides, {
           ...(requestedFields.length > 0 ? { fields: requestedFields as MetadataField[] } : {}),
-          ...(getBooleanFlag(parsed.flags, "has-pdf") ? { hasPdf: true } : {}),
+          ...(getBooleanFlag(parsed.flags, "has-file") ? { hasFile: true } : {}),
         });
         emitOk(data, { elapsedMs: Date.now() - startedAt });
         return;

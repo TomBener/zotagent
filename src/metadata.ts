@@ -16,7 +16,7 @@ const FIELD_WEIGHTS: Record<MetadataField, number> = {
 
 interface MetadataSearchOptions {
   fields?: MetadataField[];
-  hasPdf?: boolean;
+  hasFile?: boolean;
 }
 
 function includesNormalizedText(text: string | undefined, query: string): boolean {
@@ -59,8 +59,8 @@ function toMetadataSearchResultRow(
     authors: record.authors,
     ...(record.year ? { year: record.year } : {}),
     ...(record.abstract ? { abstract: record.abstract } : {}),
-    hasSupportedPdf: record.hasSupportedPdf,
-    supportedPdfFiles: record.supportedPdfFiles.map((filePath) => compactHomePath(filePath)),
+    hasSupportedFile: record.hasSupportedFile,
+    supportedFiles: record.supportedFiles.map((filePath) => compactHomePath(filePath)),
     matchedFields,
     score,
     ...(record.journal ? { journal: record.journal } : {}),
@@ -73,7 +73,7 @@ function sortMetadataResults(
   b: MetadataSearchResultRow,
 ): number {
   if (b.score !== a.score) return b.score - a.score;
-  if (a.hasSupportedPdf !== b.hasSupportedPdf) return Number(b.hasSupportedPdf) - Number(a.hasSupportedPdf);
+  if (a.hasSupportedFile !== b.hasSupportedFile) return Number(b.hasSupportedFile) - Number(a.hasSupportedFile);
   const titleCompare = a.title.localeCompare(b.title);
   if (titleCompare !== 0) return titleCompare;
   return a.itemKey.localeCompare(b.itemKey);
@@ -97,7 +97,7 @@ export async function searchMetadata(
   const selectedFields = new Set(options.fields ?? FIELD_ORDER);
   const { records } = loadCatalog(config);
   const results = records
-    .filter((record) => !options.hasPdf || record.hasSupportedPdf)
+    .filter((record) => !options.hasFile || record.hasSupportedFile)
     .map((record) => {
       const matchedFields = FIELD_ORDER.filter(
         (field) => selectedFields.has(field) && matchesField(record, field, normalizedQuery),

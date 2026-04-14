@@ -280,7 +280,7 @@ test("help summarizes current commands and keeps config-only overrides out of th
   assert.match(result.stdout, /zotlit s2 "<text>" \[--limit <n>\]/);
   assert.match(result.stdout, /zotlit search "<text>" \[--exact\] \[--limit <n>\]/);
   assert.match(result.stdout, /zotlit search-in "<text>" \(\[?--file <path> \| --item-key <key> \| --citation-key <key>\)? \[--limit <n>\]/);
-  assert.match(result.stdout, /zotlit metadata "<text>" \[--limit <n>\] \[--field <field>\] \[--has-pdf\]/);
+  assert.match(result.stdout, /zotlit metadata "<text>" \[--limit <n>\] \[--field <field>\] \[--has-file\]/);
   assert.match(result.stdout, /zotlit fulltext \(\[?--file <path> \| --item-key <key> \| --citation-key <key>\)? \[--clean\]/);
   assert.match(result.stdout, /Options:/);
   assert.match(result.stdout, /--doi <doi>\s+Import from DOI metadata when possible\./);
@@ -288,7 +288,7 @@ test("help summarizes current commands and keeps config-only overrides out of th
   assert.match(result.stdout, /--collection-key <key>\s+Add the new item to a Zotero collection by collection key\./);
   assert.match(result.stdout, /--item-type <type>\s+Override the Zotero item type\./);
   assert.match(result.stdout, /--version\s+Print the current zotlit version\./);
-  assert.match(result.stdout, /--retry-errors\s+Retry unchanged PDFs that failed extraction earlier\./);
+  assert.match(result.stdout, /--retry-errors\s+Retry unchanged files that failed extraction earlier\./);
   assert.match(result.stdout, /--pdf-timeout-ms <n>\s+Override the OpenDataLoader timeout/);
   assert.match(result.stdout, /--pdf-batch-size <n>\s+Override the maximum number of PDFs per extraction batch\./);
   assert.match(
@@ -299,7 +299,7 @@ test("help summarizes current commands and keeps config-only overrides out of th
   assert.match(result.stdout, /search-in\s+Search within one indexed document or a selected set of matching attachments\./);
   assert.match(result.stdout, /--rerank\s+Enable qmd reranking/);
   assert.match(result.stdout, /--field <field>\s+Limit metadata search/);
-  assert.match(result.stdout, /--has-pdf\s+Keep only metadata results/);
+  assert.match(result.stdout, /--has-file\s+Keep only metadata results/);
   assert.match(result.stdout, /zotlit expand \(\[?--file <path> \| --item-key <key> \| --citation-key <key>\)?/);
   assert.match(result.stdout, /Use one of --file, --item-key, or --citation-key\./);
   assert.match(result.stdout, /fulltext\s+Output agent-friendly full text from a local manifest\./);
@@ -407,7 +407,7 @@ test("metadata rejects search-only flags", () => {
 
   assert.equal(result.status, 1);
   assert.match(result.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
-  assert.match(result.stdout, /metadata only supports --limit, --field, and --has-pdf/);
+  assert.match(result.stdout, /metadata only supports --limit, --field, and --has-file/);
 });
 
 test("s2 rejects metadata and search-only flags", () => {

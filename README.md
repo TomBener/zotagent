@@ -10,8 +10,8 @@ It focuses on a small set of tasks:
 
 - add a Zotero item and return its `itemKey`
 - search Semantic Scholar papers and import one into Zotero
-- index local Zotero PDFs
-- search indexed PDFs
+- index local Zotero attachments (PDF, EPUB, HTML)
+- search indexed documents
 - search bibliography metadata
 - read, expand, or export agent-friendly full text by `itemKey`, `citationKey`, or file
 
@@ -22,9 +22,9 @@ It focuses on a small set of tasks:
 - `s2`
   Search Semantic Scholar and pass a paperId into `add`.
 - `sync`
-  Build or refresh the local PDF index.
+  Build or refresh the local index (PDF, EPUB, HTML).
 - `search`
-  Search indexed PDFs with default no-rerank hybrid search, optional `--rerank`, or `--exact` lexical search.
+  Search indexed documents with default no-rerank hybrid search, optional `--rerank`, or `--exact` lexical search.
 - `metadata`
   Search bibliography metadata without running `sync`.
 - `read` / `fulltext` / `expand`
@@ -32,7 +32,7 @@ It focuses on a small set of tasks:
 
 Current scope:
 
-- PDF only
+- PDF, EPUB, and HTML attachments
 - local indexing and search
 - Zotero Web API writes for item creation
 
@@ -43,8 +43,8 @@ Current scope:
 
 Notes:
 
-- `sync` uses Java during PDF extraction
-- `sync` skips PDFs that time out or fail extraction, records them as `error`, and continues the rest of the batch
+- `sync` uses Java during PDF extraction; EPUB and HTML extraction runs in-process without Java
+- `sync` skips files that time out or fail extraction, records them as `error`, and continues the rest of the batch
 - `sync` skips unchanged extraction errors on later runs; use `--retry-errors` to force another attempt
 - `sync` extracts books, chapters, `/Book/` attachments, and large PDFs one at a time instead of batching them with other PDFs
 - `sync` writes a readable log file to `dataDir/logs/` and refreshes `dataDir/logs/sync-latest.log`
@@ -113,7 +113,7 @@ zotlit add [--doi <doi> | --s2-paper-id <id>] [--title <text>] [--author <name>]
 zotlit s2 "<text>" [--limit <n>]
 zotlit search "<text>" [--exact] [--limit <n>] [--min-score <n>] [--rerank]
 zotlit search-in "<text>" (--file <path> | --item-key <key> | --citation-key <key>) [--limit <n>]
-zotlit metadata "<text>" [--limit <n>] [--field <field>] [--has-pdf]
+zotlit metadata "<text>" [--limit <n>] [--field <field>] [--has-file]
 zotlit read (--file <path> | --item-key <key> | --citation-key <key>) [--offset-block <n>] [--limit-blocks <n>]
 zotlit fulltext (--file <path> | --item-key <key> | --citation-key <key>) [--clean]
 zotlit expand (--file <path> | --item-key <key> | --citation-key <key>) --block-start <n> [--block-end <n>] [--radius <n>]
@@ -181,7 +181,7 @@ Give large PDFs a longer per-extraction timeout:
 zotlit sync --pdf-timeout-ms 600000
 ```
 
-Search indexed PDFs:
+Search indexed documents:
 
 ```bash
 zotlit search "state-owned enterprise governance"
@@ -234,9 +234,9 @@ zotlit expand --file "~/Library/.../paper.pdf" --block-start 10 --radius 2
 - `add` writes to the library root by default. Set `zoteroCollectionKey` in config or pass `--collection-key <key>` to place new items in a collection.
 - New items created by `add` receive the tag `Added by AI Agent`.
 - Creating an item in Zotero does not make it instantly searchable in local PDF search. `metadata` depends on your exported bibliography JSON, and PDF search depends on `sync`.
-- `search`, `read`, `fulltext`, and `expand` only work on the local index. Run `zotlit sync` first when PDFs or manifests are stale.
-- `search-in` limits the search scope to one selected document, or to all matching attachments when one `itemKey` or `citationKey` maps to multiple indexed PDFs.
-- `fulltext` returns `results[]`. When one `itemKey` or `citationKey` maps to multiple indexed PDFs, all matching attachments are included instead of raising a conflict.
+- `search`, `read`, `fulltext`, and `expand` only work on the local index. Run `zotlit sync` first when attachments or manifests are stale.
+- `search-in` limits the search scope to one selected document, or to all matching attachments when one `itemKey` or `citationKey` maps to multiple indexed documents.
+- `fulltext` returns `results[]`. When one `itemKey` or `citationKey` maps to multiple indexed documents, all matching attachments are included instead of raising a conflict.
 - `fulltext` returns the original normalized markdown by default, without content filtering.
 - `fulltext --clean` applies heuristic cleanup, including duplicate-block removal and common boilerplate filtering.
 - Missing Zotero or Semantic Scholar credentials fail fast with explicit config errors instead of partial results.

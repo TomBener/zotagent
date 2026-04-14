@@ -17,7 +17,9 @@ import { createRequire } from "node:module";
 
 import { loadCatalog } from "./catalog.js";
 import { getDataPaths, resolveConfig, type ConfigOverrides } from "./config.js";
-import { buildPdfManifest } from "./manifest.js";
+import { buildMarkdownManifest, buildPdfManifest } from "./manifest.js";
+import { extractEpub } from "./epub.js";
+import { extractHtml } from "./html-extract.js";
 import { openQmdClient, type QmdFactory } from "./qmd.js";
 import { mapEntriesByDocKey, readCatalogFile, summarizeCatalog, writeCatalogFile } from "./state.js";
 import { openExactIndex, type ExactIndexFactory } from "./exact-db.js";
@@ -665,7 +667,34 @@ function summarizeSyncError(error: unknown): string {
 }
 
 function toExtractErrorMessage(filePath: string, error: unknown): string {
-  return `PDF extraction failed for ${compactHomePath(filePath)}: ${summarizeSyncError(error)}`;
+  return `Extraction failed for ${compactHomePath(filePath)}: ${summarizeSyncError(error)}`;
+}
+
+async function extractNonPdfAttachment(
+  attachment: AttachmentCatalogEntry,
+  manifestsDir: string,
+  normalizedDir: string,
+): Promise<ExtractedPaths> {
+  let markdown: string;
+
+  if (attachment.fileExt === "epub") {
+    markdown = await extractEpub(attachment.filePath);
+  } else if (attachment.fileExt === "html") {
+    markdown = await extractHtml(attachment.filePath);
+  } else {
+    throw new Error(`Unsupported file type for extraction: ${attachment.fileExt}`);
+  }
+
+  const normalizedPath = resolve(normalizedDir, `${attachment.docKey}.md`);
+  const manifestPath = resolve(manifestsDir, `${attachment.docKey}.json`);
+  ensureParentDir(normalizedPath);
+  ensureParentDir(manifestPath);
+
+  const built = buildMarkdownManifest(attachment, markdown, normalizedPath);
+  writeFileSync(normalizedPath, built.markdown, "utf-8");
+  writeFileSync(manifestPath, JSON.stringify(built.manifest, null, 2), "utf-8");
+
+  return { manifestPath, normalizedPath };
 }
 
 function buildContext(entry: CatalogEntry): string {
@@ -936,11 +965,30 @@ export async function runSync(
       stats.skippedAttachments += 1;
     }
 
+    const pdfAttachments = changedAttachments.filter((a) => a.fileExt === "pdf");
+    const nonPdfAttachments = changedAttachments.filter((a) => a.fileExt !== "pdf");
+
     if (changedAttachments.length > 0) {
-      logger.info(`Preparing to extract ${changedAttachments.length} changed PDF(s).`, { console: true });
-      requireJavaFn();
+      const parts: string[] = [];
+      if (pdfAttachments.length > 0) parts.push(`${pdfAttachments.length} PDF(s)`);
+      if (nonPdfAttachments.length > 0) parts.push(`${nonPdfAttachments.length} non-PDF(s)`);
+      logger.info(`Preparing to extract ${parts.join(" and ")}.`, { console: true });
+      if (pdfAttachments.length > 0) requireJavaFn();
     } else {
-      logger.info("No PDF extraction needed; reusing existing indexed files where possible.", { console: true });
+      logger.info("No extraction needed; reusing existing indexed files where possible.", { console: true });
+    }
+
+    for (const attachment of nonPdfAttachments) {
+      try {
+        logger.info(`Extracting ${attachment.fileExt}: ${compactHomePath(attachment.filePath)}.`);
+        const written = await extractNonPdfAttachment(attachment, paths.manifestsDir, paths.normalizedDir);
+        await recordReadyAttachment(attachment, written);
+      } catch (error) {
+        recordErroredAttachment(attachment, error);
+      }
+    }
+    if (nonPdfAttachments.length > 0) {
+      writeProgressCatalog(paths.catalogPath, nextEntries);
     }
 
     async function recordReadyAttachment(
@@ -999,7 +1047,7 @@ export async function runSync(
       );
     }
 
-    const batches = groupForOdlBatches(changedAttachments, options.pdfBatchSize ?? ODL_DEFAULT_BATCH_SIZE);
+    const batches = groupForOdlBatches(pdfAttachments, options.pdfBatchSize ?? ODL_DEFAULT_BATCH_SIZE);
     for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
       const batch = batches[batchIndex]!;
       writeProgress({
