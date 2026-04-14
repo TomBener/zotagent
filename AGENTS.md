@@ -1,8 +1,8 @@
-# zotlit Notes
+# zotagent Notes
 
 ## Project Goal
 
-`zotlit` is a Zotero literature search CLI for AI agents.
+`zotagent` is a Zotero literature search CLI for AI agents.
 
 Core design:
 
@@ -18,14 +18,14 @@ Core design:
 
 ## Default Environment
 
-- repo path: `~/Documents/GitHub/zotlit`
+- repo path: `~/Documents/GitHub/zotagent`
 - bibliography: `~/Library/CloudStorage/Dropbox/bibliography/bibliography.json`
 - attachments root: `~/Library/Mobile Documents/com~apple~CloudDocs/Zotero`
 - data dir: `~/Library/Mobile Documents/com~apple~CloudDocs/Zotlit`
-- config file: `~/.zotlit/config.json`
+- config file: `~/.zotagent/config.json`
 - optional qmd embedding model: controlled by `qmdEmbedModel`; when unset, qmd uses its default model
 - Zotero write config for `add`: `zoteroLibraryId`, `zoteroLibraryType`, `zoteroApiKey`
-- environment overrides for `add`: `ZOTLIT_ZOTERO_LIBRARY_ID`, `ZOTLIT_ZOTERO_LIBRARY_TYPE`, `ZOTLIT_ZOTERO_API_KEY`
+- environment overrides for `add`: `ZOTAGENT_ZOTERO_LIBRARY_ID`, `ZOTAGENT_ZOTERO_LIBRARY_TYPE`, `ZOTAGENT_ZOTERO_API_KEY`
 - fallback environment names also accepted for `add`: `ZOTERO_LIBRARY_ID`, `ZOTERO_LIBRARY_TYPE`, `ZOTERO_API_KEY`
 
 Legacy fields `embeddingProvider`, `embeddingModel`, and `googleApiKey` may still appear in config, but they are only read for compatibility and produce deprecation warnings.
@@ -69,7 +69,7 @@ Useful commands:
 
 ```bash
 gh release view v0.2.0 --json body
-gh release edit v0.3.0 --notes-file /tmp/zotlit-v0.3.0-notes.md
+gh release edit v0.3.0 --notes-file /tmp/zotagent-v0.3.0-notes.md
 ```
 
 Release notes style:
@@ -144,7 +144,7 @@ OpenDataLoader can emit font, glyph, or encoding warnings for some PDFs. Common 
 - missing spaces
 - occasional metadata mistakes
 
-These issues come from the PDF and extraction chain, not from truncation in `zotlit`.
+These issues come from the PDF and extraction chain, not from truncation in `zotagent`.
 
 ### 3. Context Slicing
 

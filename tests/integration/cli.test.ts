@@ -81,7 +81,7 @@ async function createIndexedFixture(): Promise<{
   manifestPath: string;
   citationKey: string;
 }> {
-  const root = mkdtempSync(join(tmpdir(), "zotlit-cli-indexed-"));
+  const root = mkdtempSync(join(tmpdir(), "zotagent-cli-indexed-"));
   const attachmentsRoot = join(root, "attachments");
   const dataDir = join(root, "data");
   const indexDir = join(dataDir, "index");
@@ -206,7 +206,7 @@ async function createMultiIndexedFixture(): Promise<{
   citationKey: string;
   filePaths: string[];
 }> {
-  const root = mkdtempSync(join(tmpdir(), "zotlit-cli-multi-"));
+  const root = mkdtempSync(join(tmpdir(), "zotagent-cli-multi-"));
   const attachmentsRoot = join(root, "attachments");
   const dataDir = join(root, "data");
   const indexDir = join(dataDir, "index");
@@ -273,21 +273,21 @@ test("help summarizes current commands and keeps config-only overrides out of th
   assert.match(result.stdout, /Usage:/);
   assert.match(
     result.stdout,
-    /zotlit sync \[--attachments-root <path>\] \[--retry-errors\] \[--pdf-timeout-ms <n>\] \[--pdf-batch-size <n>\]/,
+    /zotagent sync \[--attachments-root <path>\] \[--retry-errors\] \[--pdf-timeout-ms <n>\] \[--pdf-batch-size <n>\]/,
   );
-  assert.match(result.stdout, /zotlit version/);
-  assert.match(result.stdout, /zotlit add \[--doi <doi> \| --s2-paper-id <id>\] \[--title <text>\]/);
-  assert.match(result.stdout, /zotlit s2 "<text>" \[--limit <n>\]/);
-  assert.match(result.stdout, /zotlit search "<text>" \[--exact\] \[--limit <n>\]/);
-  assert.match(result.stdout, /zotlit search-in "<text>" \(\[?--file <path> \| --item-key <key> \| --citation-key <key>\)? \[--limit <n>\]/);
-  assert.match(result.stdout, /zotlit metadata "<text>" \[--limit <n>\] \[--field <field>\] \[--has-file\]/);
-  assert.match(result.stdout, /zotlit fulltext \(\[?--file <path> \| --item-key <key> \| --citation-key <key>\)? \[--clean\]/);
+  assert.match(result.stdout, /zotagent version/);
+  assert.match(result.stdout, /zotagent add \[--doi <doi> \| --s2-paper-id <id>\] \[--title <text>\]/);
+  assert.match(result.stdout, /zotagent s2 "<text>" \[--limit <n>\]/);
+  assert.match(result.stdout, /zotagent search "<text>" \[--exact\] \[--limit <n>\]/);
+  assert.match(result.stdout, /zotagent search-in "<text>" \(\[?--file <path> \| --item-key <key> \| --citation-key <key>\)? \[--limit <n>\]/);
+  assert.match(result.stdout, /zotagent metadata "<text>" \[--limit <n>\] \[--field <field>\] \[--has-file\]/);
+  assert.match(result.stdout, /zotagent fulltext \(\[?--file <path> \| --item-key <key> \| --citation-key <key>\)? \[--clean\]/);
   assert.match(result.stdout, /Options:/);
   assert.match(result.stdout, /--doi <doi>\s+Import from DOI metadata when possible\./);
   assert.match(result.stdout, /--s2-paper-id <id>\s+Import a Semantic Scholar paper by paperId\./);
   assert.match(result.stdout, /--collection-key <key>\s+Add the new item to a Zotero collection by collection key\./);
   assert.match(result.stdout, /--item-type <type>\s+Override the Zotero item type\./);
-  assert.match(result.stdout, /--version\s+Print the current zotlit version\./);
+  assert.match(result.stdout, /--version\s+Print the current zotagent version\./);
   assert.match(result.stdout, /--retry-errors\s+Retry unchanged files that failed extraction earlier\./);
   assert.match(result.stdout, /--pdf-timeout-ms <n>\s+Override the OpenDataLoader timeout/);
   assert.match(result.stdout, /--pdf-batch-size <n>\s+Override the maximum number of PDFs per extraction batch\./);
@@ -300,7 +300,7 @@ test("help summarizes current commands and keeps config-only overrides out of th
   assert.match(result.stdout, /--rerank\s+Enable qmd reranking/);
   assert.match(result.stdout, /--field <field>\s+Limit metadata search/);
   assert.match(result.stdout, /--has-file\s+Keep only metadata results/);
-  assert.match(result.stdout, /zotlit expand \(\[?--file <path> \| --item-key <key> \| --citation-key <key>\)?/);
+  assert.match(result.stdout, /zotagent expand \(\[?--file <path> \| --item-key <key> \| --citation-key <key>\)?/);
   assert.match(result.stdout, /Use one of --file, --item-key, or --citation-key\./);
   assert.match(result.stdout, /fulltext\s+Output agent-friendly full text from a local manifest\./);
   assert.match(result.stdout, /--clean\s+For fulltext, apply heuristic cleanup/);
@@ -308,7 +308,7 @@ test("help summarizes current commands and keeps config-only overrides out of th
   assert.match(result.stdout, /--citation-key <key>\s+Resolve an indexed attachment by citation key/);
   assert.match(result.stdout, /zoteroLibraryType supports both user and group\./);
   assert.match(result.stdout, /zoteroCollectionKey sets the default collection/);
-  assert.match(result.stdout, /Paths and other defaults are read from \~\/\.zotlit\/config\.json\./);
+  assert.match(result.stdout, /Paths and other defaults are read from \~\/\.zotagent\/config\.json\./);
   assert.doesNotMatch(result.stdout, /--bibliography <path>/);
   assert.doesNotMatch(result.stdout, /--data-dir <path>/);
   assert.doesNotMatch(result.stdout, /--qmd-embed-model <uri>/);
@@ -382,7 +382,7 @@ test("search rejects removed query flag and points to positional usage", () => {
   assert.equal(result.status, 1);
   assert.match(result.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
   assert.match(result.stdout, /`--query` has been removed/);
-  assert.match(result.stdout, /zotlit search .*<text>.*/);
+  assert.match(result.stdout, /zotagent search .*<text>.*/);
 });
 
 test("search rejects combining exact mode with rerank", () => {
@@ -399,7 +399,7 @@ test("metadata rejects removed query flag and points to positional usage", () =>
   assert.equal(result.status, 1);
   assert.match(result.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
   assert.match(result.stdout, /`--query` is not supported/);
-  assert.match(result.stdout, /zotlit metadata .*<text>.*/);
+  assert.match(result.stdout, /zotagent metadata .*<text>.*/);
 });
 
 test("metadata rejects search-only flags", () => {
@@ -507,7 +507,7 @@ test("fulltext rejects conflicting selectors", () => {
 });
 
 test("metadata accumulates repeated field filters", () => {
-  const root = mkdtempSync(join(tmpdir(), "zotlit-cli-metadata-"));
+  const root = mkdtempSync(join(tmpdir(), "zotagent-cli-metadata-"));
   const attachmentsRoot = join(root, "attachments");
   mkdirSync(attachmentsRoot, { recursive: true });
   const bibliographyPath = join(root, "bibliography.json");

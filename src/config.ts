@@ -54,7 +54,7 @@ function resolveLibraryType(raw: string | undefined, warnings: string[]): Zotero
 }
 
 export function getConfigPath(): string {
-  return resolveHomePath("~/.zotlit/config.json");
+  return resolveHomePath("~/.zotagent/config.json");
 }
 
 function readConfigFile(): RawConfig {
@@ -67,14 +67,14 @@ export function resolveConfig(overrides: ConfigOverrides = {}): AppConfig {
   const fileConfig = readConfigFile();
   const warnings: string[] = [];
   const deprecatedFields = [
-    ["embeddingProvider", overrides.embeddingProvider, process.env.ZOTLIT_EMBEDDING_PROVIDER, process.env.EMBEDDING_PROVIDER, fileConfig.embeddingProvider],
-    ["embeddingModel", overrides.embeddingModel, process.env.ZOTLIT_EMBEDDING_MODEL, process.env.EMBEDDING_MODEL, fileConfig.embeddingModel],
-    ["googleApiKey", overrides.googleApiKey, process.env.ZOTLIT_GOOGLE_API_KEY, process.env.GOOGLE_API_KEY, fileConfig.googleApiKey],
+    ["embeddingProvider", overrides.embeddingProvider, process.env.ZOTAGENT_EMBEDDING_PROVIDER, process.env.EMBEDDING_PROVIDER, fileConfig.embeddingProvider],
+    ["embeddingModel", overrides.embeddingModel, process.env.ZOTAGENT_EMBEDDING_MODEL, process.env.EMBEDDING_MODEL, fileConfig.embeddingModel],
+    ["googleApiKey", overrides.googleApiKey, process.env.ZOTAGENT_GOOGLE_API_KEY, process.env.GOOGLE_API_KEY, fileConfig.googleApiKey],
   ] as const;
 
   for (const [field, ...values] of deprecatedFields) {
     if (values.some((value) => typeof value === "string" && value.length > 0)) {
-      warnings.push(`Config field '${field}' is deprecated in zotlit and is ignored.`);
+      warnings.push(`Config field '${field}' is deprecated in zotagent and is ignored.`);
     }
   }
 
@@ -82,7 +82,7 @@ export function resolveConfig(overrides: ConfigOverrides = {}): AppConfig {
     bibliographyJsonPath: resolveHomePath(
       firstDefined(
         overrides.bibliographyJsonPath,
-        process.env.ZOTLIT_BIBLIOGRAPHY_JSON_PATH,
+        process.env.ZOTAGENT_BIBLIOGRAPHY_JSON_PATH,
         fileConfig.bibliographyJsonPath,
         DEFAULTS.bibliographyJsonPath,
       )!,
@@ -90,7 +90,7 @@ export function resolveConfig(overrides: ConfigOverrides = {}): AppConfig {
     attachmentsRoot: resolveHomePath(
       firstDefined(
         overrides.attachmentsRoot,
-        process.env.ZOTLIT_ATTACHMENTS_ROOT,
+        process.env.ZOTAGENT_ATTACHMENTS_ROOT,
         fileConfig.attachmentsRoot,
         DEFAULTS.attachmentsRoot,
       )!,
@@ -98,34 +98,34 @@ export function resolveConfig(overrides: ConfigOverrides = {}): AppConfig {
     dataDir: resolveHomePath(
       firstDefined(
         overrides.dataDir,
-        process.env.ZOTLIT_DATA_DIR,
+        process.env.ZOTAGENT_DATA_DIR,
         fileConfig.dataDir,
         DEFAULTS.dataDir,
       )!,
     ),
     qmdEmbedModel: firstDefined(
       overrides.qmdEmbedModel,
-      process.env.ZOTLIT_QMD_EMBED_MODEL,
+      process.env.ZOTAGENT_QMD_EMBED_MODEL,
       process.env.QMD_EMBED_MODEL,
       fileConfig.qmdEmbedModel,
       DEFAULTS.qmdEmbedModel,
     ),
     semanticScholarApiKey: firstDefined(
       overrides.semanticScholarApiKey,
-      process.env.ZOTLIT_SEMANTIC_SCHOLAR_API_KEY,
+      process.env.ZOTAGENT_SEMANTIC_SCHOLAR_API_KEY,
       process.env.SEMANTIC_SCHOLAR_API_KEY,
       fileConfig.semanticScholarApiKey,
     ),
     zoteroLibraryId: firstDefined(
       overrides.zoteroLibraryId,
-      process.env.ZOTLIT_ZOTERO_LIBRARY_ID,
+      process.env.ZOTAGENT_ZOTERO_LIBRARY_ID,
       process.env.ZOTERO_LIBRARY_ID,
       fileConfig.zoteroLibraryId,
     ),
     zoteroLibraryType: resolveLibraryType(
       firstDefined(
         overrides.zoteroLibraryType,
-        process.env.ZOTLIT_ZOTERO_LIBRARY_TYPE,
+        process.env.ZOTAGENT_ZOTERO_LIBRARY_TYPE,
         process.env.ZOTERO_LIBRARY_TYPE,
         fileConfig.zoteroLibraryType,
       ),
@@ -133,13 +133,13 @@ export function resolveConfig(overrides: ConfigOverrides = {}): AppConfig {
     ),
     zoteroCollectionKey: firstDefined(
       overrides.zoteroCollectionKey,
-      process.env.ZOTLIT_ZOTERO_COLLECTION_KEY,
+      process.env.ZOTAGENT_ZOTERO_COLLECTION_KEY,
       process.env.ZOTERO_COLLECTION_KEY,
       fileConfig.zoteroCollectionKey,
     ),
     zoteroApiKey: firstDefined(
       overrides.zoteroApiKey,
-      process.env.ZOTLIT_ZOTERO_API_KEY,
+      process.env.ZOTAGENT_ZOTERO_API_KEY,
       process.env.ZOTERO_API_KEY,
       fileConfig.zoteroApiKey,
     ),
@@ -157,7 +157,7 @@ export function getDataPaths(dataDir: string): DataPaths {
     manifestsDir: resolve(resolvedDataDir, "manifests"),
     indexDir,
     exactDbPath: resolve(indexDir, "exact.sqlite"),
-    tempDir: resolve(tmpdir(), "zotlit"),
+    tempDir: resolve(tmpdir(), "zotagent"),
     qmdDbPath: resolve(indexDir, "qmd.sqlite"),
     catalogPath: resolve(indexDir, "catalog.json"),
   };

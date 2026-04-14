@@ -283,7 +283,7 @@ function applyCollectionKey(payload: EditableZoteroItem, collectionKey: string |
 function getWriteConfig(config: AppConfig): ResolvedWriteConfig {
   if (!config.zoteroLibraryId || !config.zoteroApiKey || !config.zoteroLibraryType) {
     throw new Error(
-      "Missing Zotero write config. Set zoteroLibraryId, zoteroLibraryType, and zoteroApiKey in ~/.zotlit/config.json or ZOTLIT_ZOTERO_* environment variables.",
+      "Missing Zotero write config. Set zoteroLibraryId, zoteroLibraryType, and zoteroApiKey in ~/.zotagent/config.json or ZOTAGENT_ZOTERO_* environment variables.",
     );
   }
   return {

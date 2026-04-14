@@ -50,7 +50,7 @@ function readyEntry(
 }
 
 test("openExactIndex rebuilds and searches Chinese and English lexical candidates", async () => {
-  const root = mkdtempSync(join(tmpdir(), "zotlit-exact-db-"));
+  const root = mkdtempSync(join(tmpdir(), "zotagent-exact-db-"));
   const dataDir = join(root, "data");
   const manifestsDir = join(dataDir, "manifests");
   mkdirSync(manifestsDir, { recursive: true });
@@ -136,7 +136,7 @@ test("openExactIndex rebuilds and searches Chinese and English lexical candidate
 });
 
 test("rebuildExactIndex replaces stale documents on full rebuild", async () => {
-  const root = mkdtempSync(join(tmpdir(), "zotlit-exact-db-stale-"));
+  const root = mkdtempSync(join(tmpdir(), "zotagent-exact-db-stale-"));
   const dataDir = join(root, "data");
   const manifestsDir = join(dataDir, "manifests");
   mkdirSync(manifestsDir, { recursive: true });
@@ -213,7 +213,7 @@ test("rebuildExactIndex replaces stale documents on full rebuild", async () => {
 });
 
 test("syncExactIndex upserts changed documents and deletes stale ones", async () => {
-  const root = mkdtempSync(join(tmpdir(), "zotlit-exact-db-incremental-"));
+  const root = mkdtempSync(join(tmpdir(), "zotagent-exact-db-incremental-"));
   const dataDir = join(root, "data");
   const manifestsDir = join(dataDir, "manifests");
   mkdirSync(manifestsDir, { recursive: true });
@@ -322,7 +322,7 @@ test("syncExactIndex upserts changed documents and deletes stale ones", async ()
 });
 
 test("syncExactIndex rebuilds from ready entries when the exact db starts empty", async () => {
-  const root = mkdtempSync(join(tmpdir(), "zotlit-exact-db-missing-"));
+  const root = mkdtempSync(join(tmpdir(), "zotagent-exact-db-missing-"));
   const dataDir = join(root, "data");
   const manifestsDir = join(dataDir, "manifests");
   mkdirSync(manifestsDir, { recursive: true });

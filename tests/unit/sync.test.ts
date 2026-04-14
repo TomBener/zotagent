@@ -65,7 +65,7 @@ test("withHiddenJavaDockIcon only applies on macOS and restores environment afte
   assert.equal(seenDuringTask, "-Xmx1g");
   assert.equal(env.JAVA_TOOL_OPTIONS, "-Xmx1g");
 
-  env.ZOTLIT_SHOW_JAVA_DOCK_ICON = "1";
+  env.ZOTAGENT_SHOW_JAVA_DOCK_ICON = "1";
   await withHiddenJavaDockIcon(
     async () => {
       seenDuringTask = env.JAVA_TOOL_OPTIONS || "";
@@ -126,7 +126,7 @@ test("runSync relays SIGINT instead of swallowing it", () => {
       import { join } from "node:path";
       import { runSync } from ${JSON.stringify(syncModuleUrl)};
 
-      const root = mkdtempSync(join(tmpdir(), "zotlit-sync-signal-"));
+      const root = mkdtempSync(join(tmpdir(), "zotagent-sync-signal-"));
       const attachmentsRoot = join(root, "attachments");
       const dataDir = join(root, "data");
       mkdirSync(attachmentsRoot, { recursive: true });
@@ -200,7 +200,7 @@ test("runSync does not swallow uncaught exceptions", () => {
       import { join } from "node:path";
       import { runSync } from ${JSON.stringify(syncModuleUrl)};
 
-      const root = mkdtempSync(join(tmpdir(), "zotlit-sync-uncaught-"));
+      const root = mkdtempSync(join(tmpdir(), "zotagent-sync-uncaught-"));
       const attachmentsRoot = join(root, "attachments");
       const dataDir = join(root, "data");
       mkdirSync(attachmentsRoot, { recursive: true });
@@ -268,7 +268,7 @@ test("runSync does not swallow uncaught exceptions", () => {
 });
 
 test("runSync skips unchanged ready pdfs and refreshes qmd contexts", async () => {
-  const root = mkdtempSync(join(tmpdir(), "zotlit-sync-"));
+  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-"));
   const attachmentsRoot = join(root, "attachments");
   const dataDir = join(root, "data");
   const indexDir = join(dataDir, "index");
@@ -414,7 +414,7 @@ test("runSync skips unchanged ready pdfs and refreshes qmd contexts", async () =
 });
 
 test("runSync sends exact-index deltas when incremental sync is available", async () => {
-  const root = mkdtempSync(join(tmpdir(), "zotlit-sync-exact-delta-"));
+  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-exact-delta-"));
   const attachmentsRoot = join(root, "attachments");
   const dataDir = join(root, "data");
   const indexDir = join(dataDir, "index");
@@ -571,7 +571,7 @@ test("runSync sends exact-index deltas when incremental sync is available", asyn
 });
 
 test("runSync resumes from existing normalized and manifest outputs when catalog state is missing", async () => {
-  const root = mkdtempSync(join(tmpdir(), "zotlit-sync-resume-"));
+  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-resume-"));
   const attachmentsRoot = join(root, "attachments");
   const dataDir = join(root, "data");
   const indexDir = join(dataDir, "index");
@@ -668,7 +668,7 @@ test("runSync resumes from existing normalized and manifest outputs when catalog
 });
 
 test("runSync re-extracts attachments when fallback normalized output is empty", async () => {
-  const root = mkdtempSync(join(tmpdir(), "zotlit-sync-empty-fallback-"));
+  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-empty-fallback-"));
   const attachmentsRoot = join(root, "attachments");
   const dataDir = join(root, "data");
   const indexDir = join(dataDir, "index");
@@ -776,7 +776,7 @@ test("runSync re-extracts attachments when fallback normalized output is empty",
 });
 
 test("runSync keeps embedding until qmd no longer reports pending documents", async () => {
-  const root = mkdtempSync(join(tmpdir(), "zotlit-sync-embed-loop-"));
+  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-embed-loop-"));
   const attachmentsRoot = join(root, "attachments");
   const dataDir = join(root, "data");
   const indexDir = join(dataDir, "index");
@@ -891,7 +891,7 @@ test("runSync keeps embedding until qmd no longer reports pending documents", as
 });
 
 test("runSync marks empty txt extraction output as error", async () => {
-  const root = mkdtempSync(join(tmpdir(), "zotlit-sync-empty-txt-"));
+  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-empty-txt-"));
   const attachmentsRoot = join(root, "attachments");
   const dataDir = join(root, "data");
   mkdirSync(join(attachmentsRoot, "notes"), { recursive: true });
@@ -952,7 +952,7 @@ test("runSync marks empty txt extraction output as error", async () => {
 });
 
 test("runSync indexes txt attachments without Java extraction", async () => {
-  const root = mkdtempSync(join(tmpdir(), "zotlit-sync-txt-"));
+  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-txt-"));
   const attachmentsRoot = join(root, "attachments");
   const dataDir = join(root, "data");
   mkdirSync(join(attachmentsRoot, "notes"), { recursive: true });
@@ -1026,7 +1026,7 @@ test("runSync indexes txt attachments without Java extraction", async () => {
 });
 
 test("runSync reuses a ready index when bibliography paths come from another machine", async () => {
-  const root = mkdtempSync(join(tmpdir(), "zotlit-sync-relocate-"));
+  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-relocate-"));
   const attachmentsRoot = join(root, "miniagent", "Zotero");
   const bibliographyRoot = join(root, "rentao", "Zotero");
   const dataDir = join(root, "data");
@@ -1163,7 +1163,7 @@ test("runSync reuses a ready index when bibliography paths come from another mac
 });
 
 test("catalog storage uses home-relative paths and reads them back as local paths", () => {
-  const root = mkdtempSync(join(homedir(), ".zotlit-catalog-home-"));
+  const root = mkdtempSync(join(homedir(), ".zotagent-catalog-home-"));
   try {
     const dataDir = join(root, "Zotlit");
     const indexDir = join(dataDir, "index");
@@ -1223,7 +1223,7 @@ test("catalog storage uses home-relative paths and reads them back as local path
 });
 
 test("readCatalogFile relocates stale Mac home paths to the current iCloud dataDir artifacts", () => {
-  const root = mkdtempSync(join(homedir(), ".zotlit-catalog-relocate-"));
+  const root = mkdtempSync(join(homedir(), ".zotagent-catalog-relocate-"));
   try {
     const dataDir = join(root, "Library", "Mobile Documents", "com~apple~CloudDocs", "Zotlit");
     const zoteroRoot = join(root, "Library", "Mobile Documents", "com~apple~CloudDocs", "Zotero");
@@ -1291,7 +1291,7 @@ test("readCatalogFile relocates stale Mac home paths to the current iCloud dataD
 });
 
 test("runSync keeps cached outputs when attachment disappears from the current catalog", async () => {
-  const root = mkdtempSync(join(tmpdir(), "zotlit-stale-"));
+  const root = mkdtempSync(join(tmpdir(), "zotagent-stale-"));
   const attachmentsRoot = join(root, "attachments");
   const dataDir = join(root, "data");
   const indexDir = join(dataDir, "index");
@@ -1367,7 +1367,7 @@ test("runSync keeps cached outputs when attachment disappears from the current c
 });
 
 test("runSync reuses cached outputs after an attachment temporarily disappears", async () => {
-  const root = mkdtempSync(join(tmpdir(), "zotlit-sync-resume-missing-"));
+  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-resume-missing-"));
   const attachmentsRoot = join(root, "attachments");
   const dataDir = join(root, "data");
   const indexDir = join(dataDir, "index");
@@ -1496,7 +1496,7 @@ test("runSync reuses cached outputs after an attachment temporarily disappears",
 });
 
 test("runSync skips unchanged previous extraction errors by default", async () => {
-  const root = mkdtempSync(join(tmpdir(), "zotlit-sync-error-cache-"));
+  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-error-cache-"));
   const attachmentsRoot = join(root, "attachments");
   const dataDir = join(root, "data");
   const indexDir = join(dataDir, "index");
@@ -1596,7 +1596,7 @@ test("runSync skips unchanged previous extraction errors by default", async () =
 });
 
 test("runSync retries unchanged previous errors when requested and passes custom PDF timeout", async () => {
-  const root = mkdtempSync(join(tmpdir(), "zotlit-sync-retry-errors-"));
+  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-retry-errors-"));
   const attachmentsRoot = join(root, "attachments");
   const dataDir = join(root, "data");
   const indexDir = join(dataDir, "index");
@@ -1718,7 +1718,7 @@ test("runSync retries unchanged previous errors when requested and passes custom
 });
 
 test("runSync extracts book attachments in single-file batches by default", async () => {
-  const root = mkdtempSync(join(tmpdir(), "zotlit-sync-book-batches-"));
+  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-book-batches-"));
   const attachmentsRoot = join(root, "attachments");
   const dataDir = join(root, "data");
   const manifestsDir = join(dataDir, "manifests");
@@ -1827,7 +1827,7 @@ test("runSync extracts book attachments in single-file batches by default", asyn
 });
 
 test("runSync honors explicit PDF batch size", async () => {
-  const root = mkdtempSync(join(tmpdir(), "zotlit-sync-batch-size-"));
+  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-batch-size-"));
   const attachmentsRoot = join(root, "attachments");
   const dataDir = join(root, "data");
   const manifestsDir = join(dataDir, "manifests");
@@ -1925,7 +1925,7 @@ test("runSync honors explicit PDF batch size", async () => {
 });
 
 test("runSync records extraction failures per attachment and continues indexing others", async () => {
-  const root = mkdtempSync(join(tmpdir(), "zotlit-sync-error-"));
+  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-error-"));
   const attachmentsRoot = join(root, "attachments");
   const dataDir = join(root, "data");
   const manifestsDir = join(dataDir, "manifests");
@@ -2040,7 +2040,7 @@ test("runSync records extraction failures per attachment and continues indexing 
   const logBody = readFileSync(result.logPath, "utf-8");
   const latestLogPath = join(dataDir, "logs", "sync-latest.log");
   assert.equal(existsSync(latestLogPath), true);
-  assert.match(logBody, /# zotlit sync log/);
+  assert.match(logBody, /# zotagent sync log/);
   assert.match(logBody, /Loaded bibliography with 2 records and 2 attachments/);
   assert.match(logBody, /## Errored Files/);
   assert.match(logBody, /Extraction failed for .*bad\.pdf/);
@@ -2049,7 +2049,7 @@ test("runSync records extraction failures per attachment and continues indexing 
 });
 
 test("runSync retries a timed out batch one file at a time", async () => {
-  const root = mkdtempSync(join(tmpdir(), "zotlit-sync-timeout-"));
+  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-timeout-"));
   const attachmentsRoot = join(root, "attachments");
   const dataDir = join(root, "data");
   const manifestsDir = join(dataDir, "manifests");

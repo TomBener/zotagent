@@ -32,7 +32,7 @@ function writeBibliography(root: string, items: unknown[]): { bibliographyPath: 
 }
 
 test("searchMetadata works without sync and returns metadata-only records", async () => {
-  const root = mkdtempSync(join(tmpdir(), "zotlit-metadata-"));
+  const root = mkdtempSync(join(tmpdir(), "zotagent-metadata-"));
   const { attachmentsRoot, pdfPath, epubPath } = createFixturePaths(root);
   const { bibliographyPath, dataDir } = writeBibliography(root, [
     {
@@ -115,7 +115,7 @@ test("searchMetadata works without sync and returns metadata-only records", asyn
 });
 
 test("searchMetadata supports author variants and field filtering", async () => {
-  const root = mkdtempSync(join(tmpdir(), "zotlit-metadata-author-"));
+  const root = mkdtempSync(join(tmpdir(), "zotagent-metadata-author-"));
   const { attachmentsRoot } = createFixturePaths(root);
   const { bibliographyPath, dataDir } = writeBibliography(root, [
     {

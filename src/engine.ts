@@ -239,7 +239,7 @@ export async function searchLiterature(
   const catalog = readCatalogFile(paths.catalogPath);
   const readyEntries = getReadyEntries(catalog);
   if (readyEntries.length === 0) {
-    throw new Error("No indexed documents found. Run `zotlit sync` first.");
+    throw new Error("No indexed documents found. Run `zotagent sync` first.");
   }
 
   const entryByDocKey = new Map(readyEntries.map((entry) => [entry.docKey, entry]));
@@ -319,7 +319,7 @@ export function searchWithinDocuments(
 } {
   const normalizedQuery = normalizeExactText(query);
   if (!normalizedQuery) {
-    throw new Error("Missing search text. Use: zotlit search-in \"<text>\" (--file <path> | --item-key <key> | --citation-key <key>)");
+    throw new Error("Missing search text. Use: zotagent search-in \"<text>\" (--file <path> | --item-key <key> | --citation-key <key>)");
   }
 
   const queryTerms = [...new Set(normalizedQuery.split(" ").filter((term) => term.length > 0))];

@@ -174,7 +174,7 @@ function mapPaper(row: SemanticScholarPaperApiRow): SemanticScholarPaper {
 function requireSemanticScholarConfig(config: AppConfig): void {
   if (!config.semanticScholarApiKey) {
     throw new Error(
-      "Missing Semantic Scholar API key. Set semanticScholarApiKey in ~/.zotlit/config.json or ZOTLIT_SEMANTIC_SCHOLAR_API_KEY.",
+      "Missing Semantic Scholar API key. Set semanticScholarApiKey in ~/.zotagent/config.json or ZOTAGENT_SEMANTIC_SCHOLAR_API_KEY.",
     );
   }
 }

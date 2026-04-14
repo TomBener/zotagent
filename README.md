@@ -1,10 +1,10 @@
-# zotlit
+# zotagent
 
-[![Lint](https://github.com/TomBener/zotlit/actions/workflows/lint.yml/badge.svg?branch=main)](https://github.com/TomBener/zotlit/actions/workflows/lint.yml)
-[![Release](https://github.com/TomBener/zotlit/actions/workflows/release.yml/badge.svg)](https://github.com/TomBener/zotlit/actions/workflows/release.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/TomBener/zotlit/blob/main/LICENSE)
+[![Lint](https://github.com/TomBener/zotagent/actions/workflows/lint.yml/badge.svg?branch=main)](https://github.com/TomBener/zotagent/actions/workflows/lint.yml)
+[![Release](https://github.com/TomBener/zotagent/actions/workflows/release.yml/badge.svg)](https://github.com/TomBener/zotagent/actions/workflows/release.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/TomBener/zotagent/blob/main/LICENSE)
 
-`zotlit` is a Zotero CLI for AI agents.
+`zotagent` is a Zotero CLI for AI agents.
 
 It focuses on a small set of tasks:
 
@@ -65,7 +65,7 @@ npm install -g .
 
 Default config file:
 
-- `~/.zotlit/config.json`
+- `~/.zotagent/config.json`
 
 Minimal example:
 
@@ -84,11 +84,11 @@ Minimal example:
 
 API credentials can also come from environment variables:
 
-- `ZOTLIT_SEMANTIC_SCHOLAR_API_KEY`
-- `ZOTLIT_ZOTERO_LIBRARY_ID`
-- `ZOTLIT_ZOTERO_LIBRARY_TYPE`
-- `ZOTLIT_ZOTERO_COLLECTION_KEY`
-- `ZOTLIT_ZOTERO_API_KEY`
+- `ZOTAGENT_SEMANTIC_SCHOLAR_API_KEY`
+- `ZOTAGENT_ZOTERO_LIBRARY_ID`
+- `ZOTAGENT_ZOTERO_LIBRARY_TYPE`
+- `ZOTAGENT_ZOTERO_COLLECTION_KEY`
+- `ZOTAGENT_ZOTERO_API_KEY`
 
 Fallback environment variable names:
 
@@ -98,7 +98,7 @@ Fallback environment variable names:
 - `ZOTERO_COLLECTION_KEY`
 - `ZOTERO_API_KEY`
 
-`semanticScholarApiKey` is only needed for `zotlit s2` and `zotlit add --s2-paper-id`.
+`semanticScholarApiKey` is only needed for `zotagent s2` and `zotagent add --s2-paper-id`.
 `zoteroCollectionKey` is optional and sets the default collection for new items created by `add`.
 `zoteroLibraryType` supports both `user` and `group`.
 `sync` treats bibliography attachment paths as relocatable under `attachmentsRoot`, so a bibliography exported on another machine still matches local PDFs when the relative path under the Zotero root is the same. Catalog paths under the local home directory are stored as `~/...`, so an iCloud-backed `dataDir` can be shared across Macs with different usernames.
@@ -106,17 +106,17 @@ Fallback environment variable names:
 ## Commands
 
 ```bash
-zotlit sync [--attachments-root <path>] [--retry-errors] [--pdf-timeout-ms <n>] [--pdf-batch-size <n>]
-zotlit status
-zotlit version
-zotlit add [--doi <doi> | --s2-paper-id <id>] [--title <text>] [--author <name>] [--year <text>] [--publication <text>] [--url <url>] [--url-date <date>] [--collection-key <key>] [--item-type <type>]
-zotlit s2 "<text>" [--limit <n>]
-zotlit search "<text>" [--exact] [--limit <n>] [--min-score <n>] [--rerank]
-zotlit search-in "<text>" (--file <path> | --item-key <key> | --citation-key <key>) [--limit <n>]
-zotlit metadata "<text>" [--limit <n>] [--field <field>] [--has-file]
-zotlit read (--file <path> | --item-key <key> | --citation-key <key>) [--offset-block <n>] [--limit-blocks <n>]
-zotlit fulltext (--file <path> | --item-key <key> | --citation-key <key>) [--clean]
-zotlit expand (--file <path> | --item-key <key> | --citation-key <key>) --block-start <n> [--block-end <n>] [--radius <n>]
+zotagent sync [--attachments-root <path>] [--retry-errors] [--pdf-timeout-ms <n>] [--pdf-batch-size <n>]
+zotagent status
+zotagent version
+zotagent add [--doi <doi> | --s2-paper-id <id>] [--title <text>] [--author <name>] [--year <text>] [--publication <text>] [--url <url>] [--url-date <date>] [--collection-key <key>] [--item-type <type>]
+zotagent s2 "<text>" [--limit <n>]
+zotagent search "<text>" [--exact] [--limit <n>] [--min-score <n>] [--rerank]
+zotagent search-in "<text>" (--file <path> | --item-key <key> | --citation-key <key>) [--limit <n>]
+zotagent metadata "<text>" [--limit <n>] [--field <field>] [--has-file]
+zotagent read (--file <path> | --item-key <key> | --citation-key <key>) [--offset-block <n>] [--limit-blocks <n>]
+zotagent fulltext (--file <path> | --item-key <key> | --citation-key <key>) [--clean]
+zotagent expand (--file <path> | --item-key <key> | --citation-key <key>) --block-start <n> [--block-end <n>] [--radius <n>]
 ```
 
 ## Common Usage
@@ -124,20 +124,20 @@ zotlit expand (--file <path> | --item-key <key> | --citation-key <key>) --block-
 Add by DOI:
 
 ```bash
-zotlit add --doi "10.1111/dech.70058"
+zotagent add --doi "10.1111/dech.70058"
 ```
 
 Search Semantic Scholar and import by paperId:
 
 ```bash
-zotlit s2 "active aging in China" --limit 5
-zotlit add --s2-paper-id "f2005ed06241e8aa6f55f7ed9279a56b92038128"
+zotagent s2 "active aging in China" --limit 5
+zotagent add --s2-paper-id "f2005ed06241e8aa6f55f7ed9279a56b92038128"
 ```
 
 Add by fields:
 
 ```bash
-zotlit add \
+zotagent add \
   --title "Working Paper Title" \
   --author "Jane Doe" \
   --year 2026 \
@@ -160,33 +160,33 @@ Group library example:
 Build or refresh the local index:
 
 ```bash
-zotlit sync
+zotagent sync
 ```
 
 Retry unchanged extraction errors:
 
 ```bash
-zotlit sync --retry-errors
+zotagent sync --retry-errors
 ```
 
 Extract every PDF one at a time:
 
 ```bash
-zotlit sync --pdf-batch-size 1
+zotagent sync --pdf-batch-size 1
 ```
 
 Give large PDFs a longer per-extraction timeout:
 
 ```bash
-zotlit sync --pdf-timeout-ms 600000
+zotagent sync --pdf-timeout-ms 600000
 ```
 
 Search indexed documents:
 
 ```bash
-zotlit search "state-owned enterprise governance"
-zotlit search "dangwei shuji" --exact
-zotlit search "how do party secretaries shape SOE governance" --rerank
+zotagent search "state-owned enterprise governance"
+zotagent search "dangwei shuji" --exact
+zotagent search "how do party secretaries shape SOE governance" --rerank
 ```
 
 Default `search` skips qmd reranking for lower latency. Use `--rerank` only for narrower queries when ranking quality matters more than speed.
@@ -194,37 +194,37 @@ Default `search` skips qmd reranking for lower latency. Use `--rerank` only for 
 Search within one indexed document:
 
 ```bash
-zotlit search-in "dangwei shuji" --item-key KG326EEI
-zotlit search-in "firm governance" --file "~/Library/.../paper.pdf" --limit 5
+zotagent search-in "dangwei shuji" --item-key KG326EEI
+zotagent search-in "firm governance" --file "~/Library/.../paper.pdf" --limit 5
 ```
 
 Follow a search hit with `read`, `fulltext`, or `expand`:
 
 ```bash
-zotlit search "dangwei shuji" --exact
-zotlit read --item-key KG326EEI
-zotlit read --citation-key lee2024aging
-zotlit fulltext --item-key KG326EEI
-zotlit fulltext --item-key KG326EEI --clean
-zotlit expand --item-key KG326EEI --block-start 10 --radius 2
+zotagent search "dangwei shuji" --exact
+zotagent read --item-key KG326EEI
+zotagent read --citation-key lee2024aging
+zotagent fulltext --item-key KG326EEI
+zotagent fulltext --item-key KG326EEI --clean
+zotagent expand --item-key KG326EEI --block-start 10 --radius 2
 ```
 
 Search metadata:
 
 ```bash
-zotlit metadata "Development and Change" --field journal
+zotagent metadata "Development and Change" --field journal
 ```
 
 Read and expand:
 
 ```bash
-zotlit read --item-key KG326EEI
-zotlit read --citation-key lee2024aging
-zotlit fulltext --item-key KG326EEI
-zotlit fulltext --item-key KG326EEI --clean
-zotlit fulltext --file "~/Library/.../paper.pdf"
-zotlit expand --item-key KG326EEI --block-start 10 --radius 2
-zotlit expand --file "~/Library/.../paper.pdf" --block-start 10 --radius 2
+zotagent read --item-key KG326EEI
+zotagent read --citation-key lee2024aging
+zotagent fulltext --item-key KG326EEI
+zotagent fulltext --item-key KG326EEI --clean
+zotagent fulltext --file "~/Library/.../paper.pdf"
+zotagent expand --item-key KG326EEI --block-start 10 --radius 2
+zotagent expand --file "~/Library/.../paper.pdf" --block-start 10 --radius 2
 ```
 
 ## Notes
@@ -234,7 +234,7 @@ zotlit expand --file "~/Library/.../paper.pdf" --block-start 10 --radius 2
 - `add` writes to the library root by default. Set `zoteroCollectionKey` in config or pass `--collection-key <key>` to place new items in a collection.
 - New items created by `add` receive the tag `Added by AI Agent`.
 - Creating an item in Zotero does not make it instantly searchable in local PDF search. `metadata` depends on your exported bibliography JSON, and PDF search depends on `sync`.
-- `search`, `read`, `fulltext`, and `expand` only work on the local index. Run `zotlit sync` first when attachments or manifests are stale.
+- `search`, `read`, `fulltext`, and `expand` only work on the local index. Run `zotagent sync` first when attachments or manifests are stale.
 - `search-in` limits the search scope to one selected document, or to all matching attachments when one `itemKey` or `citationKey` maps to multiple indexed documents.
 - `fulltext` returns `results[]`. When one `itemKey` or `citationKey` maps to multiple indexed documents, all matching attachments are included instead of raising a conflict.
 - `fulltext` returns the original normalized markdown by default, without content filtering.

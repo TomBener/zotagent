@@ -173,22 +173,22 @@ function overridesFromFlags(flags: Record<string, FlagValue>): ConfigOverrides {
 }
 
 function printHelp(): void {
-  console.log(`zotlit
+  console.log(`zotagent
 
 Search indexed Zotero documents or bibliography metadata and follow hits with read or expand.
 
 Usage:
-  zotlit sync [--attachments-root <path>] [--retry-errors] [--pdf-timeout-ms <n>] [--pdf-batch-size <n>]
-  zotlit status
-  zotlit version
-  zotlit add [--doi <doi> | --s2-paper-id <id>] [--title <text>] [--author <name>] [--year <text>] [--publication <text>] [--url <url>] [--url-date <date>] [--collection-key <key>] [--item-type <type>]
-  zotlit s2 "<text>" [--limit <n>]
-  zotlit search "<text>" [--exact] [--limit <n>] [--min-score <n>] [--rerank]
-  zotlit search-in "<text>" (--file <path> | --item-key <key> | --citation-key <key>) [--limit <n>]
-  zotlit metadata "<text>" [--limit <n>] [--field <field>] [--has-file]
-  zotlit read (--file <path> | --item-key <key> | --citation-key <key>) [--offset-block <n>] [--limit-blocks <n>]
-  zotlit fulltext (--file <path> | --item-key <key> | --citation-key <key>) [--clean]
-  zotlit expand (--file <path> | --item-key <key> | --citation-key <key>) --block-start <n> [--block-end <n>] [--radius <n>]
+  zotagent sync [--attachments-root <path>] [--retry-errors] [--pdf-timeout-ms <n>] [--pdf-batch-size <n>]
+  zotagent status
+  zotagent version
+  zotagent add [--doi <doi> | --s2-paper-id <id>] [--title <text>] [--author <name>] [--year <text>] [--publication <text>] [--url <url>] [--url-date <date>] [--collection-key <key>] [--item-type <type>]
+  zotagent s2 "<text>" [--limit <n>]
+  zotagent search "<text>" [--exact] [--limit <n>] [--min-score <n>] [--rerank]
+  zotagent search-in "<text>" (--file <path> | --item-key <key> | --citation-key <key>) [--limit <n>]
+  zotagent metadata "<text>" [--limit <n>] [--field <field>] [--has-file]
+  zotagent read (--file <path> | --item-key <key> | --citation-key <key>) [--offset-block <n>] [--limit-blocks <n>]
+  zotagent fulltext (--file <path> | --item-key <key> | --citation-key <key>) [--clean]
+  zotagent expand (--file <path> | --item-key <key> | --citation-key <key>) --block-start <n> [--block-end <n>] [--radius <n>]
 
 Commands:
   sync
@@ -200,7 +200,7 @@ Commands:
     Show attachment counts, local index paths, and qmd status.
 
   version
-    Print the current zotlit version.
+    Print the current zotagent version.
 
   add
     Add a Zotero item and return its itemKey immediately.
@@ -269,30 +269,30 @@ Options:
   --block-start <n>           Start block for expand.
   --block-end <n>             End block for expand. Default: block-start.
   --radius <n>                Include n blocks before and after. Default: 2.
-  --version                   Print the current zotlit version.
+  --version                   Print the current zotagent version.
 
 Examples:
-  zotlit add --doi "10.1016/j.econmod.2026.107590"
-  zotlit add --s2-paper-id "f2005ed06241e8aa6f55f7ed9279a56b92038128"
-  zotlit add --title "Working Paper" --author "Jane Doe" --year 2026 --collection-key "ABCD1234" --url "https://example.com"
-  zotlit s2 "state-owned enterprise governance" --limit 5
-  zotlit search "dangwei shuji" --exact
-  zotlit search-in "dangwei shuji" --item-key KG326EEI
-  zotlit search "state-owned enterprise governance" --limit 5 --min-score 0.4
-  zotlit metadata "American Journal of Political Science" --field journal
-  zotlit read --item-key KG326EEI
-  zotlit read --citation-key lee2024aging
-  zotlit fulltext --item-key KG326EEI
-  zotlit fulltext --item-key KG326EEI --clean
-  zotlit expand --item-key KG326EEI --block-start 10 --radius 2
-  zotlit status
-  zotlit version
-  zotlit sync --attachments-root "/path/to/zotero/subfolder"
-  zotlit sync --retry-errors --pdf-timeout-ms 1800000
-  zotlit sync --pdf-batch-size 1
+  zotagent add --doi "10.1016/j.econmod.2026.107590"
+  zotagent add --s2-paper-id "f2005ed06241e8aa6f55f7ed9279a56b92038128"
+  zotagent add --title "Working Paper" --author "Jane Doe" --year 2026 --collection-key "ABCD1234" --url "https://example.com"
+  zotagent s2 "state-owned enterprise governance" --limit 5
+  zotagent search "dangwei shuji" --exact
+  zotagent search-in "dangwei shuji" --item-key KG326EEI
+  zotagent search "state-owned enterprise governance" --limit 5 --min-score 0.4
+  zotagent metadata "American Journal of Political Science" --field journal
+  zotagent read --item-key KG326EEI
+  zotagent read --citation-key lee2024aging
+  zotagent fulltext --item-key KG326EEI
+  zotagent fulltext --item-key KG326EEI --clean
+  zotagent expand --item-key KG326EEI --block-start 10 --radius 2
+  zotagent status
+  zotagent version
+  zotagent sync --attachments-root "/path/to/zotero/subfolder"
+  zotagent sync --retry-errors --pdf-timeout-ms 1800000
+  zotagent sync --pdf-batch-size 1
 
 Config:
-  Paths and other defaults are read from ~/.zotlit/config.json.
+  Paths and other defaults are read from ~/.zotagent/config.json.
   The add command also needs zoteroLibraryId, zoteroLibraryType, and zoteroApiKey.
   zoteroLibraryType supports both user and group.
   zoteroCollectionKey sets the default collection for new add commands.
@@ -477,7 +477,7 @@ async function main(): Promise<void> {
 
       case "s2": {
         if ("query" in parsed.flags) {
-          emitError("UNEXPECTED_ARGUMENT", '`--query` is not supported. Use: zotlit s2 "<text>"');
+          emitError("UNEXPECTED_ARGUMENT", '`--query` is not supported. Use: zotagent s2 "<text>"');
           return;
         }
         const invalidFlags = ["exact", "rerank", "min-score", "field", "has-file", "has-pdf"].filter(
@@ -492,7 +492,7 @@ async function main(): Promise<void> {
         }
         const query = parsed.positionals.slice(1).join(" ");
         if (!query) {
-          emitError("MISSING_ARGUMENT", 'Missing Semantic Scholar search text. Use: zotlit s2 "<text>"');
+          emitError("MISSING_ARGUMENT", 'Missing Semantic Scholar search text. Use: zotagent s2 "<text>"');
           return;
         }
         const limitInput = parseNumericFlag(parsed.flags, "limit", {
@@ -513,12 +513,12 @@ async function main(): Promise<void> {
 
       case "search": {
         if ("query" in parsed.flags) {
-          emitError("UNEXPECTED_ARGUMENT", '`--query` has been removed. Use: zotlit search "<text>"');
+          emitError("UNEXPECTED_ARGUMENT", '`--query` has been removed. Use: zotagent search "<text>"');
           return;
         }
         const query = parsed.positionals.slice(1).join(" ");
         if (!query) {
-          emitError("MISSING_ARGUMENT", 'Missing search text. Use: zotlit search "<text>"');
+          emitError("MISSING_ARGUMENT", 'Missing search text. Use: zotagent search "<text>"');
           return;
         }
         const exact = getBooleanFlag(parsed.flags, "exact");
@@ -559,12 +559,12 @@ async function main(): Promise<void> {
 
       case "search-in": {
         if ("query" in parsed.flags) {
-          emitError("UNEXPECTED_ARGUMENT", '`--query` has been removed. Use: zotlit search-in "<text>" (--file <path> | --item-key <key> | --citation-key <key>)');
+          emitError("UNEXPECTED_ARGUMENT", '`--query` has been removed. Use: zotagent search-in "<text>" (--file <path> | --item-key <key> | --citation-key <key>)');
           return;
         }
         const query = parsed.positionals.slice(1).join(" ");
         if (!query) {
-          emitError("MISSING_ARGUMENT", 'Missing search text. Use: zotlit search-in "<text>" (--file <path> | --item-key <key> | --citation-key <key>)');
+          emitError("MISSING_ARGUMENT", 'Missing search text. Use: zotagent search-in "<text>" (--file <path> | --item-key <key> | --citation-key <key>)');
           return;
         }
         const file = getStringFlag(parsed.flags, "file");
@@ -613,7 +613,7 @@ async function main(): Promise<void> {
 
       case "metadata": {
         if ("query" in parsed.flags) {
-          emitError("UNEXPECTED_ARGUMENT", '`--query` is not supported. Use: zotlit metadata "<text>"');
+          emitError("UNEXPECTED_ARGUMENT", '`--query` is not supported. Use: zotagent metadata "<text>"');
           return;
         }
         const invalidFlags = ["exact", "rerank", "min-score"].filter(
@@ -637,7 +637,7 @@ async function main(): Promise<void> {
         }
         const query = parsed.positionals.slice(1).join(" ");
         if (!query) {
-          emitError("MISSING_ARGUMENT", 'Missing metadata search text. Use: zotlit metadata "<text>"');
+          emitError("MISSING_ARGUMENT", 'Missing metadata search text. Use: zotagent metadata "<text>"');
           return;
         }
         const requestedFields = [...new Set(getStringListFlag(parsed.flags, "field"))];

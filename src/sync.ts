@@ -107,7 +107,7 @@ class SyncLogger {
   }
 
   private writeHeader(): void {
-    this.append("# zotlit sync log\n");
+    this.append("# zotagent sync log\n");
     this.append(`startedAt: ${formatLogTimestamp(this.startedAt)}\n`);
     this.append(`dataDir: ${this.config.dataDir}\n`);
     this.append(`attachmentsRoot: ${this.config.attachmentsRoot}\n`);
@@ -239,7 +239,7 @@ function shouldHideJavaDockIcon(
   platform: NodeJS.Platform = process.platform,
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  return platform === "darwin" && env.ZOTLIT_SHOW_JAVA_DOCK_ICON !== "1";
+  return platform === "darwin" && env.ZOTAGENT_SHOW_JAVA_DOCK_ICON !== "1";
 }
 
 export function buildHiddenJavaToolOptions(existing: string | undefined): string {

@@ -14,7 +14,7 @@ function writeManifest(path: string, manifest: AttachmentManifest): void {
 }
 
 test("searchLiterature prefers substantive hits over reference-only hits", async () => {
-  const root = mkdtempSync(join(tmpdir(), "zotlit-engine-"));
+  const root = mkdtempSync(join(tmpdir(), "zotagent-engine-"));
   const dataDir = join(root, "data");
   const indexDir = join(dataDir, "index");
   const manifestsDir = join(dataDir, "manifests");
@@ -169,7 +169,7 @@ test("searchLiterature prefers substantive hits over reference-only hits", async
 });
 
 test("searchLiterature forwards explicit rerank override", async () => {
-  const root = mkdtempSync(join(tmpdir(), "zotlit-keyword-"));
+  const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-"));
   const dataDir = join(root, "data");
   const indexDir = join(dataDir, "index");
   const manifestsDir = join(dataDir, "manifests");
@@ -323,7 +323,7 @@ test("searchLiterature forwards explicit rerank override", async () => {
 });
 
 test("searchLiterature exact mode uses the exact index and skips qmd", async () => {
-  const root = mkdtempSync(join(tmpdir(), "zotlit-exact-"));
+  const root = mkdtempSync(join(tmpdir(), "zotagent-exact-"));
   const dataDir = join(root, "data");
   const indexDir = join(dataDir, "index");
   const manifestsDir = join(dataDir, "manifests");
@@ -440,7 +440,7 @@ test("searchLiterature exact mode uses the exact index and skips qmd", async () 
 });
 
 test("searchWithinDocuments returns passages from the selected attachment", () => {
-  const root = mkdtempSync(join(tmpdir(), "zotlit-search-in-"));
+  const root = mkdtempSync(join(tmpdir(), "zotagent-search-in-"));
   const dataDir = join(root, "data");
   const indexDir = join(dataDir, "index");
   const manifestsDir = join(dataDir, "manifests");
@@ -539,7 +539,7 @@ test("searchWithinDocuments returns passages from the selected attachment", () =
 });
 
 test("searchWithinDocuments searches across multiple attachments for the same key", () => {
-  const root = mkdtempSync(join(tmpdir(), "zotlit-search-in-multi-"));
+  const root = mkdtempSync(join(tmpdir(), "zotagent-search-in-multi-"));
   const dataDir = join(root, "data");
   const indexDir = join(dataDir, "index");
   const manifestsDir = join(dataDir, "manifests");
@@ -658,7 +658,7 @@ test("searchWithinDocuments searches across multiple attachments for the same ke
 });
 
 test("readDocument reports multi-attachment conflict and expandDocument returns context blocks", () => {
-  const root = mkdtempSync(join(tmpdir(), "zotlit-read-"));
+  const root = mkdtempSync(join(tmpdir(), "zotagent-read-"));
   const dataDir = join(root, "data");
   const indexDir = join(dataDir, "index");
   const manifestsDir = join(dataDir, "manifests");
@@ -806,7 +806,7 @@ test("readDocument reports multi-attachment conflict and expandDocument returns 
 });
 
 test("expandDocument resolves a unique attachment by itemKey", () => {
-  const root = mkdtempSync(join(tmpdir(), "zotlit-expand-item-key-"));
+  const root = mkdtempSync(join(tmpdir(), "zotagent-expand-item-key-"));
   const dataDir = join(root, "data");
   const indexDir = join(dataDir, "index");
   const manifestsDir = join(dataDir, "manifests");
@@ -897,7 +897,7 @@ test("expandDocument resolves a unique attachment by itemKey", () => {
 });
 
 test("readDocument resolves a unique attachment by citationKey", () => {
-  const root = mkdtempSync(join(tmpdir(), "zotlit-read-citation-key-"));
+  const root = mkdtempSync(join(tmpdir(), "zotagent-read-citation-key-"));
   const dataDir = join(root, "data");
   const indexDir = join(dataDir, "index");
   const manifestsDir = join(dataDir, "manifests");
@@ -987,7 +987,7 @@ test("readDocument resolves a unique attachment by citationKey", () => {
 });
 
 test("fullTextDocument keeps boilerplate and references by default", () => {
-  const root = mkdtempSync(join(tmpdir(), "zotlit-fulltext-"));
+  const root = mkdtempSync(join(tmpdir(), "zotagent-fulltext-"));
   const dataDir = join(root, "data");
   const indexDir = join(dataDir, "index");
   const manifestsDir = join(dataDir, "manifests");
@@ -1147,7 +1147,7 @@ test("fullTextDocument keeps boilerplate and references by default", () => {
 });
 
 test("fullTextDocument strips boilerplate when clean is enabled", () => {
-  const root = mkdtempSync(join(tmpdir(), "zotlit-fulltext-clean-"));
+  const root = mkdtempSync(join(tmpdir(), "zotagent-fulltext-clean-"));
   const dataDir = join(root, "data");
   const indexDir = join(dataDir, "index");
   const manifestsDir = join(dataDir, "manifests");
@@ -1235,7 +1235,7 @@ test("fullTextDocument strips boilerplate when clean is enabled", () => {
 });
 
 test("fullTextDocuments returns all matches for duplicate itemKey and citationKey", () => {
-  const root = mkdtempSync(join(tmpdir(), "zotlit-fulltext-multi-"));
+  const root = mkdtempSync(join(tmpdir(), "zotagent-fulltext-multi-"));
   const dataDir = join(root, "data");
   const indexDir = join(dataDir, "index");
   const manifestsDir = join(dataDir, "manifests");

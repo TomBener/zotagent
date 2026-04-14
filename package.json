@@ -1,10 +1,10 @@
 {
-  "name": "zotlit",
+  "name": "zotagent",
   "version": "0.10.3",
   "description": "Zotero literature search CLI for AI agents",
   "type": "module",
   "bin": {
-    "zotlit": "./dist/cli.js"
+    "zotagent": "./dist/cli.js"
   },
   "files": [
     "dist",

@@ -8,7 +8,7 @@ import { loadCatalog } from "../../src/catalog.js";
 import { sha1 } from "../../src/utils.js";
 
 test("loadCatalog keeps attachments inside root and marks supported file types", () => {
-  const root = mkdtempSync(join(tmpdir(), "zotlit-catalog-"));
+  const root = mkdtempSync(join(tmpdir(), "zotagent-catalog-"));
   const attachmentsRoot = join(root, "attachments");
   mkdirSync(join(attachmentsRoot, "papers"), { recursive: true });
   const pdfPath = join(attachmentsRoot, "papers", "paper.pdf");
@@ -54,7 +54,7 @@ test("loadCatalog keeps attachments inside root and marks supported file types",
 });
 
 test("loadCatalog remaps bibliography attachment paths into the current attachmentsRoot", () => {
-  const root = mkdtempSync(join(tmpdir(), "zotlit-catalog-relocate-"));
+  const root = mkdtempSync(join(tmpdir(), "zotagent-catalog-relocate-"));
   const attachmentsRoot = join(root, "miniagent", "Zotero");
   const bibliographyRoot = join(root, "rentao", "Zotero");
   mkdirSync(join(attachmentsRoot, "papers"), { recursive: true });
@@ -105,7 +105,7 @@ test("loadCatalog remaps bibliography attachment paths into the current attachme
 });
 
 test("loadCatalog only relocates files that match the requested Zotero subfolder tail", () => {
-  const root = mkdtempSync(join(tmpdir(), "zotlit-catalog-subfolder-"));
+  const root = mkdtempSync(join(tmpdir(), "zotagent-catalog-subfolder-"));
   const attachmentsRoot = join(root, "miniagent", "Zotero", "CSS & Social Media", "preprint");
   const bibliographyRoot = join(root, "rentao", "Zotero");
   mkdirSync(attachmentsRoot, { recursive: true });
@@ -146,7 +146,7 @@ test("loadCatalog only relocates files that match the requested Zotero subfolder
 });
 
 test("loadCatalog keeps semicolons inside attachment file names", () => {
-  const root = mkdtempSync(join(tmpdir(), "zotlit-catalog-semicolon-"));
+  const root = mkdtempSync(join(tmpdir(), "zotagent-catalog-semicolon-"));
   const attachmentsRoot = join(root, "attachments");
   mkdirSync(join(attachmentsRoot, "papers"), { recursive: true });
 
