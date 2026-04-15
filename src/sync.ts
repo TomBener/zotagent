@@ -25,11 +25,14 @@ import { mapEntriesByDocKey, readCatalogFile, summarizeCatalog, writeCatalogFile
 import { openExactIndex, type ExactIndexFactory } from "./exact-db.js";
 import type { AttachmentCatalogEntry, AttachmentManifest, CatalogEntry, CatalogFile, SyncStats } from "./types.js";
 import {
+  MANIFEST_EXT,
   compactHomePath,
   ensureDir,
   ensureParentDir,
   exists,
   stemForFile,
+  tryReadManifestFile,
+  writeManifestFile,
 } from "./utils.js";
 
 const HIDE_JAVA_DOCK_ICON_FLAG = "-Dapple.awt.UIElement=true";
@@ -466,15 +469,6 @@ function deleteIfExists(path: string | undefined): void {
   }
 }
 
-function tryReadManifest(path: string): AttachmentManifest | undefined {
-  if (!exists(path)) return undefined;
-  try {
-    return JSON.parse(readFileSync(path, "utf-8")) as AttachmentManifest;
-  } catch {
-    return undefined;
-  }
-}
-
 function hasReusableNormalizedOutput(path: string): boolean {
   const stats = statSync(path, { throwIfNoEntry: false });
   return Boolean(stats && stats.size > 0);
@@ -499,7 +493,7 @@ function hasReusableArtifacts(
   if (!exists(normalizedPath) || !exists(manifestPath)) return false;
   if (!hasReusableNormalizedOutput(normalizedPath)) return false;
 
-  const manifest = tryReadManifest(manifestPath);
+  const manifest = tryReadManifestFile(manifestPath);
   if (!manifest) return false;
 
   return manifest.docKey === attachment.docKey && manifest.itemKey === attachment.itemKey;
@@ -638,7 +632,7 @@ async function extractBatch(
       }
 
       const normalizedPath = resolve(normalizedDir, `${attachment.docKey}.md`);
-      const manifestPath = resolve(manifestsDir, `${attachment.docKey}.json`);
+      const manifestPath = resolve(manifestsDir, `${attachment.docKey}${MANIFEST_EXT}`);
       ensureParentDir(normalizedPath);
       ensureParentDir(manifestPath);
 
@@ -651,7 +645,7 @@ async function extractBatch(
       assertNonEmptyExtractedOutput(attachment.filePath, built);
 
       writeFileSync(normalizedPath, built.markdown, "utf-8");
-      writeFileSync(manifestPath, JSON.stringify(built.manifest, null, 2), "utf-8");
+      writeManifestFile(manifestPath, built.manifest);
       byDocKey.set(attachment.docKey, { manifestPath, normalizedPath });
     }
   } finally {
@@ -705,14 +699,14 @@ async function extractNonPdfAttachment(
   }
 
   const normalizedPath = resolve(normalizedDir, `${attachment.docKey}.md`);
-  const manifestPath = resolve(manifestsDir, `${attachment.docKey}.json`);
+  const manifestPath = resolve(manifestsDir, `${attachment.docKey}${MANIFEST_EXT}`);
   ensureParentDir(normalizedPath);
   ensureParentDir(manifestPath);
 
   const built = buildMarkdownManifest(attachment, markdown, normalizedPath);
   assertNonEmptyExtractedOutput(attachment.filePath, built);
   writeFileSync(normalizedPath, built.markdown, "utf-8");
-  writeFileSync(manifestPath, JSON.stringify(built.manifest, null, 2), "utf-8");
+  writeManifestFile(manifestPath, built.manifest);
 
   return { manifestPath, normalizedPath };
 }
@@ -960,7 +954,7 @@ export async function runSync(
 
       const previous = previousByDocKey.get(attachment.docKey);
       const fallbackNormalizedPath = resolve(paths.normalizedDir, `${attachment.docKey}.md`);
-      const fallbackManifestPath = resolve(paths.manifestsDir, `${attachment.docKey}.json`);
+      const fallbackManifestPath = resolve(paths.manifestsDir, `${attachment.docKey}${MANIFEST_EXT}`);
       const currentMtimeMs = Math.trunc(current.mtimeMs);
       const previousIsUnchanged =
         previous !== undefined &&

@@ -7,17 +7,13 @@ import { openQmdClient, type QmdFactory } from "./qmd.js";
 import { getReadyEntries, readCatalogFile, summarizeCatalog } from "./state.js";
 import { openExactIndex, type ExactIndexFactory } from "./exact-db.js";
 import type { AttachmentManifest, CatalogEntry, ManifestBlock, SearchResultRow } from "./types.js";
-import { cleanText, compactHomePath, exists, normalizePathForLookup, overlap } from "./utils.js";
+import { cleanText, compactHomePath, exists, normalizePathForLookup, overlap, readManifestFile } from "./utils.js";
 
 interface SearchBehaviorOptions {
   rerank?: boolean;
   minScore?: number;
   exact?: boolean;
   progress?: (message: string) => void;
-}
-
-function readManifest(path: string): AttachmentManifest {
-  return JSON.parse(readFileSync(path, "utf-8")) as AttachmentManifest;
 }
 
 function resolveReadyEntries(
@@ -254,7 +250,7 @@ export async function searchLiterature(
             .map((candidate) => {
               const entry = entryByDocKey.get(candidate.docKey);
               if (!entry || !entry.manifestPath || !exists(entry.manifestPath)) return null;
-              const manifest = readManifest(entry.manifestPath);
+              const manifest = readManifestFile(entry.manifestPath);
               const range = findExactPhraseBlockRange(manifest, query);
               if (!range) return null;
               return buildSearchRow(entry, manifest, range, candidate.score);
@@ -288,7 +284,7 @@ export async function searchLiterature(
               if (!docKey) return null;
               const entry = entryByDocKey.get(docKey);
               if (!entry || !entry.manifestPath || !exists(entry.manifestPath)) return null;
-              const manifest = readManifest(entry.manifestPath);
+              const manifest = readManifestFile(entry.manifestPath);
               return buildHybridSearchRow(entry, manifest, result);
             })
             .filter((value): value is ReturnType<typeof buildHybridSearchRow> => value !== null)
@@ -333,7 +329,7 @@ export function searchWithinDocuments(
       throw new Error(`Indexed manifest not found for file: ${entry.filePath}`);
     }
 
-    const manifest = readManifest(entry.manifestPath);
+    const manifest = readManifestFile(entry.manifestPath);
     const candidates = new Map<string, { range: { blockStart: number; blockEnd: number }; score: number }>();
     const exactRange = findExactPhraseBlockRange(manifest, query);
     if (exactRange) {
@@ -418,7 +414,7 @@ export function readDocument(
   if (!entry.manifestPath || !exists(entry.manifestPath)) {
     throw new Error(`Indexed manifest not found for file: ${entry.filePath}`);
   }
-  const manifest = readManifest(entry.manifestPath);
+  const manifest = readManifestFile(entry.manifestPath);
   const blocks = manifest.blocks.slice(input.offsetBlock, input.offsetBlock + input.limitBlocks);
   return {
     itemKey: entry.itemKey,
@@ -448,7 +444,7 @@ function buildFullTextRow(
     throw new Error(`Indexed manifest not found for file: ${entry.filePath}`);
   }
 
-  const manifest = readManifest(entry.manifestPath);
+  const manifest = readManifestFile(entry.manifestPath);
   if (!options.clean) {
     let content = "";
     let source: "manifest" | "normalized" = "manifest";
@@ -600,7 +596,7 @@ export function expandDocument(
   if (!entry.manifestPath || !exists(entry.manifestPath)) {
     throw new Error(`Indexed manifest not found for file: ${entry.filePath}`);
   }
-  const manifest = readManifest(entry.manifestPath);
+  const manifest = readManifestFile(entry.manifestPath);
   const contextStart = Math.max(0, input.blockStart - input.radius);
   const contextEnd = Math.min(manifest.blocks.length - 1, input.blockEnd + input.radius);
   const blocks = manifest.blocks.filter(

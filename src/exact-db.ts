@@ -1,11 +1,9 @@
-import { readFileSync } from "node:fs";
-
 import Database from "better-sqlite3";
 
 import { getDataPaths } from "./config.js";
 import { buildExactIndexText, buildExactManifestBody, normalizeExactText } from "./exact.js";
-import type { AppConfig, AttachmentManifest, CatalogEntry } from "./types.js";
-import { ensureDir, exists } from "./utils.js";
+import type { AppConfig, CatalogEntry } from "./types.js";
+import { ensureDir, exists, readManifestFile } from "./utils.js";
 
 export interface ExactSearchCandidate {
   docKey: string;
@@ -27,10 +25,6 @@ export interface ExactIndexClient {
 
 export type ExactIndexFactory = (config: AppConfig) => Promise<ExactIndexClient>;
 
-function readManifest(path: string): AttachmentManifest {
-  return JSON.parse(readFileSync(path, "utf-8")) as AttachmentManifest;
-}
-
 function ensureSchema(db: Database.Database): void {
   const tableExists = db.prepare(
     "SELECT 1 FROM sqlite_master WHERE type='table' AND name='exact_fts'",
@@ -49,7 +43,7 @@ function indexEntry(
   entry: CatalogEntry,
 ): void {
   if (!entry.manifestPath || !exists(entry.manifestPath)) return;
-  const manifest = readManifest(entry.manifestPath);
+  const manifest = readManifestFile(entry.manifestPath);
   const title = buildExactIndexText([entry.title]);
   const body = buildExactManifestBody(manifest);
   db.prepare("INSERT INTO exact_fts (docKey, title, body) VALUES (?, ?, ?)").run(

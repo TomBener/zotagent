@@ -1,8 +1,34 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, resolve } from "node:path";
-import type { SupportedFileType } from "./types.js";
+import { gunzipSync, gzipSync } from "node:zlib";
+import type { AttachmentManifest, SupportedFileType } from "./types.js";
+
+export const MANIFEST_EXT = ".json.gz";
+
+export function readManifestFile(path: string): AttachmentManifest {
+  const buf = readFileSync(path);
+  const json = gunzipSync(buf).toString("utf8");
+  return JSON.parse(json) as AttachmentManifest;
+}
+
+export function tryReadManifestFile(path: string): AttachmentManifest | undefined {
+  if (!existsSync(path)) return undefined;
+  try {
+    return readManifestFile(path);
+  } catch {
+    return undefined;
+  }
+}
+
+export function writeManifestFile(path: string, manifest: AttachmentManifest): void {
+  const compact = Buffer.from(JSON.stringify(manifest), "utf8");
+  const gz = gzipSync(compact, { level: 9 });
+  const tmp = path + ".tmp";
+  writeFileSync(tmp, gz);
+  renameSync(tmp, path);
+}
 
 export function sha1(input: string): string {
   return createHash("sha1").update(input).digest("hex");
