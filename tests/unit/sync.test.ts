@@ -557,6 +557,7 @@ test("runSync sends exact-index deltas when incremental sync is available", asyn
     fakeFactory,
     fakeExactFactory,
     fakeExtractBatch,
+    () => {},
   );
 
   assert.equal(result.stats.readyAttachments, 1);
@@ -651,6 +652,7 @@ test("runSync resumes from existing normalized and manifest outputs when catalog
     fakeFactory,
     fakeExactFactory,
     fakeExtractBatch,
+    () => {},
   );
 
   assert.equal(extractCalls, 0);
@@ -761,6 +763,7 @@ test("runSync re-extracts attachments when fallback normalized output is empty",
     fakeFactory,
     fakeExactFactory,
     fakeExtractBatch,
+    () => {},
   );
 
   assert.equal(extractCalls, 1);
