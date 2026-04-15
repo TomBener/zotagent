@@ -135,6 +135,12 @@ function main(): void {
       sampleInvalid: badFiles.slice(0, 5),
       remainingJsonFiles: jsonFiles.length,
     });
+    if (bad > 0 || jsonFiles.length > 0) {
+      console.error(
+        `verify failed: ${bad} invalid .json.gz file(s), ${jsonFiles.length} legacy .json file(s) remain`,
+      );
+      process.exit(1);
+    }
     return;
   }
 
@@ -234,8 +240,9 @@ function main(): void {
     elapsedSeconds: +elapsed.toFixed(1),
   });
   if (errors.length > 0) {
-    console.log("Sample errors:");
-    for (const err of errors.slice(0, 5)) console.log(`  ${err}`);
+    console.error("Sample errors:");
+    for (const err of errors.slice(0, 5)) console.error(`  ${err}`);
+    process.exit(1);
   }
 }
 

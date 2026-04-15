@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 
 import type { CatalogCounts, CatalogEntry, CatalogFile } from "./types.js";
-import { MANIFEST_EXT, compactHomePath, ensureParentDir, exists, normalizePathForLookup } from "./utils.js";
+import { MANIFEST_EXT, assertManifestsCurrent, compactHomePath, ensureParentDir, exists, normalizePathForLookup, resolveManifestPath } from "./utils.js";
 
 function dataDirFromCatalogPath(path: string): string {
   return dirname(dirname(normalizePathForLookup(path)));
@@ -23,7 +23,7 @@ function hydrateCatalogEntry(entry: CatalogEntry, dataDir: string): CatalogEntry
     ? replaceForeignHome(entry.normalizedPath)
     : resolve(dataDir, "normalized", `${entry.docKey}.md`);
   const manifestPath = entry.manifestPath
-    ? replaceForeignHome(entry.manifestPath)
+    ? resolveManifestPath(replaceForeignHome(entry.manifestPath))
     : resolve(dataDir, "manifests", `${entry.docKey}${MANIFEST_EXT}`);
 
   const fallbackNormalizedPath = resolve(dataDir, "normalized", `${entry.docKey}.md`);
@@ -59,6 +59,7 @@ export function readCatalogFile(path: string): CatalogFile {
   }
   const catalog = JSON.parse(readFileSync(catalogPath, "utf-8")) as CatalogFile;
   const dataDir = dataDirFromCatalogPath(catalogPath);
+  assertManifestsCurrent(resolve(dataDir, "manifests"));
   return {
     ...catalog,
     entries: catalog.entries.map((entry) => hydrateCatalogEntry(entry, dataDir)),

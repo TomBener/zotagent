@@ -1,12 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { getDataPaths } from "../../src/config.js";
 import { openExactIndex } from "../../src/exact-db.js";
 import type { AppConfig, AttachmentManifest, CatalogEntry } from "../../src/types.js";
+import { MANIFEST_EXT, writeManifestFile } from "../../src/utils.js";
 
 function createConfig(dataDir: string): AppConfig {
   return {
@@ -19,7 +20,7 @@ function createConfig(dataDir: string): AppConfig {
 
 function writeManifest(path: string, manifest: AttachmentManifest): void {
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(manifest, null, 2), "utf-8");
+  writeManifestFile(path, manifest);
 }
 
 function readyEntry(
@@ -57,8 +58,8 @@ test("openExactIndex rebuilds and searches Chinese and English lexical candidate
 
   const leeDocKey = "a".repeat(40);
   const chanDocKey = "b".repeat(40);
-  const leeManifestPath = join(manifestsDir, `${leeDocKey}.json`);
-  const chanManifestPath = join(manifestsDir, `${chanDocKey}.json`);
+  const leeManifestPath = join(manifestsDir, `${leeDocKey}${MANIFEST_EXT}`);
+  const chanManifestPath = join(manifestsDir, `${chanDocKey}${MANIFEST_EXT}`);
 
   writeManifest(leeManifestPath, {
     docKey: leeDocKey,
@@ -143,8 +144,8 @@ test("rebuildExactIndex replaces stale documents on full rebuild", async () => {
 
   const oldDocKey = "c".repeat(40);
   const newDocKey = "d".repeat(40);
-  const oldManifestPath = join(manifestsDir, `${oldDocKey}.json`);
-  const newManifestPath = join(manifestsDir, `${newDocKey}.json`);
+  const oldManifestPath = join(manifestsDir, `${oldDocKey}${MANIFEST_EXT}`);
+  const newManifestPath = join(manifestsDir, `${newDocKey}${MANIFEST_EXT}`);
 
   writeManifest(oldManifestPath, {
     docKey: oldDocKey,
@@ -221,9 +222,9 @@ test("syncExactIndex upserts changed documents and deletes stale ones", async ()
   const oldDocKey = "e".repeat(40);
   const keptDocKey = "f".repeat(40);
   const newDocKey = "g".repeat(40);
-  const oldManifestPath = join(manifestsDir, `${oldDocKey}.json`);
-  const keptManifestPath = join(manifestsDir, `${keptDocKey}.json`);
-  const newManifestPath = join(manifestsDir, `${newDocKey}.json`);
+  const oldManifestPath = join(manifestsDir, `${oldDocKey}${MANIFEST_EXT}`);
+  const keptManifestPath = join(manifestsDir, `${keptDocKey}${MANIFEST_EXT}`);
+  const newManifestPath = join(manifestsDir, `${newDocKey}${MANIFEST_EXT}`);
 
   writeManifest(oldManifestPath, {
     docKey: oldDocKey,
@@ -328,7 +329,7 @@ test("syncExactIndex rebuilds from ready entries when the exact db starts empty"
   mkdirSync(manifestsDir, { recursive: true });
 
   const docKey = "h".repeat(40);
-  const manifestPath = join(manifestsDir, `${docKey}.json`);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
   writeManifest(manifestPath, {
     docKey,
     itemKey: "ITEM1",

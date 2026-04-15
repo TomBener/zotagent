@@ -7,10 +7,11 @@ import { dirname, join } from "node:path";
 import { expandDocument, fullTextDocument, fullTextDocuments, readDocument, searchLiterature, searchWithinDocuments } from "../../src/engine.js";
 import { writeCatalogFile } from "../../src/state.js";
 import type { AttachmentManifest, CatalogFile } from "../../src/types.js";
+import { MANIFEST_EXT, writeManifestFile } from "../../src/utils.js";
 
 function writeManifest(path: string, manifest: AttachmentManifest): void {
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(manifest, null, 2), "utf-8");
+  writeManifestFile(path, manifest);
 }
 
 test("searchLiterature prefers substantive hits over reference-only hits", async () => {
@@ -23,8 +24,8 @@ test("searchLiterature prefers substantive hits over reference-only hits", async
 
   const substantiveDocKey = "1".repeat(40);
   const referenceDocKey = "2".repeat(40);
-  const substantiveManifestPath = join(manifestsDir, `${substantiveDocKey}.json`);
-  const referenceManifestPath = join(manifestsDir, `${referenceDocKey}.json`);
+  const substantiveManifestPath = join(manifestsDir, `${substantiveDocKey}${MANIFEST_EXT}`);
+  const referenceManifestPath = join(manifestsDir, `${referenceDocKey}${MANIFEST_EXT}`);
 
   writeManifest(substantiveManifestPath, {
     docKey: substantiveDocKey,
@@ -178,8 +179,8 @@ test("searchLiterature forwards explicit rerank override", async () => {
 
   const preciseDocKey = "7".repeat(40);
   const broadDocKey = "8".repeat(40);
-  const preciseManifestPath = join(manifestsDir, `${preciseDocKey}.json`);
-  const broadManifestPath = join(manifestsDir, `${broadDocKey}.json`);
+  const preciseManifestPath = join(manifestsDir, `${preciseDocKey}${MANIFEST_EXT}`);
+  const broadManifestPath = join(manifestsDir, `${broadDocKey}${MANIFEST_EXT}`);
 
   writeManifest(preciseManifestPath, {
     docKey: preciseDocKey,
@@ -331,7 +332,7 @@ test("searchLiterature exact mode uses the exact index and skips qmd", async () 
   mkdirSync(manifestsDir, { recursive: true });
 
   const exactDocKey = "9".repeat(40);
-  const exactManifestPath = join(manifestsDir, `${exactDocKey}.json`);
+  const exactManifestPath = join(manifestsDir, `${exactDocKey}${MANIFEST_EXT}`);
 
   writeManifest(exactManifestPath, {
     docKey: exactDocKey,
@@ -448,7 +449,7 @@ test("searchWithinDocuments returns passages from the selected attachment", () =
   mkdirSync(manifestsDir, { recursive: true });
 
   const docKey = "f".repeat(40);
-  const manifestPath = join(manifestsDir, `${docKey}.json`);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
 
   writeManifest(manifestPath, {
     docKey,
@@ -548,8 +549,8 @@ test("searchWithinDocuments searches across multiple attachments for the same ke
 
   const docOne = "g".repeat(40);
   const docTwo = "h".repeat(40);
-  const manifestOnePath = join(manifestsDir, `${docOne}.json`);
-  const manifestTwoPath = join(manifestsDir, `${docTwo}.json`);
+  const manifestOnePath = join(manifestsDir, `${docOne}${MANIFEST_EXT}`);
+  const manifestTwoPath = join(manifestsDir, `${docTwo}${MANIFEST_EXT}`);
 
   writeManifest(manifestOnePath, {
     docKey: docOne,
@@ -667,8 +668,8 @@ test("readDocument reports multi-attachment conflict and expandDocument returns 
 
   const docOne = "3".repeat(40);
   const docTwo = "4".repeat(40);
-  const manifestOnePath = join(manifestsDir, `${docOne}.json`);
-  const manifestTwoPath = join(manifestsDir, `${docTwo}.json`);
+  const manifestOnePath = join(manifestsDir, `${docOne}${MANIFEST_EXT}`);
+  const manifestTwoPath = join(manifestsDir, `${docTwo}${MANIFEST_EXT}`);
 
   writeManifest(manifestOnePath, {
     docKey: docOne,
@@ -814,7 +815,7 @@ test("expandDocument resolves a unique attachment by itemKey", () => {
   mkdirSync(manifestsDir, { recursive: true });
 
   const docKey = "5".repeat(40);
-  const manifestPath = join(manifestsDir, `${docKey}.json`);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
 
   writeManifest(manifestPath, {
     docKey,
@@ -905,7 +906,7 @@ test("readDocument resolves a unique attachment by citationKey", () => {
   mkdirSync(manifestsDir, { recursive: true });
 
   const docKey = "6".repeat(40);
-  const manifestPath = join(manifestsDir, `${docKey}.json`);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
 
   writeManifest(manifestPath, {
     docKey,
@@ -997,7 +998,7 @@ test("fullTextDocument keeps boilerplate and references by default", () => {
   mkdirSync(normalizedDir, { recursive: true });
 
   const docKey = "a".repeat(40);
-  const manifestPath = join(manifestsDir, `${docKey}.json`);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
   const normalizedPath = join(normalizedDir, `${docKey}.md`);
 
   writeFileSync(
@@ -1155,7 +1156,7 @@ test("fullTextDocument strips boilerplate when clean is enabled", () => {
   mkdirSync(manifestsDir, { recursive: true });
 
   const docKey = "d".repeat(40);
-  const manifestPath = join(manifestsDir, `${docKey}.json`);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
 
   writeManifest(manifestPath, {
     docKey,
@@ -1244,8 +1245,8 @@ test("fullTextDocuments returns all matches for duplicate itemKey and citationKe
 
   const docOne = "b".repeat(40);
   const docTwo = "c".repeat(40);
-  const manifestOnePath = join(manifestsDir, `${docOne}.json`);
-  const manifestTwoPath = join(manifestsDir, `${docTwo}.json`);
+  const manifestOnePath = join(manifestsDir, `${docOne}${MANIFEST_EXT}`);
+  const manifestTwoPath = join(manifestsDir, `${docTwo}${MANIFEST_EXT}`);
 
   writeManifest(manifestOnePath, {
     docKey: docOne,

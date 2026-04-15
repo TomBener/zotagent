@@ -8,6 +8,7 @@ import { dirname, join } from "node:path";
 import { openExactIndex } from "../../src/exact-db.js";
 import { writeCatalogFile } from "../../src/state.js";
 import type { AppConfig, AttachmentManifest, CatalogEntry, CatalogFile } from "../../src/types.js";
+import { MANIFEST_EXT, writeManifestFile } from "../../src/utils.js";
 
 const repoRoot = new URL("../..", import.meta.url);
 const cliPath = new URL("../../src/cli.ts", import.meta.url).pathname;
@@ -30,7 +31,7 @@ function runCli(args: string[]): { status: number | null; stdout: string; stderr
 
 function writeManifest(path: string, manifest: AttachmentManifest): void {
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(manifest, null, 2), "utf-8");
+  writeManifestFile(path, manifest);
 }
 
 function createConfig(bibliographyJsonPath: string, attachmentsRoot: string, dataDir: string): AppConfig {
@@ -90,7 +91,7 @@ async function createIndexedFixture(): Promise<{
   const bibliographyPath = join(root, "bibliography.json");
   const docKey = "9".repeat(40);
   const filePath = join(attachmentsRoot, "paper.pdf");
-  const manifestPath = join(manifestsDir, `${docKey}.json`);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
   const normalizedPath = join(normalizedDir, `${docKey}.md`);
   const citationKey = "lee2024party";
 
@@ -222,7 +223,7 @@ async function createMultiIndexedFixture(): Promise<{
   writeFileSync(bibliographyPath, "[]", "utf-8");
 
   for (const [index, docKey] of docKeys.entries()) {
-    const manifestPath = join(manifestsDir, `${docKey}.json`);
+    const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
     writeManifest(manifestPath, {
       docKey,
       itemKey: "ITEMM",
@@ -258,7 +259,7 @@ async function createMultiIndexedFixture(): Promise<{
         citationKey,
         `Multi ${index + 1}`,
         filePaths[index]!,
-        join(manifestsDir, `${docKey}.json`),
+        join(manifestsDir, `${docKey}${MANIFEST_EXT}`),
       ),
     ),
   });

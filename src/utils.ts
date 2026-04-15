@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, resolve } from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
@@ -7,8 +7,50 @@ import type { AttachmentManifest, SupportedFileType } from "./types.js";
 
 export const MANIFEST_EXT = ".json.gz";
 
+export class LegacyManifestFormatError extends Error {
+  constructor(path: string) {
+    super(
+      `Manifest at ${path} is not gzip-encoded. This looks like a pre-v0.12 on-disk format. ` +
+        `Run the migration: npx tsx scripts/migrate-gzip-manifests.ts --data-dir <dataDir> --apply`,
+    );
+    this.name = "LegacyManifestFormatError";
+  }
+}
+
+export function resolveManifestPath(path: string): string {
+  if (path.endsWith(MANIFEST_EXT)) return path;
+  if (path.endsWith(".json")) return `${path}.gz`;
+  return path;
+}
+
+export function listLegacyManifests(manifestsDir: string): string[] {
+  if (!existsSync(manifestsDir)) return [];
+  try {
+    return readdirSync(manifestsDir).filter(
+      (name) => name.endsWith(".json") && !name.endsWith(MANIFEST_EXT),
+    );
+  } catch {
+    return [];
+  }
+}
+
+export function assertManifestsCurrent(manifestsDir: string): void {
+  const legacy = listLegacyManifests(manifestsDir);
+  if (legacy.length === 0) return;
+  const error = new Error(
+    `Found ${legacy.length} legacy .json manifest(s) in ${manifestsDir}. ` +
+      `This version expects gzipped .json.gz manifests. ` +
+      `Run: npx tsx scripts/migrate-gzip-manifests.ts --data-dir <dataDir> --apply`,
+  );
+  error.name = "LegacyManifestFormatError";
+  throw error;
+}
+
 export function readManifestFile(path: string): AttachmentManifest {
   const buf = readFileSync(path);
+  if (buf.length < 2 || buf[0] !== 0x1f || buf[1] !== 0x8b) {
+    throw new LegacyManifestFormatError(path);
+  }
   const json = gunzipSync(buf).toString("utf8");
   return JSON.parse(json) as AttachmentManifest;
 }

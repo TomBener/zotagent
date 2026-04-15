@@ -14,7 +14,7 @@ import {
 } from "../../src/sync.js";
 import { readCatalogFile, writeCatalogFile } from "../../src/state.js";
 import type { CatalogFile } from "../../src/types.js";
-import { sha1 } from "../../src/utils.js";
+import { MANIFEST_EXT, readManifestFile, sha1, writeManifestFile } from "../../src/utils.js";
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 const syncModuleUrl = new URL("../../src/sync.ts", import.meta.url).href;
@@ -284,11 +284,11 @@ test("runSync skips unchanged ready pdfs and refreshes qmd contexts", async () =
   const currentStat = statSync(pdfPath);
   const docKey = sha1("papers/paper.pdf");
   const normalizedPath = join(normalizedDir, `${docKey}.md`);
-  const manifestPath = join(manifestsDir, `${docKey}.json`);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
   writeFileSync(normalizedPath, "Body");
-  writeFileSync(
+  writeManifestFile(
     manifestPath,
-    JSON.stringify({
+    {
       docKey,
       itemKey: "ITEM1",
       title: "Paper",
@@ -296,8 +296,7 @@ test("runSync skips unchanged ready pdfs and refreshes qmd contexts", async () =
       filePath: pdfPath,
       normalizedPath,
       blocks: [],
-    }),
-    "utf-8",
+    },
   );
 
   const bibliographyPath = join(root, "bibliography.json");
@@ -432,7 +431,7 @@ test("runSync sends exact-index deltas when incremental sync is available", asyn
 
   const oldDocKey = sha1("papers/old.pdf");
   const newDocKey = sha1("papers/new.pdf");
-  const oldManifestPath = join(manifestsDir, `${oldDocKey}.json`);
+  const oldManifestPath = join(manifestsDir, `${oldDocKey}${MANIFEST_EXT}`);
   const oldNormalizedPath = join(normalizedDir, `${oldDocKey}.md`);
   writeFileSync(oldNormalizedPath, "old body", "utf-8");
   writeFileSync(
@@ -530,11 +529,11 @@ test("runSync sends exact-index deltas when incremental sync is available", asyn
     const out = new Map<string, { manifestPath: string; normalizedPath: string }>();
     for (const attachment of batch) {
       const normalizedPath = join(normalizedDir, `${attachment.docKey}.md`);
-      const manifestPath = join(manifestsDir, `${attachment.docKey}.json`);
+      const manifestPath = join(manifestsDir, `${attachment.docKey}${MANIFEST_EXT}`);
       writeFileSync(normalizedPath, "new body", "utf-8");
-      writeFileSync(
+      writeManifestFile(
         manifestPath,
-        JSON.stringify({
+        {
           docKey: attachment.docKey,
           itemKey: attachment.itemKey,
           title: "New Paper",
@@ -542,8 +541,7 @@ test("runSync sends exact-index deltas when incremental sync is available", asyn
           filePath: attachment.filePath,
           normalizedPath,
           blocks: [],
-        }),
-        "utf-8",
+        },
       );
       out.set(attachment.docKey, { manifestPath, normalizedPath });
     }
@@ -586,11 +584,11 @@ test("runSync resumes from existing normalized and manifest outputs when catalog
   writeFileSync(pdfPath, "pdf");
   const docKey = sha1("papers/paper.pdf");
   const normalizedPath = join(normalizedDir, `${docKey}.md`);
-  const manifestPath = join(manifestsDir, `${docKey}.json`);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
   writeFileSync(normalizedPath, "Body", "utf-8");
-  writeFileSync(
+  writeManifestFile(
     manifestPath,
-    JSON.stringify({
+    {
       docKey,
       itemKey: "ITEM1",
       title: "Paper",
@@ -598,8 +596,7 @@ test("runSync resumes from existing normalized and manifest outputs when catalog
       filePath: pdfPath,
       normalizedPath,
       blocks: [],
-    }),
-    "utf-8",
+    },
   );
 
   const bibliographyPath = join(root, "bibliography.json");
@@ -683,11 +680,11 @@ test("runSync re-extracts attachments when fallback normalized output is empty",
   writeFileSync(pdfPath, "pdf");
   const docKey = sha1("papers/paper.pdf");
   const normalizedPath = join(normalizedDir, `${docKey}.md`);
-  const manifestPath = join(manifestsDir, `${docKey}.json`);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
   writeFileSync(normalizedPath, "", "utf-8");
-  writeFileSync(
+  writeManifestFile(
     manifestPath,
-    JSON.stringify({
+    {
       docKey,
       itemKey: "ITEM1",
       title: "Paper",
@@ -695,8 +692,7 @@ test("runSync re-extracts attachments when fallback normalized output is empty",
       filePath: pdfPath,
       normalizedPath,
       blocks: [],
-    }),
-    "utf-8",
+    },
   );
 
   const bibliographyPath = join(root, "bibliography.json");
@@ -741,9 +737,9 @@ test("runSync re-extracts attachments when fallback normalized output is empty",
     extractCalls += 1;
     const attachment = batch[0]!;
     writeFileSync(normalizedPath, "Recovered body", "utf-8");
-    writeFileSync(
+    writeManifestFile(
       manifestPath,
-      JSON.stringify({
+      {
         docKey: attachment.docKey,
         itemKey: attachment.itemKey,
         title: "Paper",
@@ -751,8 +747,7 @@ test("runSync re-extracts attachments when fallback normalized output is empty",
         filePath: attachment.filePath,
         normalizedPath,
         blocks: [],
-      }),
-      "utf-8",
+      },
     );
     return new Map([[attachment.docKey, { manifestPath, normalizedPath }]]);
   };
@@ -792,11 +787,11 @@ test("runSync keeps embedding until qmd no longer reports pending documents", as
   const currentStat = statSync(pdfPath);
   const docKey = sha1("papers/paper.pdf");
   const normalizedPath = join(normalizedDir, `${docKey}.md`);
-  const manifestPath = join(manifestsDir, `${docKey}.json`);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
   writeFileSync(normalizedPath, "Body", "utf-8");
-  writeFileSync(
+  writeManifestFile(
     manifestPath,
-    JSON.stringify({
+    {
       docKey,
       itemKey: "ITEM1",
       title: "Paper",
@@ -804,8 +799,7 @@ test("runSync keeps embedding until qmd no longer reports pending documents", as
       filePath: pdfPath,
       normalizedPath,
       blocks: [],
-    }),
-    "utf-8",
+    },
   );
 
   const bibliographyPath = join(root, "bibliography.json");
@@ -1022,7 +1016,7 @@ test("runSync indexes txt attachments without Java extraction", async () => {
   assert.equal(typeof normalizedPath, "string");
   assert.equal(typeof manifestPath, "string");
   assert.match(readFileSync(normalizedPath!, "utf-8"), /第一段/);
-  assert.match(readFileSync(manifestPath!, "utf-8"), /第二段/);
+  assert.match(JSON.stringify(readManifestFile(manifestPath!)), /第二段/);
 });
 
 test("runSync reuses a ready index when bibliography paths come from another machine", async () => {
@@ -1044,11 +1038,11 @@ test("runSync reuses a ready index when bibliography paths come from another mac
   const foreignPath = join(bibliographyRoot, "papers", "paper.pdf");
   const docKey = sha1("papers/paper.pdf");
   const normalizedPath = join(normalizedDir, `${docKey}.md`);
-  const manifestPath = join(manifestsDir, `${docKey}.json`);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
   writeFileSync(normalizedPath, "Body");
-  writeFileSync(
+  writeManifestFile(
     manifestPath,
-    JSON.stringify({
+    {
       docKey,
       itemKey: "ITEM1",
       title: "Paper",
@@ -1056,8 +1050,7 @@ test("runSync reuses a ready index when bibliography paths come from another mac
       filePath: foreignPath,
       normalizedPath,
       blocks: [],
-    }),
-    "utf-8",
+    },
   );
 
   const bibliographyPath = join(root, "bibliography.json");
@@ -1176,7 +1169,7 @@ test("catalog storage uses home-relative paths and reads them back as local path
     const docKey = "7".repeat(40);
     const pdfPath = join(root, "Zotero", "paper.pdf");
     const normalizedPath = join(normalizedDir, `${docKey}.md`);
-    const manifestPath = join(manifestsDir, `${docKey}.json`);
+    const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
     mkdirSync(join(root, "Zotero"), { recursive: true });
     writeFileSync(pdfPath, "pdf");
     writeFileSync(normalizedPath, "Body");
@@ -1238,7 +1231,7 @@ test("readCatalogFile relocates stale Mac home paths to the current iCloud dataD
     const docKey = "8".repeat(40);
     const pdfPath = join(zoteroRoot, "paper.pdf");
     const normalizedPath = join(normalizedDir, `${docKey}.md`);
-    const manifestPath = join(manifestsDir, `${docKey}.json`);
+    const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
     writeFileSync(pdfPath, "pdf");
     writeFileSync(normalizedPath, "Body");
     writeFileSync(manifestPath, "{}");
@@ -1304,7 +1297,7 @@ test("runSync keeps cached outputs when attachment disappears from the current c
 
   const docKey = "6".repeat(40);
   const normalizedPath = join(normalizedDir, `${docKey}.md`);
-  const manifestPath = join(manifestsDir, `${docKey}.json`);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
   writeFileSync(normalizedPath, "Body");
   writeFileSync(manifestPath, "{}");
   writeFileSync(join(root, "bibliography.json"), "[]");
@@ -1382,7 +1375,7 @@ test("runSync reuses cached outputs after an attachment temporarily disappears",
   const bibliographyPath = join(root, "bibliography.json");
   const docKey = sha1("paper.pdf");
   const normalizedPath = join(normalizedDir, `${docKey}.md`);
-  const manifestPath = join(manifestsDir, `${docKey}.json`);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
 
   writeFileSync(pdfPath, "pdf-v1");
   const initialStat = statSync(pdfPath);
@@ -1400,9 +1393,9 @@ test("runSync reuses cached outputs after an attachment temporarily disappears",
     "utf-8",
   );
   writeFileSync(normalizedPath, "Body", "utf-8");
-  writeFileSync(
+  writeManifestFile(
     manifestPath,
-    JSON.stringify({
+    {
       docKey,
       itemKey: "ITEM1",
       title: "Paper",
@@ -1410,8 +1403,7 @@ test("runSync reuses cached outputs after an attachment temporarily disappears",
       filePath: pdfPath,
       normalizedPath,
       blocks: [],
-    }),
-    "utf-8",
+    },
   );
   writeCatalogFile(join(indexDir, "catalog.json"), {
     version: 1,
@@ -1677,13 +1669,13 @@ test("runSync retries unchanged previous errors when requested and passes custom
     seenTimeoutMs = options?.timeoutMs;
     const attachment = batch[0]!;
     const normalizedPath = join(normalizedRoot, `${attachment.docKey}.md`);
-    const manifestPath = join(manifestsRoot, `${attachment.docKey}.json`);
+    const manifestPath = join(manifestsRoot, `${attachment.docKey}${MANIFEST_EXT}`);
     mkdirSync(normalizedRoot, { recursive: true });
     mkdirSync(manifestsRoot, { recursive: true });
     writeFileSync(normalizedPath, "# Large Book", "utf-8");
-    writeFileSync(
+    writeManifestFile(
       manifestPath,
-      JSON.stringify({
+      {
         docKey: attachment.docKey,
         itemKey: attachment.itemKey,
         title: "Large Book",
@@ -1691,8 +1683,7 @@ test("runSync retries unchanged previous errors when requested and passes custom
         filePath: attachment.filePath,
         normalizedPath,
         blocks: [],
-      }),
-      "utf-8",
+      },
     );
     return new Map([[attachment.docKey, { normalizedPath, manifestPath }]]);
   };
@@ -1785,13 +1776,13 @@ test("runSync extracts book attachments in single-file batches by default", asyn
 
     for (const attachment of batch) {
       const normalizedPath = join(normalizedDir, `${attachment.docKey}.md`);
-      const manifestPath = join(manifestsDir, `${attachment.docKey}.json`);
+      const manifestPath = join(manifestsDir, `${attachment.docKey}${MANIFEST_EXT}`);
       mkdirSync(normalizedDir, { recursive: true });
       mkdirSync(manifestsDir, { recursive: true });
       writeFileSync(normalizedPath, `# ${attachment.itemKey}`, "utf-8");
-      writeFileSync(
+      writeManifestFile(
         manifestPath,
-        JSON.stringify({
+        {
           docKey: attachment.docKey,
           itemKey: attachment.itemKey,
           title: attachment.itemKey,
@@ -1799,8 +1790,7 @@ test("runSync extracts book attachments in single-file batches by default", asyn
           filePath: attachment.filePath,
           normalizedPath,
           blocks: [],
-        }),
-        "utf-8",
+        },
       );
       out.set(attachment.docKey, { normalizedPath, manifestPath });
     }
@@ -1884,13 +1874,13 @@ test("runSync honors explicit PDF batch size", async () => {
 
     for (const attachment of batch) {
       const normalizedPath = join(normalizedDir, `${attachment.docKey}.md`);
-      const manifestPath = join(manifestsDir, `${attachment.docKey}.json`);
+      const manifestPath = join(manifestsDir, `${attachment.docKey}${MANIFEST_EXT}`);
       mkdirSync(normalizedDir, { recursive: true });
       mkdirSync(manifestsDir, { recursive: true });
       writeFileSync(normalizedPath, `# ${attachment.itemKey}`, "utf-8");
-      writeFileSync(
+      writeManifestFile(
         manifestPath,
-        JSON.stringify({
+        {
           docKey: attachment.docKey,
           itemKey: attachment.itemKey,
           title: attachment.itemKey,
@@ -1898,8 +1888,7 @@ test("runSync honors explicit PDF batch size", async () => {
           filePath: attachment.filePath,
           normalizedPath,
           blocks: [],
-        }),
-        "utf-8",
+        },
       );
       out.set(attachment.docKey, { normalizedPath, manifestPath });
     }
@@ -1988,13 +1977,13 @@ test("runSync records extraction failures per attachment and continues indexing 
       }
 
       const normalizedPath = join(normalizedDir, `${attachment.docKey}.md`);
-      const manifestPath = join(manifestsDir, `${attachment.docKey}.json`);
+      const manifestPath = join(manifestsDir, `${attachment.docKey}${MANIFEST_EXT}`);
       mkdirSync(normalizedDir, { recursive: true });
       mkdirSync(manifestsDir, { recursive: true });
       writeFileSync(normalizedPath, "# Good Paper", "utf-8");
-      writeFileSync(
+      writeManifestFile(
         manifestPath,
-        JSON.stringify({
+        {
           docKey: attachment.docKey,
           itemKey: attachment.itemKey,
           title: "Good Paper",
@@ -2002,8 +1991,7 @@ test("runSync records extraction failures per attachment and continues indexing 
           filePath: attachment.filePath,
           normalizedPath,
           blocks: [],
-        }),
-        "utf-8",
+        },
       );
       out.set(attachment.docKey, { normalizedPath, manifestPath });
     }
@@ -2113,13 +2101,13 @@ test("runSync retries a timed out batch one file at a time", async () => {
     }
 
     const normalizedPath = join(normalizedDir, `${attachment.docKey}.md`);
-    const manifestPath = join(manifestsDir, `${attachment.docKey}.json`);
+    const manifestPath = join(manifestsDir, `${attachment.docKey}${MANIFEST_EXT}`);
     mkdirSync(normalizedDir, { recursive: true });
     mkdirSync(manifestsDir, { recursive: true });
     writeFileSync(normalizedPath, "# Good Paper", "utf-8");
-    writeFileSync(
+    writeManifestFile(
       manifestPath,
-      JSON.stringify({
+      {
         docKey: attachment.docKey,
         itemKey: attachment.itemKey,
         title: "Good Paper",
@@ -2127,8 +2115,7 @@ test("runSync retries a timed out batch one file at a time", async () => {
         filePath: attachment.filePath,
         normalizedPath,
         blocks: [],
-      }),
-      "utf-8",
+      },
     );
 
     return new Map([[attachment.docKey, { normalizedPath, manifestPath }]]);
