@@ -38,7 +38,7 @@ export interface ConfigOverrides {
 const DEFAULTS = {
   bibliographyJsonPath: "~/Library/CloudStorage/Dropbox/bibliography/bibliography.json",
   attachmentsRoot: "~/Library/Mobile Documents/com~apple~CloudDocs/Zotero",
-  dataDir: "~/Library/Mobile Documents/com~apple~CloudDocs/Zotlit",
+  dataDir: "~/Library/Mobile Documents/com~apple~CloudDocs/Zotagent",
   qmdEmbedModel: undefined,
 };
 

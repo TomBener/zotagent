@@ -6,31 +6,31 @@ import { resolve } from "node:path";
 import { getDataPaths } from "../../src/config.js";
 
 test("getDataPaths keeps index outputs in dataDir but uses system temp for extraction work", () => {
-  const paths = getDataPaths("/Users/example/Library/Mobile Documents/com~apple~CloudDocs/Zotlit");
+  const paths = getDataPaths("/Users/example/Library/Mobile Documents/com~apple~CloudDocs/Zotagent");
 
   assert.equal(
     paths.logsDir,
-    "/Users/example/Library/Mobile Documents/com~apple~CloudDocs/Zotlit/logs",
+    "/Users/example/Library/Mobile Documents/com~apple~CloudDocs/Zotagent/logs",
   );
   assert.equal(
     paths.latestSyncLogPath,
-    "/Users/example/Library/Mobile Documents/com~apple~CloudDocs/Zotlit/logs/sync-latest.log",
+    "/Users/example/Library/Mobile Documents/com~apple~CloudDocs/Zotagent/logs/sync-latest.log",
   );
   assert.equal(
     paths.normalizedDir,
-    "/Users/example/Library/Mobile Documents/com~apple~CloudDocs/Zotlit/normalized",
+    "/Users/example/Library/Mobile Documents/com~apple~CloudDocs/Zotagent/normalized",
   );
   assert.equal(
     paths.manifestsDir,
-    "/Users/example/Library/Mobile Documents/com~apple~CloudDocs/Zotlit/manifests",
+    "/Users/example/Library/Mobile Documents/com~apple~CloudDocs/Zotagent/manifests",
   );
   assert.equal(
     paths.indexDir,
-    "/Users/example/Library/Mobile Documents/com~apple~CloudDocs/Zotlit/index",
+    "/Users/example/Library/Mobile Documents/com~apple~CloudDocs/Zotagent/index",
   );
   assert.equal(
     paths.exactDbPath,
-    "/Users/example/Library/Mobile Documents/com~apple~CloudDocs/Zotlit/index/exact.sqlite",
+    "/Users/example/Library/Mobile Documents/com~apple~CloudDocs/Zotagent/index/exact.sqlite",
   );
   assert.equal(paths.tempDir, resolve(tmpdir(), "zotagent"));
 });

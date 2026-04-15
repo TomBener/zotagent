@@ -21,7 +21,7 @@ Core design:
 - repo path: `~/Documents/GitHub/zotagent`
 - bibliography: `~/Library/CloudStorage/Dropbox/bibliography/bibliography.json`
 - attachments root: `~/Library/Mobile Documents/com~apple~CloudDocs/Zotero`
-- data dir: `~/Library/Mobile Documents/com~apple~CloudDocs/Zotlit`
+- data dir: `~/Library/Mobile Documents/com~apple~CloudDocs/Zotagent`
 - config file: `~/.zotagent/config.json`
 - optional qmd embedding model: controlled by `qmdEmbedModel`; when unset, qmd uses its default model
 - Zotero write config for `add`: `zoteroLibraryId`, `zoteroLibraryType`, `zoteroApiKey`

@@ -1161,7 +1161,7 @@ test("runSync reuses a ready index when bibliography paths come from another mac
 test("catalog storage uses home-relative paths and reads them back as local paths", () => {
   const root = mkdtempSync(join(homedir(), ".zotagent-catalog-home-"));
   try {
-    const dataDir = join(root, "Zotlit");
+    const dataDir = join(root, "Zotagent");
     const indexDir = join(dataDir, "index");
     const normalizedDir = join(dataDir, "normalized");
     const manifestsDir = join(dataDir, "manifests");
@@ -1221,7 +1221,7 @@ test("catalog storage uses home-relative paths and reads them back as local path
 test("readCatalogFile relocates stale Mac home paths to the current iCloud dataDir artifacts", () => {
   const root = mkdtempSync(join(homedir(), ".zotagent-catalog-relocate-"));
   try {
-    const dataDir = join(root, "Library", "Mobile Documents", "com~apple~CloudDocs", "Zotlit");
+    const dataDir = join(root, "Library", "Mobile Documents", "com~apple~CloudDocs", "Zotagent");
     const zoteroRoot = join(root, "Library", "Mobile Documents", "com~apple~CloudDocs", "Zotero");
     const indexDir = join(dataDir, "index");
     const normalizedDir = join(dataDir, "normalized");
