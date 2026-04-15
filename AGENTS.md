@@ -110,7 +110,7 @@ Release notes style:
 
 - `sync` produces one set of files per supported attachment (PDF, EPUB, HTML):
   - `normalized/<docKey>.md`
-  - `manifests/<docKey>.json`
+  - `manifests/<docKey>.json.gz`
   - `index/catalog.json`
 - qmd indexes `normalized/*.md` and stores per-document context such as `title + authors + year + abstract`
 - `search` calls qmd's unified search, then maps `bestChunkPos` back to manifest blocks
