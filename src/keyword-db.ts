@@ -11,13 +11,6 @@ export interface KeywordSearchResult {
 
 export interface KeywordIndexClient {
   rebuildIndex(readyEntries: CatalogEntry[]): Promise<void>;
-  syncIndex?(
-    readyEntries: CatalogEntry[],
-    changes: {
-      upserts: CatalogEntry[];
-      deleteDocKeys: string[];
-    },
-  ): Promise<void>;
   search(query: string, limit: number): Promise<KeywordSearchResult[]>;
   close(): Promise<void>;
 }
@@ -25,18 +18,24 @@ export interface KeywordIndexClient {
 export type KeywordIndexFactory = (config: AppConfig) => Promise<KeywordIndexClient>;
 
 function ensureSchema(db: Database.Database): void {
-  const tableExists = db.prepare(
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS keyword_docs (
+      rowid INTEGER PRIMARY KEY,
+      docKey TEXT NOT NULL
+    )
+  `);
+  const ftsExists = db.prepare(
     "SELECT 1 FROM sqlite_master WHERE type='table' AND name='keyword_fts'",
   ).get();
-  if (!tableExists) {
-    db.exec(
-      "CREATE VIRTUAL TABLE keyword_fts USING fts5(docKey UNINDEXED, title, body, tokenize='porter unicode61')",
-    );
+  if (!ftsExists) {
+    db.exec(`
+      CREATE VIRTUAL TABLE keyword_fts USING fts5(
+        title, body,
+        tokenize='porter unicode61',
+        content=''
+      )
+    `);
   }
-}
-
-function indexIsEmpty(db: Database.Database): boolean {
-  return !db.prepare("SELECT 1 FROM keyword_fts LIMIT 1").get();
 }
 
 function buildBody(entry: CatalogEntry): string | null {
@@ -48,20 +47,27 @@ function buildBody(entry: CatalogEntry): string | null {
     .join("\n");
 }
 
-function indexEntry(db: Database.Database, entry: CatalogEntry): void {
-  const body = buildBody(entry);
-  if (body === null) return;
-  db.prepare("INSERT INTO keyword_fts (docKey, title, body) VALUES (?, ?, ?)").run(
-    entry.docKey,
-    entry.title,
-    body,
-  );
-}
+function rebuildTable(db: Database.Database, readyEntries: CatalogEntry[]): void {
+  db.exec("DROP TABLE IF EXISTS keyword_fts");
+  db.exec(`
+    CREATE VIRTUAL TABLE keyword_fts USING fts5(
+      title, body,
+      tokenize='porter unicode61',
+      content=''
+    )
+  `);
+  db.exec("DELETE FROM keyword_docs");
 
-function rebuildRows(db: Database.Database, readyEntries: CatalogEntry[]): void {
-  db.exec("DELETE FROM keyword_fts");
+  const insertDoc = db.prepare("INSERT INTO keyword_docs (rowid, docKey) VALUES (?, ?)");
+  const insertFts = db.prepare("INSERT INTO keyword_fts (rowid, title, body) VALUES (?, ?, ?)");
+
+  let rowid = 1;
   for (const entry of readyEntries) {
-    indexEntry(db, entry);
+    const body = buildBody(entry);
+    if (body === null) continue;
+    insertDoc.run(rowid, entry.docKey);
+    insertFts.run(rowid, entry.title, body);
+    rowid += 1;
   }
 }
 
@@ -75,36 +81,7 @@ export async function openKeywordIndex(config: AppConfig): Promise<KeywordIndexC
   return {
     rebuildIndex: async (readyEntries) => {
       const tx = db.transaction(() => {
-        rebuildRows(db, readyEntries);
-      });
-      tx();
-    },
-
-    syncIndex: async (readyEntries, changes) => {
-      if (readyEntries.length > 0 && indexIsEmpty(db)) {
-        const tx = db.transaction(() => {
-          rebuildRows(db, readyEntries);
-        });
-        tx();
-        return;
-      }
-
-      if (changes.upserts.length === 0 && changes.deleteDocKeys.length === 0) {
-        return;
-      }
-
-      const tx = db.transaction(() => {
-        const deleteDocKeys = new Set(changes.deleteDocKeys);
-        for (const entry of changes.upserts) {
-          deleteDocKeys.add(entry.docKey);
-        }
-        const deleteStmt = db.prepare("DELETE FROM keyword_fts WHERE docKey = ?");
-        for (const docKey of deleteDocKeys) {
-          deleteStmt.run(docKey);
-        }
-        for (const entry of changes.upserts) {
-          indexEntry(db, entry);
-        }
+        rebuildTable(db, readyEntries);
       });
       tx();
     },
@@ -114,34 +91,25 @@ export async function openKeywordIndex(config: AppConfig): Promise<KeywordIndexC
         throw new Error("Search text cannot be empty.");
       }
 
-      try {
-        const rows = db
-          .prepare(
-            "SELECT docKey, rank FROM keyword_fts WHERE keyword_fts MATCH ? ORDER BY rank LIMIT ?",
-          )
-          .all(query, limit) as Array<{ docKey: string; rank: number }>;
+      const sql = `
+        SELECT d.docKey, f.rank
+        FROM keyword_fts f
+        JOIN keyword_docs d ON d.rowid = f.rowid
+        WHERE keyword_fts MATCH ?
+        ORDER BY f.rank
+        LIMIT ?
+      `;
 
-        return rows.map((row) => ({
-          docKey: row.docKey,
-          score: -row.rank, // FTS5 rank is negative; negate for natural ordering
-        }));
-      } catch (error: unknown) {
-        // FTS5 throws on malformed queries (unbalanced quotes, bad operators).
-        // Retry as a simple phrase search with special characters stripped.
+      try {
+        const rows = db.prepare(sql).all(query, limit) as Array<{ docKey: string; rank: number }>;
+        return rows.map((row) => ({ docKey: row.docKey, score: -row.rank }));
+      } catch {
         const sanitized = query.replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/gu, " ").trim();
         if (sanitized.length === 0) {
           throw new Error("Search text cannot be empty.");
         }
-        const rows = db
-          .prepare(
-            "SELECT docKey, rank FROM keyword_fts WHERE keyword_fts MATCH ? ORDER BY rank LIMIT ?",
-          )
-          .all(sanitized, limit) as Array<{ docKey: string; rank: number }>;
-
-        return rows.map((row) => ({
-          docKey: row.docKey,
-          score: -row.rank,
-        }));
+        const rows = db.prepare(sql).all(sanitized, limit) as Array<{ docKey: string; rank: number }>;
+        return rows.map((row) => ({ docKey: row.docKey, score: -row.rank }));
       }
     },
 

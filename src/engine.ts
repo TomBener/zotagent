@@ -584,9 +584,16 @@ export async function searchLiterature(
     // Keyword search (default): FTS5 with porter stemmer.
     const keywordIndex = await keywordFactory(config);
     try {
-      // Bootstrap the SQLite keyword index lazily so upgraded installs work before the next sync.
-      await keywordIndex.syncIndex?.(readyEntries, { upserts: [], deleteDocKeys: [] });
-      const results = await keywordIndex.search(query, limit);
+      // Bootstrap the keyword index lazily if it is empty (e.g. first search after upgrade).
+      let results = await keywordIndex.search(query, limit);
+      if (results.length === 0 && readyEntries.length > 0) {
+        // Might be truly empty or might need bootstrapping. Rebuild if the index has no rows at all.
+        const probe = await keywordIndex.search("*", 1).catch(() => []);
+        if (probe.length === 0) {
+          await keywordIndex.rebuildIndex(readyEntries);
+          results = await keywordIndex.search(query, limit);
+        }
+      }
       const keywordQuery = buildKeywordQueryProfile(query);
       mapped = results
         .filter((result) => behavior.minScore === undefined || result.score >= behavior.minScore)

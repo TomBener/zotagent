@@ -112,8 +112,8 @@ test("openKeywordIndex builds and searches with porter stemming", async () => {
   }
 });
 
-test("syncIndex upserts and deletes incrementally", async () => {
-  const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-db-sync-"));
+test("rebuildIndex replaces old entries with new ones", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-db-rebuild-"));
   const dataDir = join(root, "data");
   const manifestsDir = join(dataDir, "manifests");
   mkdirSync(manifestsDir, { recursive: true });
@@ -144,7 +144,8 @@ test("syncIndex upserts and deletes incrementally", async () => {
     await client.rebuildIndex([oldEntry]);
     assert.equal((await client.search("cadres", 10)).length, 1);
 
-    await client.syncIndex?.([newEntry], { upserts: [newEntry], deleteDocKeys: [oldDocKey] });
+    // Full rebuild with only the new entry — old entry should be gone.
+    await client.rebuildIndex([newEntry]);
     assert.deepEqual(await client.search("cadres", 10), []);
     assert.equal((await client.search("dangwei", 10)).length, 1);
   } finally {
