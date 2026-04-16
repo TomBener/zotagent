@@ -58,6 +58,27 @@ test("openExactIndex searches Chinese and English text in normalized files", asy
   }
 });
 
+test("searchExactCandidates preserves case, separator, and full-width normalization", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-exact-db-normalized-"));
+  const dataDir = join(root, "data");
+  const normalizedDir = join(dataDir, "normalized");
+  mkdirSync(normalizedDir, { recursive: true });
+
+  const dashedDocKey = "c".repeat(40);
+  const fullWidthDocKey = "d".repeat(40);
+
+  writeNormalized(normalizedDir, dashedDocKey, "The top leader is Dangwei-Shuji.");
+  writeNormalized(normalizedDir, fullWidthDocKey, "The top leader is ｄａｎｇｗｅｉ ｓｈｕｊｉ.");
+
+  const client = await openExactIndex(createConfig(dataDir));
+  try {
+    const results = await client.searchExactCandidates("dangwei shuji", 10);
+    assert.deepEqual(results.map((result) => result.docKey), [dashedDocKey, fullWidthDocKey]);
+  } finally {
+    await client.close();
+  }
+});
+
 test("searchExactCandidates ranks by match count", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-exact-db-rank-"));
   const dataDir = join(root, "data");
@@ -82,6 +103,33 @@ test("searchExactCandidates ranks by match count", async () => {
     assert.equal(results[0]!.score, 3);
     assert.equal(results[1]!.docKey, fewDocKey);
     assert.equal(results[1]!.score, 1);
+  } finally {
+    await client.close();
+  }
+});
+
+test("searchExactCandidates ranks after scanning all candidates, not just an early prefix", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-exact-db-deep-rank-"));
+  const dataDir = join(root, "data");
+  const normalizedDir = join(dataDir, "normalized");
+  mkdirSync(normalizedDir, { recursive: true });
+
+  for (let i = 0; i < 35; i++) {
+    const docKey = i.toString(16).padStart(40, "0");
+    writeNormalized(normalizedDir, docKey, "cadres are mentioned once.");
+  }
+  const highScoreDocKey = "f".repeat(40);
+  writeNormalized(
+    normalizedDir,
+    highScoreDocKey,
+    "cadres lead teams. cadres allocate resources. cadres manage promotions.",
+  );
+
+  const client = await openExactIndex(createConfig(dataDir));
+  try {
+    const results = await client.searchExactCandidates("cadres", 3);
+    assert.equal(results[0]!.docKey, highScoreDocKey);
+    assert.equal(results[0]!.score, 3);
   } finally {
     await client.close();
   }

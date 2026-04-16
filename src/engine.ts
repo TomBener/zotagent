@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 
 import { getDataPaths, resolveConfig, type ConfigOverrides } from "./config.js";
-import { findExactPhraseBlockRange, normalizeExactText } from "./exact.js";
+import { countExactMatches, findExactPhraseBlockRange, normalizeExactText } from "./exact.js";
 import { isBoilerplateLikeText, isTableOfContentsLikeText } from "./heuristics.js";
 import { openQmdClient, type QmdFactory } from "./qmd.js";
 import { getReadyEntries, readCatalogFile, summarizeCatalog } from "./state.js";
@@ -150,6 +150,25 @@ function buildSearchRow(
   };
 }
 
+function buildTitleSearchRow(
+  entry: CatalogEntry,
+  score: number,
+): SearchResultRow & { referenceOnly: boolean } {
+  return {
+    itemKey: entry.itemKey,
+    ...(entry.citationKey ? { citationKey: entry.citationKey } : {}),
+    title: entry.title,
+    authors: entry.authors,
+    ...(entry.year ? { year: entry.year } : {}),
+    file: compactHomePath(entry.filePath),
+    passage: entry.title,
+    blockStart: 0,
+    blockEnd: 0,
+    score: Math.round(score * 10000) / 10000,
+    referenceOnly: false,
+  };
+}
+
 function buildHybridSearchRow(
   entry: CatalogEntry,
   manifest: AttachmentManifest,
@@ -241,19 +260,41 @@ export async function searchLiterature(
   const entryByDocKey = new Map(readyEntries.map((entry) => [entry.docKey, entry]));
   const mapped = behavior.exact
     ? await (async () => {
+        const normalizedQuery = normalizeExactText(query);
         const exactIndex = await exactFactory(config);
         try {
-          return (
-            await exactIndex.searchExactCandidates(query, limit)
-          )
-            .filter((candidate) => behavior.minScore === undefined || candidate.score >= behavior.minScore)
-            .map((candidate) => {
-              const entry = entryByDocKey.get(candidate.docKey);
-              if (!entry || !entry.manifestPath || !exists(entry.manifestPath)) return null;
+          const titleScores = new Map<string, number>();
+          for (const entry of readyEntries) {
+            titleScores.set(entry.docKey, countExactMatches(normalizeExactText(entry.title), normalizedQuery));
+          }
+
+          const scoreByDocKey = new Map<string, number>();
+          const candidateLimit = Math.max(limit, readyEntries.length);
+          for (const candidate of await exactIndex.searchExactCandidates(query, candidateLimit)) {
+            scoreByDocKey.set(candidate.docKey, candidate.score + (titleScores.get(candidate.docKey) ?? 0));
+          }
+          for (const entry of readyEntries) {
+            const titleScore = titleScores.get(entry.docKey) ?? 0;
+            if (titleScore > 0 && !scoreByDocKey.has(entry.docKey)) {
+              scoreByDocKey.set(entry.docKey, titleScore);
+            }
+          }
+
+          return [...scoreByDocKey.entries()]
+            .filter(([, score]) => behavior.minScore === undefined || score >= behavior.minScore)
+            .map(([docKey, score]) => {
+              const entry = entryByDocKey.get(docKey);
+              if (!entry) return null;
+              const titleScore = titleScores.get(docKey) ?? 0;
+              if (!entry.manifestPath || !exists(entry.manifestPath)) {
+                return titleScore > 0 ? buildTitleSearchRow(entry, score) : null;
+              }
               const manifest = readManifestFile(entry.manifestPath);
               const range = findExactPhraseBlockRange(manifest, query);
-              if (!range) return null;
-              return buildSearchRow(entry, manifest, range, candidate.score);
+              if (range) {
+                return buildSearchRow(entry, manifest, range, score);
+              }
+              return titleScore > 0 ? buildTitleSearchRow(entry, score) : null;
             })
             .filter((value): value is ReturnType<typeof buildSearchRow> => value !== null)
             .sort((a, b) => b.score - a.score);

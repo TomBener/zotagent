@@ -439,6 +439,104 @@ test("searchLiterature exact mode uses the exact index and skips qmd", async () 
   assert.match(result.results[0]!.passage, /dangwei shuji/i);
 });
 
+test("searchLiterature exact mode returns title-only matches when the body does not contain the phrase", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-exact-title-"));
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const exactDocKey = "8".repeat(40);
+  const exactManifestPath = join(manifestsDir, `${exactDocKey}${MANIFEST_EXT}`);
+
+  writeManifest(exactManifestPath, {
+    docKey: exactDocKey,
+    itemKey: "ITEM8",
+    title: "Dangwei Shuji in Chinese Firms",
+    authors: ["A"],
+    filePath: "/tmp/exact-title.pdf",
+    normalizedPath: join(dataDir, "normalized", `${exactDocKey}.md`),
+    blocks: [
+      {
+        blockIndex: 0,
+        blockType: "paragraph",
+        sectionPath: ["Body"],
+        text: "The article body uses only a translated description.",
+        charStart: 0,
+        charEnd: 51,
+        lineStart: 1,
+        lineEnd: 1,
+        isReferenceLike: false,
+      },
+    ],
+  });
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [
+      {
+        docKey: exactDocKey,
+        itemKey: "ITEM8",
+        title: "Dangwei Shuji in Chinese Firms",
+        authors: ["A"],
+        filePath: "/tmp/exact-title.pdf",
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: 1,
+        mtimeMs: 1,
+        sourceHash: "hash8",
+        lastIndexedAt: new Date().toISOString(),
+        normalizedPath: join(dataDir, "normalized", `${exactDocKey}.md`),
+        manifestPath: exactManifestPath,
+      },
+    ],
+  });
+
+  let qmdSearchCalled = false;
+  const fakeFactory = async () => ({
+    search: async () => {
+      qmdSearchCalled = true;
+      return [];
+    },
+    searchLex: async () => [],
+    update: async () => ({}),
+    embed: async () => ({}),
+    getStatus: async () => ({ documents: 1, collections: [], embeddings: { total: 1, stale: 0 } }),
+    listContexts: async () => [],
+    addContext: async () => true,
+    removeContext: async () => true,
+    close: async () => {},
+  });
+  const fakeExactFactory = async () => ({
+    searchExactCandidates: async () => [],
+    close: async () => {},
+  });
+
+  const result = await searchLiterature(
+    "dangwei shuji",
+    10,
+    {
+      bibliographyJsonPath: join(root, "bibliography.json"),
+      attachmentsRoot: root,
+      dataDir,
+    },
+    fakeFactory,
+    { exact: true },
+    fakeExactFactory,
+  );
+
+  assert.equal(qmdSearchCalled, false);
+  assert.equal(result.results.length, 1);
+  assert.equal(result.results[0]!.itemKey, "ITEM8");
+  assert.equal(result.results[0]!.passage, "Dangwei Shuji in Chinese Firms");
+  assert.equal(result.results[0]!.blockStart, 0);
+  assert.equal(result.results[0]!.blockEnd, 0);
+});
+
 test("searchWithinDocuments returns passages from the selected attachment", () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-search-in-"));
   const dataDir = join(root, "data");
