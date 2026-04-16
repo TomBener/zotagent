@@ -28,5 +28,9 @@ test("getDataPaths keeps index outputs in dataDir but uses system temp for extra
     paths.indexDir,
     "/Users/example/Library/Mobile Documents/com~apple~CloudDocs/Zotagent/index",
   );
+  assert.equal(
+    paths.keywordDbPath,
+    "/Users/example/Library/Mobile Documents/com~apple~CloudDocs/Zotagent/index/keyword.sqlite",
+  );
   assert.equal(paths.tempDir, resolve(tmpdir(), "zotagent"));
 });

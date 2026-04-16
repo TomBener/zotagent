@@ -161,15 +161,15 @@ test("searchLiterature prefers substantive hits over reference-only hits", async
       dataDir,
     },
     fakeFactory,
+    { semantic: true },
   );
 
   assert.equal(result.results.length, 1);
   assert.equal(result.results[0]!.itemKey, "ITEM1");
   assert.equal("warnings" in result, false);
-  assert.equal(capturedSearchOptions?.rerank, false);
 });
 
-test("searchLiterature forwards explicit rerank override", async () => {
+test("searchLiterature keyword mode uses the keyword index and skips qmd", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-"));
   const dataDir = join(root, "data");
   const indexDir = join(dataDir, "index");
@@ -177,405 +177,26 @@ test("searchLiterature forwards explicit rerank override", async () => {
   mkdirSync(indexDir, { recursive: true });
   mkdirSync(manifestsDir, { recursive: true });
 
-  const preciseDocKey = "7".repeat(40);
-  const broadDocKey = "8".repeat(40);
-  const preciseManifestPath = join(manifestsDir, `${preciseDocKey}${MANIFEST_EXT}`);
-  const broadManifestPath = join(manifestsDir, `${broadDocKey}${MANIFEST_EXT}`);
+  const docKey = "9".repeat(40);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
 
-  writeManifest(preciseManifestPath, {
-    docKey: preciseDocKey,
-    itemKey: "ITEM1",
-    title: "Precise match",
-    authors: ["A"],
-    filePath: "/tmp/precise.pdf",
-    normalizedPath: join(dataDir, "normalized", `${preciseDocKey}.md`),
-    blocks: [
-      {
-        blockIndex: 0,
-        blockType: "paragraph",
-        sectionPath: ["Body"],
-        text: "The top leader is the company party secretary, dangwei shuji.",
-        charStart: 0,
-        charEnd: 63,
-        lineStart: 1,
-        lineEnd: 1,
-        isReferenceLike: false,
-      },
-    ],
-  });
-  writeManifest(broadManifestPath, {
-    docKey: broadDocKey,
-    itemKey: "ITEM2",
-    title: "Broad match",
-    authors: ["B"],
-    filePath: "/tmp/broad.pdf",
-    normalizedPath: join(dataDir, "normalized", `${broadDocKey}.md`),
-    blocks: [
-      {
-        blockIndex: 0,
-        blockType: "paragraph",
-        sectionPath: ["Intro"],
-        text: "This article discusses state-owned enterprises and governance.",
-        charStart: 0,
-        charEnd: 60,
-        lineStart: 1,
-        lineEnd: 1,
-        isReferenceLike: false,
-      },
-    ],
-  });
-
-  writeCatalogFile(join(indexDir, "catalog.json"), {
-    version: 1,
-    generatedAt: new Date().toISOString(),
-    entries: [
-      {
-        docKey: preciseDocKey,
-        itemKey: "ITEM1",
-        title: "Precise match",
-        authors: ["A"],
-        filePath: "/tmp/precise.pdf",
-        fileExt: "pdf",
-        exists: true,
-        supported: true,
-        extractStatus: "ready",
-        size: 1,
-        mtimeMs: 1,
-        sourceHash: "hash7",
-        lastIndexedAt: new Date().toISOString(),
-        normalizedPath: join(dataDir, "normalized", `${preciseDocKey}.md`),
-        manifestPath: preciseManifestPath,
-      },
-      {
-        docKey: broadDocKey,
-        itemKey: "ITEM2",
-        title: "Broad match",
-        authors: ["B"],
-        filePath: "/tmp/broad.pdf",
-        fileExt: "pdf",
-        exists: true,
-        supported: true,
-        extractStatus: "ready",
-        size: 1,
-        mtimeMs: 1,
-        sourceHash: "hash8",
-        lastIndexedAt: new Date().toISOString(),
-        normalizedPath: join(dataDir, "normalized", `${broadDocKey}.md`),
-        manifestPath: broadManifestPath,
-      },
-    ],
-  });
-
-  let capturedSearchOptions: { query: string; limit?: number; rerank?: boolean; minScore?: number } | undefined;
-
-  const fakeFactory = async () => ({
-    search: async (options: { query: string; limit?: number; rerank?: boolean; minScore?: number }) => {
-      capturedSearchOptions = options;
-      return [
-      {
-        file: `qmd://library/${preciseDocKey}.md`,
-        displayPath: `${preciseDocKey}.md`,
-        title: "Precise match",
-        body: "The top leader is the company party secretary, dangwei shuji.",
-        bestChunk: "The top leader is the company party secretary, dangwei shuji.",
-        bestChunkPos: 0,
-        score: 0.93,
-        context: null,
-        docid: "777777",
-      },
-      {
-        file: `qmd://library/${broadDocKey}.md`,
-        displayPath: `${broadDocKey}.md`,
-        title: "Broad match",
-        body: "This article discusses state-owned enterprises and governance.",
-        bestChunk: "This article discusses state-owned enterprises and governance.",
-        bestChunkPos: 0,
-        score: 0.5,
-        context: null,
-        docid: "888888",
-      },
-      ];
-    },
-    searchLex: async () => [],
-    update: async () => ({}),
-    embed: async () => ({}),
-    getStatus: async () => ({ documents: 2, collections: [], embeddings: { total: 2, stale: 0 } }),
-    listContexts: async () => [],
-    addContext: async () => true,
-    removeContext: async () => true,
-    close: async () => {},
-  });
-
-  const result = await searchLiterature(
-    "dangwei shuji",
-    10,
-    {
-      bibliographyJsonPath: join(root, "bibliography.json"),
-      attachmentsRoot: root,
-      dataDir,
-    },
-    fakeFactory,
-    { rerank: true },
-  );
-
-  assert.equal(capturedSearchOptions?.rerank, true);
-  assert.equal(result.results.length, 2);
-  assert.equal(result.results[0]!.itemKey, "ITEM1");
-});
-
-test("searchLiterature exact mode uses the exact index and skips qmd", async () => {
-  const root = mkdtempSync(join(tmpdir(), "zotagent-exact-"));
-  const dataDir = join(root, "data");
-  const indexDir = join(dataDir, "index");
-  const manifestsDir = join(dataDir, "manifests");
-  mkdirSync(indexDir, { recursive: true });
-  mkdirSync(manifestsDir, { recursive: true });
-
-  const exactDocKey = "9".repeat(40);
-  const exactManifestPath = join(manifestsDir, `${exactDocKey}${MANIFEST_EXT}`);
-
-  writeManifest(exactManifestPath, {
-    docKey: exactDocKey,
-    itemKey: "ITEM9",
-    title: "Exact match",
-    authors: ["A"],
-    filePath: "/tmp/exact.pdf",
-    normalizedPath: join(dataDir, "normalized", `${exactDocKey}.md`),
-    blocks: [
-      {
-        blockIndex: 0,
-        blockType: "paragraph",
-        sectionPath: ["Body"],
-        text: "The top leader is the company party secretary, dangwei shuji.",
-        charStart: 0,
-        charEnd: 63,
-        lineStart: 1,
-        lineEnd: 1,
-        isReferenceLike: false,
-      },
-    ],
-  });
-
-  writeCatalogFile(join(indexDir, "catalog.json"), {
-    version: 1,
-    generatedAt: new Date().toISOString(),
-    entries: [
-      {
-        docKey: exactDocKey,
-        itemKey: "ITEM9",
-        title: "Exact match",
-        authors: ["A"],
-        filePath: "/tmp/exact.pdf",
-        fileExt: "pdf",
-        exists: true,
-        supported: true,
-        extractStatus: "ready",
-        size: 1,
-        mtimeMs: 1,
-        sourceHash: "hash9",
-        lastIndexedAt: new Date().toISOString(),
-        normalizedPath: join(dataDir, "normalized", `${exactDocKey}.md`),
-        manifestPath: exactManifestPath,
-      },
-    ],
-  });
-
-  let qmdSearchCalled = false;
-  let capturedExactQuery: string | undefined;
-  let capturedExactLimit: number | undefined;
-
-  const fakeFactory = async () => ({
-    search: async (options: {
-      query?: string;
-      queries?: Array<{ type: "lex" | "vec" | "hyde"; query: string }>;
-      limit?: number;
-      rerank?: boolean;
-      minScore?: number;
-    }) => {
-      qmdSearchCalled = true;
-      return [];
-    },
-    searchLex: async () => [],
-    update: async () => ({}),
-    embed: async () => ({}),
-    getStatus: async () => ({ documents: 1, collections: [], embeddings: { total: 1, stale: 0 } }),
-    listContexts: async () => [],
-    addContext: async () => true,
-    removeContext: async () => true,
-    close: async () => {},
-  });
-  const fakeExactFactory = async () => ({
-    searchExactCandidates: async (inputQuery: string, inputLimit: number) => {
-      capturedExactQuery = inputQuery;
-      capturedExactLimit = inputLimit;
-      return [
-        {
-          docKey: exactDocKey,
-          score: 1,
-        },
-      ];
-    },
-    close: async () => {},
-  });
-
-  const result = await searchLiterature(
-    "dangwei shuji",
-    10,
-    {
-      bibliographyJsonPath: join(root, "bibliography.json"),
-      attachmentsRoot: root,
-      dataDir,
-    },
-    fakeFactory,
-    { exact: true },
-    fakeExactFactory,
-  );
-
-  assert.equal(qmdSearchCalled, false);
-  assert.equal(capturedExactQuery, "dangwei shuji");
-  assert.equal(capturedExactLimit, 10);
-  assert.equal(result.results.length, 1);
-  assert.equal(result.results[0]!.itemKey, "ITEM9");
-  assert.match(result.results[0]!.passage, /dangwei shuji/i);
-});
-
-test("searchLiterature exact mode returns title-only matches when the body does not contain the phrase", async () => {
-  const root = mkdtempSync(join(tmpdir(), "zotagent-exact-title-"));
-  const dataDir = join(root, "data");
-  const indexDir = join(dataDir, "index");
-  const manifestsDir = join(dataDir, "manifests");
-  mkdirSync(indexDir, { recursive: true });
-  mkdirSync(manifestsDir, { recursive: true });
-
-  const exactDocKey = "8".repeat(40);
-  const exactManifestPath = join(manifestsDir, `${exactDocKey}${MANIFEST_EXT}`);
-
-  writeManifest(exactManifestPath, {
-    docKey: exactDocKey,
-    itemKey: "ITEM8",
-    title: "Dangwei Shuji in Chinese Firms",
-    authors: ["A"],
-    filePath: "/tmp/exact-title.pdf",
-    normalizedPath: join(dataDir, "normalized", `${exactDocKey}.md`),
-    blocks: [
-      {
-        blockIndex: 0,
-        blockType: "paragraph",
-        sectionPath: ["Body"],
-        text: "The article body uses only a translated description.",
-        charStart: 0,
-        charEnd: 51,
-        lineStart: 1,
-        lineEnd: 1,
-        isReferenceLike: false,
-      },
-    ],
-  });
-
-  writeCatalogFile(join(indexDir, "catalog.json"), {
-    version: 1,
-    generatedAt: new Date().toISOString(),
-    entries: [
-      {
-        docKey: exactDocKey,
-        itemKey: "ITEM8",
-        title: "Dangwei Shuji in Chinese Firms",
-        authors: ["A"],
-        filePath: "/tmp/exact-title.pdf",
-        fileExt: "pdf",
-        exists: true,
-        supported: true,
-        extractStatus: "ready",
-        size: 1,
-        mtimeMs: 1,
-        sourceHash: "hash8",
-        lastIndexedAt: new Date().toISOString(),
-        normalizedPath: join(dataDir, "normalized", `${exactDocKey}.md`),
-        manifestPath: exactManifestPath,
-      },
-    ],
-  });
-
-  let qmdSearchCalled = false;
-  const fakeFactory = async () => ({
-    search: async () => {
-      qmdSearchCalled = true;
-      return [];
-    },
-    searchLex: async () => [],
-    update: async () => ({}),
-    embed: async () => ({}),
-    getStatus: async () => ({ documents: 1, collections: [], embeddings: { total: 1, stale: 0 } }),
-    listContexts: async () => [],
-    addContext: async () => true,
-    removeContext: async () => true,
-    close: async () => {},
-  });
-  const fakeExactFactory = async () => ({
-    searchExactCandidates: async () => [],
-    close: async () => {},
-  });
-
-  const result = await searchLiterature(
-    "dangwei shuji",
-    10,
-    {
-      bibliographyJsonPath: join(root, "bibliography.json"),
-      attachmentsRoot: root,
-      dataDir,
-    },
-    fakeFactory,
-    { exact: true },
-    fakeExactFactory,
-  );
-
-  assert.equal(qmdSearchCalled, false);
-  assert.equal(result.results.length, 1);
-  assert.equal(result.results[0]!.itemKey, "ITEM8");
-  assert.equal(result.results[0]!.passage, "Dangwei Shuji in Chinese Firms");
-  assert.equal(result.results[0]!.blockStart, 0);
-  assert.equal(result.results[0]!.blockEnd, 0);
-});
-
-test("searchLiterature lex mode uses searchLex and skips hybrid search", async () => {
-  const root = mkdtempSync(join(tmpdir(), "zotagent-lex-"));
-  const dataDir = join(root, "data");
-  const indexDir = join(dataDir, "index");
-  const manifestsDir = join(dataDir, "manifests");
-  mkdirSync(indexDir, { recursive: true });
-  mkdirSync(manifestsDir, { recursive: true });
-
-  const lexDocKey = "9".repeat(40);
-  const lexManifestPath = join(manifestsDir, `${lexDocKey}${MANIFEST_EXT}`);
-
-  writeManifest(lexManifestPath, {
-    docKey: lexDocKey,
+  writeManifest(manifestPath, {
+    docKey,
     itemKey: "ITEM9",
     title: "Dangwei Shuji and Governance",
     authors: ["A"],
-    filePath: "/tmp/lex.pdf",
-    normalizedPath: join(dataDir, "normalized", `${lexDocKey}.md`),
+    filePath: "/tmp/keyword.pdf",
+    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
     blocks: [
       {
         blockIndex: 0,
         blockType: "paragraph",
-        sectionPath: ["Intro"],
-        text: "Introduction to party governance.",
-        charStart: 0,
-        charEnd: 32,
-        lineStart: 1,
-        lineEnd: 1,
-        isReferenceLike: false,
-      },
-      {
-        blockIndex: 1,
-        blockType: "paragraph",
         sectionPath: ["Body"],
         text: "The top leader is the company party secretary, dangwei shuji.",
-        charStart: 34,
-        charEnd: 94,
-        lineStart: 3,
-        lineEnd: 3,
+        charStart: 0,
+        charEnd: 63,
+        lineStart: 1,
+        lineEnd: 1,
         isReferenceLike: false,
       },
     ],
@@ -586,11 +207,11 @@ test("searchLiterature lex mode uses searchLex and skips hybrid search", async (
     generatedAt: new Date().toISOString(),
     entries: [
       {
-        docKey: lexDocKey,
+        docKey,
         itemKey: "ITEM9",
         title: "Dangwei Shuji and Governance",
         authors: ["A"],
-        filePath: "/tmp/lex.pdf",
+        filePath: "/tmp/keyword.pdf",
         fileExt: "pdf",
         exists: true,
         supported: true,
@@ -599,34 +220,16 @@ test("searchLiterature lex mode uses searchLex and skips hybrid search", async (
         mtimeMs: 1,
         sourceHash: "hash9",
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath: join(dataDir, "normalized", `${lexDocKey}.md`),
-        manifestPath: lexManifestPath,
+        normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+        manifestPath,
       },
     ],
   });
 
-  let hybridSearchCalled = false;
-  let lexSearchCalled = false;
-
+  let qmdSearchCalled = false;
   const fakeFactory = async () => ({
-    search: async () => {
-      hybridSearchCalled = true;
-      return [];
-    },
-    searchLex: async (query: string, options?: { limit?: number }) => {
-      lexSearchCalled = true;
-      return [
-        {
-          filepath: `qmd://library/${lexDocKey}.md`,
-          displayPath: `library/${lexDocKey}.md`,
-          title: "Dangwei Shuji and Governance",
-          body: "Introduction to party governance.\n\nThe top leader is the company party secretary, dangwei shuji.",
-          score: 0.85,
-          docid: "999999",
-          context: null,
-        },
-      ];
-    },
+    search: async () => { qmdSearchCalled = true; return []; },
+    searchLex: async () => [],
     update: async () => ({}),
     embed: async () => ({}),
     getStatus: async () => ({ documents: 1, collections: [], embeddings: { total: 1, stale: 0 } }),
@@ -636,230 +239,30 @@ test("searchLiterature lex mode uses searchLex and skips hybrid search", async (
     close: async () => {},
   });
 
+  let keywordSearchCalled = false;
+  const fakeKeywordFactory = async () => ({
+    rebuildIndex: async () => {},
+    search: async (query: string) => {
+      keywordSearchCalled = true;
+      return [{ docKey, score: 1.5 }];
+    },
+    close: async () => {},
+  });
+
   const result = await searchLiterature(
     "dangwei shuji",
     10,
-    {
-      bibliographyJsonPath: join(root, "bibliography.json"),
-      attachmentsRoot: root,
-      dataDir,
-    },
+    { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir },
     fakeFactory,
-    { lex: true },
+    {},
+    fakeKeywordFactory,
   );
 
-  assert.equal(hybridSearchCalled, false);
-  assert.equal(lexSearchCalled, true);
+  assert.equal(qmdSearchCalled, false);
+  assert.equal(keywordSearchCalled, true);
   assert.equal(result.results.length, 1);
   assert.equal(result.results[0]!.itemKey, "ITEM9");
   assert.match(result.results[0]!.passage, /dangwei shuji/i);
-});
-
-test("searchLiterature lex mode returns title-only matches when the body does not contain the phrase", async () => {
-  const root = mkdtempSync(join(tmpdir(), "zotagent-lex-title-"));
-  const dataDir = join(root, "data");
-  const indexDir = join(dataDir, "index");
-  const manifestsDir = join(dataDir, "manifests");
-  mkdirSync(indexDir, { recursive: true });
-  mkdirSync(manifestsDir, { recursive: true });
-
-  const docKey = "a".repeat(40);
-  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
-
-  writeManifest(manifestPath, {
-    docKey,
-    itemKey: "ITEMA",
-    title: "Dangwei Shuji in Chinese Firms",
-    authors: ["A"],
-    filePath: "/tmp/lex-title.pdf",
-    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
-    blocks: [
-      {
-        blockIndex: 0,
-        blockType: "paragraph",
-        sectionPath: ["Body"],
-        text: "The article body uses only a translated description.",
-        charStart: 0,
-        charEnd: 51,
-        lineStart: 1,
-        lineEnd: 1,
-        isReferenceLike: false,
-      },
-    ],
-  });
-
-  writeCatalogFile(join(indexDir, "catalog.json"), {
-    version: 1,
-    generatedAt: new Date().toISOString(),
-    entries: [
-      {
-        docKey,
-        itemKey: "ITEMA",
-        title: "Dangwei Shuji in Chinese Firms",
-        authors: ["A"],
-        filePath: "/tmp/lex-title.pdf",
-        fileExt: "pdf",
-        exists: true,
-        supported: true,
-        extractStatus: "ready",
-        size: 1,
-        mtimeMs: 1,
-        sourceHash: "hasha",
-        lastIndexedAt: new Date().toISOString(),
-        normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
-        manifestPath,
-      },
-    ],
-  });
-
-  const fakeFactory = async () => ({
-    search: async () => [],
-    searchLex: async () => [
-      {
-        filepath: `qmd://library/${docKey}.md`,
-        displayPath: `library/${docKey}.md`,
-        title: "Dangwei Shuji in Chinese Firms",
-        body: "The article body uses only a translated description.",
-        score: 0.85,
-        docid: "aaaaaa",
-        context: null,
-      },
-    ],
-    update: async () => ({}),
-    embed: async () => ({}),
-    getStatus: async () => ({ documents: 1, collections: [], embeddings: { total: 1, stale: 0 } }),
-    listContexts: async () => [],
-    addContext: async () => true,
-    removeContext: async () => true,
-    close: async () => {},
-  });
-
-  const result = await searchLiterature(
-    "dangwei shuji",
-    10,
-    {
-      bibliographyJsonPath: join(root, "bibliography.json"),
-      attachmentsRoot: root,
-      dataDir,
-    },
-    fakeFactory,
-    { lex: true },
-  );
-
-  assert.equal(result.results.length, 1);
-  assert.equal(result.results[0]!.itemKey, "ITEMA");
-  assert.equal(result.results[0]!.passage, "Dangwei Shuji in Chinese Firms");
-  assert.equal(result.results[0]!.blockStart, 0);
-  assert.equal(result.results[0]!.blockEnd, 0);
-});
-
-test("searchLiterature lex mode maps stemmed BM25 hits to the matching block", async () => {
-  const root = mkdtempSync(join(tmpdir(), "zotagent-lex-stem-"));
-  const dataDir = join(root, "data");
-  const indexDir = join(dataDir, "index");
-  const manifestsDir = join(dataDir, "manifests");
-  mkdirSync(indexDir, { recursive: true });
-  mkdirSync(manifestsDir, { recursive: true });
-
-  const docKey = "b".repeat(40);
-  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
-
-  writeManifest(manifestPath, {
-    docKey,
-    itemKey: "ITEMB",
-    title: "Chinese Firm Governance",
-    authors: ["A"],
-    filePath: "/tmp/lex-stem.pdf",
-    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
-    blocks: [
-      {
-        blockIndex: 0,
-        blockType: "paragraph",
-        sectionPath: ["Intro"],
-        text: "Introduction and acknowledgements.",
-        charStart: 0,
-        charEnd: 34,
-        lineStart: 1,
-        lineEnd: 1,
-        isReferenceLike: false,
-      },
-      {
-        blockIndex: 1,
-        blockType: "paragraph",
-        sectionPath: ["Body"],
-        text: "The firm appoints a party secretary.",
-        charStart: 36,
-        charEnd: 73,
-        lineStart: 3,
-        lineEnd: 3,
-        isReferenceLike: false,
-      },
-    ],
-  });
-
-  writeCatalogFile(join(indexDir, "catalog.json"), {
-    version: 1,
-    generatedAt: new Date().toISOString(),
-    entries: [
-      {
-        docKey,
-        itemKey: "ITEMB",
-        title: "Chinese Firm Governance",
-        authors: ["A"],
-        filePath: "/tmp/lex-stem.pdf",
-        fileExt: "pdf",
-        exists: true,
-        supported: true,
-        extractStatus: "ready",
-        size: 1,
-        mtimeMs: 1,
-        sourceHash: "hashb",
-        lastIndexedAt: new Date().toISOString(),
-        normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
-        manifestPath,
-      },
-    ],
-  });
-
-  const fakeFactory = async () => ({
-    search: async () => [],
-    searchLex: async () => [
-      {
-        filepath: `qmd://library/${docKey}.md`,
-        displayPath: `library/${docKey}.md`,
-        title: "Chinese Firm Governance",
-        body: "Introduction and acknowledgements.\n\nThe firm appoints a party secretary.",
-        score: 0.8,
-        docid: "bbbbbb",
-        context: null,
-      },
-    ],
-    update: async () => ({}),
-    embed: async () => ({}),
-    getStatus: async () => ({ documents: 1, collections: [], embeddings: { total: 1, stale: 0 } }),
-    listContexts: async () => [],
-    addContext: async () => true,
-    removeContext: async () => true,
-    close: async () => {},
-  });
-
-  const result = await searchLiterature(
-    "firms",
-    10,
-    {
-      bibliographyJsonPath: join(root, "bibliography.json"),
-      attachmentsRoot: root,
-      dataDir,
-    },
-    fakeFactory,
-    { lex: true },
-  );
-
-  assert.equal(result.results.length, 1);
-  assert.equal(result.results[0]!.itemKey, "ITEMB");
-  assert.equal(result.results[0]!.passage, "The firm appoints a party secretary.");
-  assert.equal(result.results[0]!.blockStart, 1);
-  assert.equal(result.results[0]!.blockEnd, 1);
 });
 
 test("searchWithinDocuments returns passages from the selected attachment", () => {

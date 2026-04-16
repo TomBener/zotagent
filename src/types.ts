@@ -183,6 +183,7 @@ export interface DataPaths {
   normalizedDir: string;
   manifestsDir: string;
   indexDir: string;
+  keywordDbPath: string;
   tempDir: string;
   qmdDbPath: string;
   catalogPath: string;

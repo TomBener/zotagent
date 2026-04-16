@@ -20,6 +20,7 @@ import { getDataPaths, resolveConfig, type ConfigOverrides } from "./config.js";
 import { buildMarkdownManifest, buildPdfManifest } from "./manifest.js";
 import { extractEpub } from "./epub.js";
 import { extractHtml } from "./html-extract.js";
+import { openKeywordIndex, type KeywordIndexFactory } from "./keyword-db.js";
 import { openQmdClient, type QmdFactory } from "./qmd.js";
 import { mapEntriesByDocKey, readCatalogFile, summarizeCatalog, writeCatalogFile } from "./state.js";
 import type { AttachmentCatalogEntry, AttachmentManifest, CatalogEntry, CatalogFile, SyncStats } from "./types.js";
@@ -787,6 +788,7 @@ async function embedQmdUntilSettled(
 export async function runSync(
   overrides: ConfigOverrides = {},
   qmdFactory: QmdFactory = openQmdClient,
+  keywordFactory: KeywordIndexFactory = openKeywordIndex,
   extractBatchFn: ExtractBatchFn = extractBatch,
   requireJavaFn: () => void = requireJava,
   options: SyncRunOptions = {},
@@ -876,6 +878,8 @@ export async function runSync(
     const previousCatalog = readCatalogFile(paths.catalogPath);
     const previousByDocKey = mapEntriesByDocKey(previousCatalog);
     const nextEntries: CatalogEntry[] = [];
+    const keywordUpserts = new Map<string, CatalogEntry>();
+    const keywordDeletes = new Set<string>();
     const changedAttachments: AttachmentCatalogEntry[] = [];
     const staleDocKeys = new Set(previousCatalog.entries.map((entry) => entry.docKey));
     const fileOutcomes: SyncFileOutcome[] = [];
@@ -912,6 +916,9 @@ export async function runSync(
       if (attachment.supported) stats.supportedAttachments += 1;
 
       if (!attachment.supported) {
+        if (previousByDocKey.get(attachment.docKey)?.extractStatus === "ready") {
+          keywordDeletes.add(attachment.docKey);
+        }
         fileOutcomes.push({
           kind: "unsupported",
           filePath: attachment.filePath,
@@ -928,6 +935,9 @@ export async function runSync(
 
       const current = statSync(attachment.filePath, { throwIfNoEntry: false });
       if (!current || !attachment.exists) {
+        if (previousByDocKey.get(attachment.docKey)?.extractStatus === "ready") {
+          keywordDeletes.add(attachment.docKey);
+        }
         fileOutcomes.push({
           kind: "missing",
           filePath: attachment.filePath,
@@ -999,6 +1009,9 @@ export async function runSync(
         manifestPath: previousIsReadyAndUnchanged ? previous.manifestPath : fallbackManifestPath,
       });
       nextEntries.push(nextEntry);
+      if (!previousIsReadyAndUnchanged) {
+        keywordUpserts.set(nextEntry.docKey, nextEntry);
+      }
       fileOutcomes.push({
         kind: "skipped",
         filePath: attachment.filePath,
@@ -1051,6 +1064,7 @@ export async function runSync(
         manifestPath: written.manifestPath,
       });
       nextEntries.push(nextEntry);
+      keywordUpserts.set(nextEntry.docKey, nextEntry);
       stats.readyAttachments += 1;
       stats.updatedAttachments += 1;
       stats.indexedAttachments += 1;
@@ -1058,6 +1072,9 @@ export async function runSync(
 
     function recordErroredAttachment(attachment: AttachmentCatalogEntry, error: unknown): void {
       const previous = previousByDocKey.get(attachment.docKey);
+      if (previous?.extractStatus === "ready") {
+        keywordDeletes.add(attachment.docKey);
+      }
       deleteIfExists(previous?.normalizedPath);
       deleteIfExists(previous?.manifestPath);
 
@@ -1243,6 +1260,7 @@ export async function runSync(
     }
 
     for (const docKey of staleDocKeys) {
+      keywordDeletes.add(docKey);
       stats.removedAttachments += 1;
     }
 
@@ -1255,6 +1273,23 @@ export async function runSync(
     writeProgressCatalog(paths.catalogPath, nextEntries);
 
     const readyEntries = nextEntries.filter((entry) => entry.extractStatus === "ready");
+
+    const keywordIndex = await keywordFactory(config);
+    try {
+      const deleteDocKeys = [...keywordDeletes].filter((docKey) => !keywordUpserts.has(docKey));
+      if (keywordIndex.syncIndex) {
+        logger.info("Updating keyword search index...", { console: true });
+        await keywordIndex.syncIndex(readyEntries, {
+          upserts: [...keywordUpserts.values()],
+          deleteDocKeys,
+        });
+      } else {
+        logger.info("Rebuilding keyword search index...", { console: true });
+        await keywordIndex.rebuildIndex(readyEntries);
+      }
+    } finally {
+      await keywordIndex.close();
+    }
 
     const qmd = await qmdFactory(config);
     try {

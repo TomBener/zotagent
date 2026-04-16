@@ -175,6 +175,7 @@ test("runSync relays SIGINT instead of swallowing it", () => {
           dataDir,
         },
         fakeFactory,
+        undefined,
         fakeExtractBatch,
         () => {},
       );
@@ -243,6 +244,7 @@ test("runSync does not swallow uncaught exceptions", () => {
           dataDir,
         },
         fakeFactory,
+        undefined,
         fakeExtractBatch,
         () => {},
       );
@@ -461,6 +463,7 @@ test("runSync resumes from existing normalized and manifest outputs when catalog
       dataDir,
     },
     fakeFactory,
+    undefined,
     fakeExtractBatch,
     () => {},
   );
@@ -566,6 +569,7 @@ test("runSync re-extracts attachments when fallback normalized output is empty",
       dataDir,
     },
     fakeFactory,
+    undefined,
     fakeExtractBatch,
     () => {},
   );
@@ -728,6 +732,7 @@ test("runSync marks empty txt extraction output as error", async () => {
       dataDir,
     },
     fakeFactory,
+    undefined,
     () => Promise.resolve(new Map()),
     () => {},
   );
@@ -788,6 +793,7 @@ test("runSync indexes txt attachments without Java extraction", async () => {
       dataDir,
     },
     fakeFactory,
+    undefined,
     fakeExtractBatch,
     () => {},
   );
@@ -1227,6 +1233,7 @@ test("runSync reuses cached outputs after an attachment temporarily disappears",
       dataDir,
     },
     fakeFactory,
+    undefined,
     async () => new Map(),
     () => {},
   );
@@ -1244,6 +1251,7 @@ test("runSync reuses cached outputs after an attachment temporarily disappears",
       dataDir,
     },
     fakeFactory,
+    undefined,
     async () => {
       extractCalls += 1;
       return new Map();
@@ -1329,6 +1337,7 @@ test("runSync skips unchanged previous extraction errors by default", async () =
       dataDir,
     },
     fakeFactory,
+    undefined,
     async () => {
       extractCalls += 1;
       return new Map();
@@ -1454,6 +1463,7 @@ test("runSync retries unchanged previous errors when requested and passes custom
       dataDir,
     },
     fakeFactory,
+    undefined,
     fakeExtractBatch,
     () => {},
     { retryErrors: true, pdfTimeoutMs: 1_800_000 },
@@ -1558,6 +1568,7 @@ test("runSync extracts book attachments in single-file batches by default", asyn
       dataDir,
     },
     fakeFactory,
+    undefined,
     fakeExtractBatch,
     () => {},
   );
@@ -1650,6 +1661,7 @@ test("runSync honors explicit PDF batch size", async () => {
       dataDir,
     },
     fakeFactory,
+    undefined,
     fakeExtractBatch,
     () => {},
     { pdfBatchSize: 1 },
@@ -1746,6 +1758,7 @@ test("runSync records extraction failures per attachment and continues indexing 
       dataDir,
     },
     fakeFactory,
+    undefined,
     fakeExtractBatch,
     () => {},
   );
@@ -1863,6 +1876,7 @@ test("runSync retries a timed out batch one file at a time", async () => {
       dataDir,
     },
     fakeFactory,
+    undefined,
     fakeExtractBatch,
     () => {},
   );

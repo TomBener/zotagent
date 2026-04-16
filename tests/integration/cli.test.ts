@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { openExactIndex } from "../../src/exact-db.js";
+import { openKeywordIndex } from "../../src/keyword-db.js";
 import { writeCatalogFile } from "../../src/state.js";
 import type { AppConfig, AttachmentManifest, CatalogEntry, CatalogFile } from "../../src/types.js";
 import { MANIFEST_EXT, writeManifestFile } from "../../src/utils.js";
@@ -190,6 +190,13 @@ async function createIndexedFixture(): Promise<{
   };
   writeCatalogFile(join(indexDir, "catalog.json"), catalog);
 
+  const keywordIndex = await openKeywordIndex(createConfig(bibliographyPath, attachmentsRoot, dataDir));
+  try {
+    await keywordIndex.rebuildIndex(catalog.entries);
+  } finally {
+    await keywordIndex.close();
+  }
+
   return { root, bibliographyPath, attachmentsRoot, dataDir, docKey, filePath, manifestPath, citationKey };
 }
 
@@ -272,7 +279,7 @@ test("help summarizes current commands and keeps config-only overrides out of th
   assert.match(result.stdout, /zotagent version/);
   assert.match(result.stdout, /zotagent add \[--doi <doi> \| --s2-paper-id <id>\] \[--title <text>\]/);
   assert.match(result.stdout, /zotagent s2 "<text>" \[--limit <n>\]/);
-  assert.match(result.stdout, /zotagent search "<text>" \[--exact\] \[--lex\] \[--limit <n>\]/);
+  assert.match(result.stdout, /zotagent search "<text>" \[--keyword \| --semantic\] \[--limit <n>\]/);
   assert.match(result.stdout, /zotagent search-in "<text>" \(\[?--file <path> \| --item-key <key> \| --citation-key <key>\)? \[--limit <n>\]/);
   assert.match(result.stdout, /zotagent metadata "<text>" \[--limit <n>\] \[--field <field>\] \[--has-file\]/);
   assert.match(result.stdout, /zotagent fulltext \(\[?--file <path> \| --item-key <key> \| --citation-key <key>\)? \[--clean\]/);
@@ -289,9 +296,9 @@ test("help summarizes current commands and keeps config-only overrides out of th
     result.stdout,
     /--limit <n>\s+Return up to n search results\. Default: 10 for search, 20 for metadata\./,
   );
-  assert.match(result.stdout, /qmd reranking is skipped by default/);
+  assert.match(result.stdout, /Default is keyword search/);
   assert.match(result.stdout, /search-in\s+Search within one indexed document or a selected set of matching attachments\./);
-  assert.match(result.stdout, /--rerank\s+Enable qmd reranking/);
+  assert.match(result.stdout, /--semantic\s+Use semantic search/);
   assert.match(result.stdout, /--field <field>\s+Limit metadata search/);
   assert.match(result.stdout, /--has-file\s+Keep only metadata results/);
   assert.match(result.stdout, /zotagent expand \(\[?--file <path> \| --item-key <key> \| --citation-key <key>\)?/);
@@ -379,28 +386,12 @@ test("search rejects removed query flag and points to positional usage", () => {
   assert.match(result.stdout, /zotagent search .*<text>.*/);
 });
 
-test("search rejects combining exact mode with rerank", () => {
-  const result = runCli(["search", "--exact", "dangwei shuji", "--rerank"]);
+test("search rejects combining keyword mode with semantic", () => {
+  const result = runCli(["search", "--keyword", "--semantic", "dangwei shuji"]);
 
   assert.equal(result.status, 1);
   assert.match(result.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
-  assert.match(result.stdout, /`--exact` cannot be combined with `--rerank`/);
-});
-
-test("search rejects combining lex mode with exact", () => {
-  const result = runCli(["search", "--lex", "--exact", "dangwei shuji"]);
-
-  assert.equal(result.status, 1);
-  assert.match(result.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
-  assert.match(result.stdout, /`--exact` cannot be combined with `--lex`/);
-});
-
-test("search rejects combining lex mode with rerank", () => {
-  const result = runCli(["search", "--lex", "--rerank", "dangwei shuji"]);
-
-  assert.equal(result.status, 1);
-  assert.match(result.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
-  assert.match(result.stdout, /`--lex` cannot be combined with `--rerank`/);
+  assert.match(result.stdout, /`--keyword` cannot be combined with `--semantic`/);
 });
 
 test("metadata rejects removed query flag and points to positional usage", () => {
@@ -413,7 +404,7 @@ test("metadata rejects removed query flag and points to positional usage", () =>
 });
 
 test("metadata rejects search-only flags", () => {
-  const result = runCli(["metadata", "--exact", "aging in China"]);
+  const result = runCli(["metadata", "--keyword", "aging in China"]);
 
   assert.equal(result.status, 1);
   assert.match(result.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
@@ -572,13 +563,12 @@ test("metadata accumulates repeated field filters", () => {
   );
 });
 
-test("search exact returns elapsedMs in meta", async () => {
+test("search keyword returns elapsedMs in meta", async () => {
   const fixture = await createIndexedFixture();
 
   const result = runCli([
     "search",
     "dangwei shuji",
-    "--exact",
     "--bibliography",
     fixture.bibliographyPath,
     "--attachments-root",
@@ -600,19 +590,23 @@ test("search exact returns elapsedMs in meta", async () => {
   assert.equal(typeof parsed.meta?.elapsedMs, "number");
 });
 
-test("exact index client searches normalized files on disk", async () => {
+test("keyword index searches with FTS5 porter stemming", async () => {
   const fixture = await createIndexedFixture();
   const config = createConfig(fixture.bibliographyPath, fixture.attachmentsRoot, fixture.dataDir);
-  const exactIndex = await openExactIndex(config);
+  const keywordIndex = await openKeywordIndex(config);
 
   try {
-    const results = await exactIndex.searchExactCandidates("dangwei shuji", 10);
+    const results = await keywordIndex.search("dangwei shuji", 10);
     assert.deepEqual(results.map((row) => row.docKey), [fixture.docKey]);
 
-    const missing = await exactIndex.searchExactCandidates("nonexistent phrase xyz", 10);
+    // Porter stemming: "governance" matches "governs"/"governing" etc.
+    const stemmed = await keywordIndex.search("governance", 10);
+    assert.equal(stemmed.length, 1);
+
+    const missing = await keywordIndex.search("nonexistent gibberish xyz", 10);
     assert.deepEqual(missing, []);
   } finally {
-    await exactIndex.close();
+    await keywordIndex.close();
   }
 });
 

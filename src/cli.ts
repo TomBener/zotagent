@@ -22,12 +22,11 @@ interface ParsedArgs {
 
 const BOOLEAN_FLAGS = new Set([
   "clean",
-  "exact",
   "has-file",
   "help",
-  "lex",
-  "rerank",
+  "keyword",
   "retry-errors",
+  "semantic",
   "version",
 ]);
 const METADATA_FIELDS: MetadataField[] = ["title", "author", "year", "abstract", "journal", "publisher"];
@@ -184,7 +183,7 @@ Usage:
   zotagent version
   zotagent add [--doi <doi> | --s2-paper-id <id>] [--title <text>] [--author <name>] [--year <text>] [--publication <text>] [--url <url>] [--url-date <date>] [--collection-key <key>] [--item-type <type>]
   zotagent s2 "<text>" [--limit <n>]
-  zotagent search "<text>" [--exact] [--lex] [--limit <n>] [--min-score <n>] [--rerank]
+  zotagent search "<text>" [--keyword | --semantic] [--limit <n>] [--min-score <n>]
   zotagent search-in "<text>" (--file <path> | --item-key <key> | --citation-key <key>) [--limit <n>]
   zotagent metadata "<text>" [--limit <n>] [--field <field>] [--has-file]
   zotagent read (--file <path> | --item-key <key> | --citation-key <key>) [--offset-block <n>] [--limit-blocks <n>]
@@ -213,11 +212,10 @@ Commands:
 
   search
     Search indexed Zotero documents.
-    Default mode uses hybrid search (BM25 + vector + LLM query expansion).
-    --lex uses BM25 keyword search only. Faster and lighter than hybrid, no LLM models loaded.
-    --exact uses exact substring search.
-    qmd reranking is skipped by default; --rerank enables it for narrower queries.
-    --exact, --lex, and --rerank cannot be combined with each other.
+    Default is keyword search (FTS5 with porter stemming).
+    Supports FTS5 query syntax: "exact phrase", OR, NOT, NEAR, prefix*.
+    --semantic uses vector + LLM query expansion for meaning-based search (slower, heavier).
+    --keyword and --semantic cannot be combined.
 
   search-in
     Search within one indexed document or a selected set of matching attachments.
@@ -261,11 +259,10 @@ Options:
   --item-key <key>            Resolve an indexed attachment by Zotero item key for search-in, read, fulltext, or expand.
   --citation-key <key>        Resolve an indexed attachment by citation key for search-in, read, fulltext, or expand.
   --clean                     For fulltext, apply heuristic cleanup instead of returning the original normalized markdown.
-  --exact                     Use exact substring search.
-  --lex                       Use BM25 keyword search only (no LLM, fast, low memory).
+  --keyword                   Use keyword search (default). FTS5 with porter stemming.
+  --semantic                  Use semantic search. Vector + LLM query expansion (slower, heavier).
   --limit <n>                 Return up to n search results. Default: 10 for search, 20 for metadata.
   --min-score <n>             Drop lower-scoring search hits before mapping.
-  --rerank                    Enable qmd reranking for search. Slower, useful for narrower queries.
   --field <field>             Limit metadata search to title, author, year, abstract, journal, or publisher.
   --has-file                  Keep only metadata results with a supported indexed attachment.
   --offset-block <n>          Start reading at block n. Default: 0.
@@ -280,7 +277,8 @@ Examples:
   zotagent add --s2-paper-id "f2005ed06241e8aa6f55f7ed9279a56b92038128"
   zotagent add --title "Working Paper" --author "Jane Doe" --year 2026 --collection-key "ABCD1234" --url "https://example.com"
   zotagent s2 "state-owned enterprise governance" --limit 5
-  zotagent search "dangwei shuji" --exact
+  zotagent search "dangwei shuji"
+  zotagent search "party secretary governance" --semantic
   zotagent search-in "dangwei shuji" --item-key KG326EEI
   zotagent search "state-owned enterprise governance" --limit 5 --min-score 0.4
   zotagent metadata "American Journal of Political Science" --field journal
@@ -311,6 +309,7 @@ function compactPathMap(paths: ReturnType<typeof getDataPaths>): ReturnType<type
     normalizedDir: compactHomePath(paths.normalizedDir),
     manifestsDir: compactHomePath(paths.manifestsDir),
     indexDir: compactHomePath(paths.indexDir),
+    keywordDbPath: compactHomePath(paths.keywordDbPath),
     tempDir: compactHomePath(paths.tempDir),
     qmdDbPath: compactHomePath(paths.qmdDbPath),
     catalogPath: compactHomePath(paths.catalogPath),
@@ -377,7 +376,7 @@ async function main(): Promise<void> {
           emitError("INVALID_ARGUMENT", "`--pdf-batch-size` must be a positive integer.");
           return;
         }
-        const result = await runSync(overrides, openQmdClient, undefined, undefined, {
+        const result = await runSync(overrides, openQmdClient, undefined, undefined, undefined, {
           ...(getBooleanFlag(parsed.flags, "retry-errors") ? { retryErrors: true } : {}),
           ...(pdfTimeoutMs !== undefined ? { pdfTimeoutMs } : {}),
           ...(pdfBatchSize !== undefined ? { pdfBatchSize } : {}),
@@ -483,7 +482,7 @@ async function main(): Promise<void> {
           emitError("UNEXPECTED_ARGUMENT", '`--query` is not supported. Use: zotagent s2 "<text>"');
           return;
         }
-        const invalidFlags = ["exact", "lex", "rerank", "min-score", "field", "has-file", "has-pdf"].filter(
+        const invalidFlags = ["keyword", "semantic", "min-score", "field", "has-file", "has-pdf"].filter(
           (flag) => flag in parsed.flags,
         );
         if (invalidFlags.length > 0) {
@@ -524,19 +523,10 @@ async function main(): Promise<void> {
           emitError("MISSING_ARGUMENT", 'Missing search text. Use: zotagent search "<text>"');
           return;
         }
-        const exact = getBooleanFlag(parsed.flags, "exact");
-        const lex = getBooleanFlag(parsed.flags, "lex");
-        const explicitRerank = getBooleanFlag(parsed.flags, "rerank") ? true : undefined;
-        if (exact && lex) {
-          emitError("UNEXPECTED_ARGUMENT", '`--exact` cannot be combined with `--lex`.');
-          return;
-        }
-        if (exact && explicitRerank === true) {
-          emitError("UNEXPECTED_ARGUMENT", '`--exact` cannot be combined with `--rerank`.');
-          return;
-        }
-        if (lex && explicitRerank === true) {
-          emitError("UNEXPECTED_ARGUMENT", '`--lex` cannot be combined with `--rerank`.');
+        const semantic = getBooleanFlag(parsed.flags, "semantic");
+        const keyword = getBooleanFlag(parsed.flags, "keyword");
+        if (semantic && keyword) {
+          emitError("UNEXPECTED_ARGUMENT", '`--keyword` cannot be combined with `--semantic`.');
           return;
         }
         const limitInput = parseNumericFlag(parsed.flags, "limit", {
@@ -560,11 +550,9 @@ async function main(): Promise<void> {
         const limit = limitInput.value ?? 10;
         const minScore = minScoreInput.value;
         const data = await searchLiterature(query, limit, overrides, openQmdClient, {
-          ...(exact ? { exact: true } : {}),
-          ...(lex ? { lex: true } : {}),
-          ...(explicitRerank !== undefined ? { rerank: explicitRerank } : {}),
+          ...(semantic ? { semantic: true } : {}),
           ...(minScore !== undefined ? { minScore } : {}),
-          ...(!exact ? { progress: (message: string) => process.stderr.write(`${message}\n`) } : {}),
+          ...(semantic ? { progress: (message: string) => process.stderr.write(`${message}\n`) } : {}),
         });
         emitOk(data, { elapsedMs: Date.now() - startedAt });
         return;
@@ -629,7 +617,7 @@ async function main(): Promise<void> {
           emitError("UNEXPECTED_ARGUMENT", '`--query` is not supported. Use: zotagent metadata "<text>"');
           return;
         }
-        const invalidFlags = ["exact", "lex", "rerank", "min-score"].filter(
+        const invalidFlags = ["keyword", "semantic", "min-score"].filter(
           (flag) => flag in parsed.flags,
         );
         if (invalidFlags.length > 0) {
