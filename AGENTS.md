@@ -12,9 +12,9 @@ Core design:
 - external search results primarily return `itemKey + file`
 - `citationKey` is a mutable display field only
 - PDF extraction uses OpenDataLoader; EPUB and HTML are extracted in-process via jszip/linkedom/readability
-- search uses `qmd`
+- keyword search uses FTS5 with `porter unicode61` tokenizer (`keyword.sqlite`); supports AND, OR, NOT, NEAR, "phrase", prefix*
+- semantic search uses qmd (vector + LLM query expansion via `qmd.sqlite`)
 - `read` and `expand` do not depend on the search backend; they read local manifests directly
-- the external search interface stays unified instead of splitting keyword search and semantic search into separate commands
 
 ## Default Environment
 
@@ -48,6 +48,11 @@ node dist/cli.js status
 node dist/cli.js add --doi "10.1016/j.econmod.2026.107590"
 node dist/cli.js add --title "Working Paper" --author "Jane Doe" --year 2026 --publication "Working Paper Series"
 node dist/cli.js search "aging in China"
+node dist/cli.js search "party secretary governance"
+node dist/cli.js search '"aging in China" NOT famine'
+node dist/cli.js search "govern*"
+node dist/cli.js search "hukou NEAR migration"
+node dist/cli.js search "political leadership corporate governance" --semantic
 node dist/cli.js read --file "~/Library/.../paper.pdf"
 node dist/cli.js expand --file "~/Library/.../paper.pdf" --block-start 10 --block-end 12
 ```
@@ -89,10 +94,12 @@ Release notes style:
 - `src/manifest.ts`: conversion from ODL JSON or plain markdown into blocks, character ranges, and reference-like markers
 - `src/epub.ts`: EPUB extraction (jszip + linkedom XHTML-to-markdown)
 - `src/html-extract.ts`: HTML extraction (@mozilla/readability + linkedom)
-- `src/qmd.ts`: qmd store adapter
-- `src/sync.ts`: syncing, extraction, manifest writing, and qmd updates
+- `src/keyword-db.ts`: FTS5 porter keyword index (keyword.sqlite)
+- `src/exact.ts`: text normalization and exact phrase block-range mapping (used by keyword block locator)
+- `src/qmd.ts`: qmd store adapter (semantic search backend)
+- `src/sync.ts`: syncing, extraction, manifest writing, keyword index updates, and qmd updates
 - `src/state.ts`: `catalog.json` reading, writing, and summary stats
-- `src/engine.ts`: main flow for `search`, `read`, and `expand`
+- `src/engine.ts`: main flow for `search` (keyword + semantic), `read`, and `expand`
 - `src/heuristics.ts`: reference-section and context-mapping heuristics
 - `tests/unit/`: unit tests
 - `tests/integration/`: CLI integration tests
@@ -108,21 +115,41 @@ Release notes style:
 
 ## Current Search Logic
 
+Two search modes, selected by CLI flags:
+
+### Keyword Search (default, or `--keyword`)
+
+- uses `keyword.sqlite` — FTS5 virtual table with `porter unicode61` tokenizer
+- supports FTS5 query syntax: multi-word AND, `"exact phrase"`, OR, NOT, NEAR, NEAR/n, prefix*
+- `sync` builds and incrementally maintains the keyword index
+- if `keyword.sqlite` is missing at search time, it is lazily bootstrapped from existing manifests
+- block locator: tries exact phrase match in manifest first, then falls back to stemmed term scoring per block (Porter stemmer in `engine.ts`), then title match
+- reference-like hits are post-processed; substantive body hits are preferred
+- ~100-200ms per query, ~few tens of MB memory
+
+### Semantic Search (`--semantic`)
+
+- uses `qmd.sqlite` — qmd hybrid search (BM25 + vector + LLM query expansion)
+- qmd indexes `normalized/*.md` and stores per-document context such as `title + authors + year + abstract`
+- maps `bestChunkPos` back to manifest blocks
+- ~10-40s per query, ~4-5 GB memory (loads Qwen 1.7B + embedding model)
+
+### Index Files
+
 - `sync` produces one set of files per supported attachment (PDF, EPUB, HTML):
   - `normalized/<docKey>.md`
   - `manifests/<docKey>.json.gz`
   - `index/catalog.json`
-- qmd indexes `normalized/*.md` and stores per-document context such as `title + authors + year + abstract`
-- `search` calls qmd's unified search, then maps `bestChunkPos` back to manifest blocks
-- reference-like hits still receive post-processing; when body-text candidates exist, they are preferred over reference-only hits
-- `read` and `expand` operate entirely on local manifests and do not depend on qmd
+  - `index/keyword.sqlite` (FTS5 keyword index)
+  - `index/qmd.sqlite` (qmd semantic index)
+- `read` and `expand` operate entirely on local manifests and do not depend on either search index
 
 ## Current Sync Logic
 
 - every `sync` reloads the bibliography
 - incremental decisions mainly depend on attachment `size`, `mtime`, and whether the expected index files already exist
 - content changes trigger re-extraction and re-indexing for that attachment
-- bibliography metadata is rewritten into `catalog.json` and qmd context on every sync
+- bibliography metadata is rewritten into `catalog.json`, keyword index, and qmd context on every sync
 - `docKey = sha1(filePath)`, so renaming or moving an attachment behaves like "old path removed + new path added"
 
 ## Known Behavior
@@ -150,11 +177,7 @@ These issues come from the PDF and extraction chain, not from truncation in `zot
 
 The most common quality issue is usually not document recall. It is that a matched `passage` can be wider than ideal and may include title-page, copyright-page, or "to cite this article" material.
 
-If you want to improve citation-oriented usefulness, prioritize:
-
-- `bestChunkPos -> block range` mapping
-- lower weight for front-matter, copyright, and table-of-contents style blocks
-- extra weight for explicit heading hits when appropriate
+For keyword search, block mapping uses exact phrase matching first, then stemmed term scoring with boilerplate/TOC penalties. For semantic search, block mapping uses `bestChunkPos` from qmd.
 
 ## Search Change Guidance
 

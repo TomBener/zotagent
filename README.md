@@ -24,7 +24,7 @@ It focuses on a small set of tasks:
 - `sync`
   Build or refresh the local index (PDF, EPUB, HTML, TXT).
 - `search`
-  Search indexed documents with default no-rerank hybrid search, optional `--rerank`, or `--exact` lexical search.
+  Search indexed documents with keyword search (default) or `--semantic` for meaning-based vector search.
 - `metadata`
   Search bibliography metadata without running `sync`.
 - `read` / `fulltext` / `expand`
@@ -111,7 +111,7 @@ zotagent status
 zotagent version
 zotagent add [--doi <doi> | --s2-paper-id <id>] [--title <text>] [--author <name>] [--year <text>] [--publication <text>] [--url <url>] [--url-date <date>] [--collection-key <key>] [--item-type <type>]
 zotagent s2 "<text>" [--limit <n>]
-zotagent search "<text>" [--exact] [--limit <n>] [--min-score <n>] [--rerank]
+zotagent search "<text>" [--keyword | --semantic] [--limit <n>] [--min-score <n>]
 zotagent search-in "<text>" (--file <path> | --item-key <key> | --citation-key <key>) [--limit <n>]
 zotagent metadata "<text>" [--limit <n>] [--field <field>] [--has-file]
 zotagent read (--file <path> | --item-key <key> | --citation-key <key>) [--offset-block <n>] [--limit-blocks <n>]
@@ -185,11 +185,13 @@ Search indexed documents:
 
 ```bash
 zotagent search "state-owned enterprise governance"
-zotagent search "dangwei shuji" --exact
-zotagent search "how do party secretaries shape SOE governance" --rerank
+zotagent search '"aging in China" NOT famine'
+zotagent search "govern*"
+zotagent search "hukou NEAR migration"
+zotagent search "how do party secretaries shape SOE governance" --semantic
 ```
 
-Default `search` skips qmd reranking for lower latency. Use `--rerank` only for narrower queries when ranking quality matters more than speed.
+Default `search` uses FTS5 keyword search with porter stemming. It supports AND, OR, NOT, NEAR, `"exact phrase"`, and prefix* syntax. Use `--semantic` for meaning-based vector search (slower, heavier).
 
 Search within one indexed document:
 
@@ -201,7 +203,7 @@ zotagent search-in "firm governance" --file "~/Library/.../paper.pdf" --limit 5
 Follow a search hit with `read`, `fulltext`, or `expand`:
 
 ```bash
-zotagent search "dangwei shuji" --exact
+zotagent search "dangwei shuji"
 zotagent read --item-key KG326EEI
 zotagent read --citation-key lee2024aging
 zotagent fulltext --item-key KG326EEI

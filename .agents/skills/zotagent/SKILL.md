@@ -13,8 +13,8 @@ For most agent tasks, use this path:
 
 1. If the user wants to add a source to Zotero, use `zotagent add`
 2. For literature search, start with `zotagent metadata` to find high-confidence title, abstract, author, journal, publisher, and year matches
-3. Then use `zotagent search --exact` for key phrases in indexed full text
-4. Use default `zotagent search` last for fast semantic full-text recall and missed wording
+3. Then use `zotagent search` for keyword full-text search (supports AND, OR, NOT, NEAR, "phrase", prefix*)
+4. Use `zotagent search --semantic` only when keyword search misses conceptually related documents
 5. Take the returned `file` and `blockStart`, then run `zotagent expand`
 6. Use `zotagent read` when the user wants a larger block slice from one indexed attachment
 
@@ -22,7 +22,7 @@ For most agent tasks, use this path:
 
 Query planning is the agent's job. If the user asks for Chinese and English literature, generate English search terms yourself; zotagent does not translate queries or decide bilingual coverage.
 
-Do not run multiple default qmd `zotagent search` commands in parallel. It is OK to parallelize `metadata`, `search --exact`, and `expand`.
+Do not run multiple `zotagent search --semantic` commands in parallel. It is OK to parallelize `metadata`, keyword `search`, and `expand`.
 
 ## Commands
 
@@ -46,20 +46,23 @@ Rules:
 
 ```bash
 zotagent search "state-owned enterprise governance"
-zotagent search "dangwei shuji" --exact
+zotagent search '"aging in China" NOT famine'
+zotagent search "govern*"
+zotagent search "hukou NEAR migration"
 zotagent search "industrial policy" --limit 5 --min-score 0.4
-zotagent search "how do party secretaries shape SOE governance" --rerank
+zotagent search "how do party secretaries shape SOE governance" --semantic
 ```
 
 Rules:
 
 - search text is positional
 - do not use `--query`
-- `--exact` is for exact phrase search
-- use default `search` after metadata and `--exact`, not as the first pass
-- `--exact` cannot be combined with `--rerank`
-- default `search` skips qmd rerank; add `--rerank` only for a narrower query when ranking quality matters more than latency
-- avoid parallel default qmd searches; run them one at a time
+- default search uses FTS5 keyword search with porter stemming
+- supports AND, OR, NOT, NEAR, NEAR/n, `"exact phrase"`, and prefix* syntax
+- `--semantic` uses vector + LLM query expansion (slower, heavier); use only when keyword search misses conceptually related documents
+- `--keyword` and `--semantic` cannot be combined
+- avoid parallel `--semantic` searches; run them one at a time
+- keyword searches can run in parallel
 
 ### Expand
 
@@ -183,7 +186,7 @@ Check:
 
 1. `zotagent status`
 2. whether attachments are ready
-3. whether the query should use `--exact`
+3. whether the query needs different terms or `--semantic`
 
 ### Passage is wider than expected
 
