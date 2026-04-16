@@ -265,6 +265,222 @@ test("searchLiterature keyword mode uses the keyword index and skips qmd", async
   assert.match(result.results[0]!.passage, /dangwei shuji/i);
 });
 
+test("searchLiterature keyword mode bootstraps a missing keyword index from existing manifests", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-bootstrap-"));
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docKey = "b".repeat(40);
+  const manifestPath = join(manifestsDir, docKey + MANIFEST_EXT);
+
+  writeManifest(manifestPath, {
+    docKey,
+    itemKey: "ITEMB",
+    title: "Ageing in China",
+    authors: ["A"],
+    filePath: "/tmp/bootstrap.pdf",
+    normalizedPath: join(dataDir, "normalized", docKey + ".md"),
+    blocks: [
+      {
+        blockIndex: 0,
+        blockType: "paragraph",
+        sectionPath: ["Body"],
+        text: "Population ageing in China is reshaping care arrangements.",
+        charStart: 0,
+        charEnd: 58,
+        lineStart: 1,
+        lineEnd: 1,
+        isReferenceLike: false,
+      },
+    ],
+  });
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [
+      {
+        docKey,
+        itemKey: "ITEMB",
+        title: "Ageing in China",
+        authors: ["A"],
+        filePath: "/tmp/bootstrap.pdf",
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: 1,
+        mtimeMs: 1,
+        sourceHash: "hash-bootstrap",
+        lastIndexedAt: new Date().toISOString(),
+        normalizedPath: join(dataDir, "normalized", docKey + ".md"),
+        manifestPath,
+      },
+    ],
+  });
+
+  const result = await searchLiterature(
+    "ageing",
+    10,
+    { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir },
+  );
+
+  assert.equal(result.results.length, 1);
+  assert.equal(result.results[0]!.itemKey, "ITEMB");
+  assert.match(result.results[0]!.passage, /ageing in china/i);
+});
+
+test("searchLiterature keyword mode maps stemmed hits to the matching block", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-stemmed-"));
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docKey = "c".repeat(40);
+  const manifestPath = join(manifestsDir, docKey + MANIFEST_EXT);
+
+  writeManifest(manifestPath, {
+    docKey,
+    itemKey: "ITEMC",
+    title: "Governance Study",
+    authors: ["A"],
+    filePath: "/tmp/stemmed.pdf",
+    normalizedPath: join(dataDir, "normalized", docKey + ".md"),
+    blocks: [
+      {
+        blockIndex: 0,
+        blockType: "paragraph",
+        sectionPath: ["Intro"],
+        text: "Nothing useful here.",
+        charStart: 0,
+        charEnd: 20,
+        lineStart: 1,
+        lineEnd: 1,
+        isReferenceLike: false,
+      },
+      {
+        blockIndex: 1,
+        blockType: "paragraph",
+        sectionPath: ["Body"],
+        text: "The party secretary governs recruitment.",
+        charStart: 21,
+        charEnd: 62,
+        lineStart: 3,
+        lineEnd: 3,
+        isReferenceLike: false,
+      },
+    ],
+  });
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [
+      {
+        docKey,
+        itemKey: "ITEMC",
+        title: "Governance Study",
+        authors: ["A"],
+        filePath: "/tmp/stemmed.pdf",
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: 1,
+        mtimeMs: 1,
+        sourceHash: "hash-stemmed",
+        lastIndexedAt: new Date().toISOString(),
+        normalizedPath: join(dataDir, "normalized", docKey + ".md"),
+        manifestPath,
+      },
+    ],
+  });
+
+  const result = await searchLiterature(
+    "governing",
+    10,
+    { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir },
+  );
+
+  assert.equal(result.results.length, 1);
+  assert.equal(result.results[0]!.itemKey, "ITEMC");
+  assert.equal(result.results[0]!.blockStart, 1);
+  assert.match(result.results[0]!.passage, /governs recruitment/i);
+});
+
+test("searchLiterature keyword mode uses the title when the title is the only match", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-title-"));
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docKey = "d".repeat(40);
+  const manifestPath = join(manifestsDir, docKey + MANIFEST_EXT);
+
+  writeManifest(manifestPath, {
+    docKey,
+    itemKey: "ITEMD",
+    title: "Party Secretary Governance",
+    authors: ["A"],
+    filePath: "/tmp/title-only.pdf",
+    normalizedPath: join(dataDir, "normalized", docKey + ".md"),
+    blocks: [
+      {
+        blockIndex: 0,
+        blockType: "paragraph",
+        sectionPath: ["Body"],
+        text: "This study examines enterprise governance.",
+        charStart: 0,
+        charEnd: 42,
+        lineStart: 1,
+        lineEnd: 1,
+        isReferenceLike: false,
+      },
+    ],
+  });
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [
+      {
+        docKey,
+        itemKey: "ITEMD",
+        title: "Party Secretary Governance",
+        authors: ["A"],
+        filePath: "/tmp/title-only.pdf",
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: 1,
+        mtimeMs: 1,
+        sourceHash: "hash-title",
+        lastIndexedAt: new Date().toISOString(),
+        normalizedPath: join(dataDir, "normalized", docKey + ".md"),
+        manifestPath,
+      },
+    ],
+  });
+
+  const result = await searchLiterature(
+    "secretary",
+    10,
+    { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir },
+  );
+
+  assert.equal(result.results.length, 1);
+  assert.equal(result.results[0]!.itemKey, "ITEMD");
+  assert.equal(result.results[0]!.passage, "Party Secretary Governance");
+});
+
 test("searchWithinDocuments returns passages from the selected attachment", () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-search-in-"));
   const dataDir = join(root, "data");

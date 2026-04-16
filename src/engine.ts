@@ -15,6 +15,11 @@ interface SearchBehaviorOptions {
   progress?: (message: string) => void;
 }
 
+interface KeywordQueryProfile {
+  normalizedQuery: string;
+  terms: string[];
+}
+
 function resolveReadyEntries(
   fileOrItem: { file?: string; itemKey?: string; citationKey?: string },
   entries: CatalogEntry[],
@@ -149,6 +154,25 @@ function buildSearchRow(
   };
 }
 
+function buildTitleSearchRow(
+  entry: CatalogEntry,
+  score: number,
+): SearchResultRow & { referenceOnly: boolean } {
+  return {
+    itemKey: entry.itemKey,
+    ...(entry.citationKey ? { citationKey: entry.citationKey } : {}),
+    title: entry.title,
+    authors: entry.authors,
+    ...(entry.year ? { year: entry.year } : {}),
+    file: compactHomePath(entry.filePath),
+    passage: entry.title,
+    blockStart: 0,
+    blockEnd: 0,
+    score: Math.round(score * 10000) / 10000,
+    referenceOnly: false,
+  };
+}
+
 /** Extract content words from an FTS5 query, stripping operators. */
 function extractQueryTerms(query: string): string[] {
   return query
@@ -157,42 +181,286 @@ function extractQueryTerms(query: string): string[] {
     .match(/[\p{L}\p{N}]+/gu) ?? [];
 }
 
+function tokenizeKeywordText(text: string): string[] {
+  return text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
+}
+
+function isKeywordConsonant(word: string, index: number): boolean {
+  const char = word[index];
+  if (char === undefined) return false;
+  if ("aeiou".includes(char)) return false;
+  if (char === "y") {
+    return index === 0 ? true : !isKeywordConsonant(word, index - 1);
+  }
+  return true;
+}
+
+function keywordMeasure(word: string): number {
+  let count = 0;
+  let index = 0;
+  while (index < word.length) {
+    while (index < word.length && isKeywordConsonant(word, index)) index += 1;
+    if (index >= word.length) break;
+    while (index < word.length && !isKeywordConsonant(word, index)) index += 1;
+    count += 1;
+  }
+  return count;
+}
+
+function keywordContainsVowel(word: string): boolean {
+  for (let index = 0; index < word.length; index += 1) {
+    if (!isKeywordConsonant(word, index)) return true;
+  }
+  return false;
+}
+
+function keywordEndsWithDoubleConsonant(word: string): boolean {
+  return (
+    word.length >= 2
+    && word[word.length - 1] === word[word.length - 2]
+    && isKeywordConsonant(word, word.length - 1)
+  );
+}
+
+function keywordEndsWithCvc(word: string): boolean {
+  if (word.length < 3) return false;
+  const a = word.length - 3;
+  const b = word.length - 2;
+  const c = word.length - 1;
+  if (!isKeywordConsonant(word, a) || isKeywordConsonant(word, b) || !isKeywordConsonant(word, c)) {
+    return false;
+  }
+  const last = word[c];
+  return last !== "w" && last !== "x" && last !== "y";
+}
+
+function stemKeywordToken(token: string): string {
+  if (!/^[a-z]+$/u.test(token) || token.length < 3) return token;
+
+  let word = token;
+  const replaceSuffix = (suffix: string, replacement: string, minimumMeasure: number): boolean => {
+    if (!word.endsWith(suffix)) return false;
+    const stem = word.slice(0, -suffix.length);
+    if (keywordMeasure(stem) <= minimumMeasure) return false;
+    word = stem + replacement;
+    return true;
+  };
+
+  if (word.endsWith("sses")) {
+    word = word.slice(0, -2);
+  } else if (word.endsWith("ies")) {
+    word = word.slice(0, -2);
+  } else if (word.endsWith("ss")) {
+    // Keep "ss" intact.
+  } else if (word.endsWith("s")) {
+    word = word.slice(0, -1);
+  }
+
+  let strippedEdOrIng = false;
+  if (word.endsWith("eed")) {
+    const stem = word.slice(0, -3);
+    if (keywordMeasure(stem) > 0) word = stem + "ee";
+  } else if (word.endsWith("ed")) {
+    const stem = word.slice(0, -2);
+    if (keywordContainsVowel(stem)) {
+      word = stem;
+      strippedEdOrIng = true;
+    }
+  } else if (word.endsWith("ing")) {
+    const stem = word.slice(0, -3);
+    if (keywordContainsVowel(stem)) {
+      word = stem;
+      strippedEdOrIng = true;
+    }
+  }
+
+  if (strippedEdOrIng) {
+    if (word.endsWith("at") || word.endsWith("bl") || word.endsWith("iz")) {
+      word += "e";
+    } else if (keywordEndsWithDoubleConsonant(word) && !/[lsz]$/u.test(word)) {
+      word = word.slice(0, -1);
+    } else if (keywordMeasure(word) === 1 && keywordEndsWithCvc(word)) {
+      word += "e";
+    }
+  }
+
+  if (word.endsWith("y")) {
+    const stem = word.slice(0, -1);
+    if (keywordContainsVowel(stem)) word = stem + "i";
+  }
+
+  const step2: Array<[string, string]> = [
+    ["ational", "ate"],
+    ["tional", "tion"],
+    ["enci", "ence"],
+    ["anci", "ance"],
+    ["izer", "ize"],
+    ["abli", "able"],
+    ["alli", "al"],
+    ["entli", "ent"],
+    ["eli", "e"],
+    ["ousli", "ous"],
+    ["ization", "ize"],
+    ["ation", "ate"],
+    ["ator", "ate"],
+    ["alism", "al"],
+    ["iveness", "ive"],
+    ["fulness", "ful"],
+    ["ousness", "ous"],
+    ["aliti", "al"],
+    ["iviti", "ive"],
+    ["biliti", "ble"],
+    ["logi", "log"],
+  ];
+  for (const [suffix, replacement] of step2) {
+    if (replaceSuffix(suffix, replacement, 0)) break;
+  }
+
+  const step3: Array<[string, string]> = [
+    ["icate", "ic"],
+    ["ative", ""],
+    ["alize", "al"],
+    ["iciti", "ic"],
+    ["ical", "ic"],
+    ["ful", ""],
+    ["ness", ""],
+  ];
+  for (const [suffix, replacement] of step3) {
+    if (replaceSuffix(suffix, replacement, 0)) break;
+  }
+
+  const step4 = [
+    "ement",
+    "ance",
+    "ence",
+    "able",
+    "ible",
+    "ment",
+    "ant",
+    "ent",
+    "ism",
+    "ate",
+    "iti",
+    "ous",
+    "ive",
+    "ize",
+    "al",
+    "er",
+    "ic",
+    "ou",
+  ];
+  for (const suffix of step4) {
+    if (replaceSuffix(suffix, "", 1)) break;
+  }
+  if (word.endsWith("ion")) {
+    const stem = word.slice(0, -3);
+    if (keywordMeasure(stem) > 1 && /[st]$/u.test(stem)) {
+      word = stem;
+    }
+  }
+
+  if (word.endsWith("e")) {
+    const stem = word.slice(0, -1);
+    const measure = keywordMeasure(stem);
+    if (measure > 1 || (measure === 1 && !keywordEndsWithCvc(stem))) {
+      word = stem;
+    }
+  }
+
+  if (keywordMeasure(word) > 1 && keywordEndsWithDoubleConsonant(word) && word.endsWith("l")) {
+    word = word.slice(0, -1);
+  }
+
+  return word;
+}
+
+function buildKeywordQueryProfile(query: string): KeywordQueryProfile {
+  return {
+    normalizedQuery: normalizeExactText(query),
+    terms: [...new Set(extractQueryTerms(query).map((term) => stemKeywordToken(term)).filter((term) => term.length > 0))],
+  };
+}
+
+function scoreKeywordText(text: string, query: KeywordQueryProfile): number {
+  const normalized = normalizeExactText(text);
+  const phraseHits = query.normalizedQuery ? countOccurrences(normalized, query.normalizedQuery) : 0;
+  const tokenCounts = new Map<string, number>();
+  for (const token of tokenizeKeywordText(text)) {
+    const stem = stemKeywordToken(token);
+    tokenCounts.set(stem, (tokenCounts.get(stem) ?? 0) + 1);
+  }
+
+  let matchedTerms = 0;
+  let totalTermHits = 0;
+  for (const term of query.terms) {
+    const hits = tokenCounts.get(term) ?? 0;
+    if (hits > 0) {
+      matchedTerms += 1;
+      totalTermHits += hits;
+    }
+  }
+
+  if (phraseHits === 0 && matchedTerms === 0) return 0;
+  return (
+    phraseHits * 10
+    + (query.terms.length > 0 ? (matchedTerms / query.terms.length) * 4 : 0)
+    + Math.min(totalTermHits, 5)
+  );
+}
+
 function findBestBlockByTerms(
   manifest: AttachmentManifest,
-  terms: string[],
-): { blockStart: number; blockEnd: number } | null {
-  if (manifest.blocks.length === 0 || terms.length === 0) return null;
+  query: KeywordQueryProfile,
+): { blockStart: number; blockEnd: number; score: number } | null {
+  if (manifest.blocks.length === 0 || query.terms.length === 0) return null;
 
-  let bestIndex = -1;
+  let bestBlock: ManifestBlock | null = null;
   let bestScore = 0;
 
   for (const block of manifest.blocks) {
     if (block.isReferenceLike) continue;
-    const lower = block.text.toLowerCase();
-    let score = 0;
-    for (const term of terms) {
-      if (lower.includes(term)) score += 1;
-    }
-    if (score > bestScore) {
-      bestScore = score;
-      bestIndex = block.blockIndex;
+    const baseScore = scoreKeywordText(`${block.sectionPath.join(" ")} ${block.text}`,
+      query,
+    );
+    if (baseScore === 0) continue;
+
+    const adjustedScore =
+      baseScore
+      + (block.blockType === "heading" ? 0.5 : 0)
+      - (isBoilerplateLikeText(block.text) ? 1 : 0)
+      - (isTableOfContentsLikeText(block.text) ? 1 : 0);
+    if (adjustedScore <= 0) continue;
+    if (!bestBlock || adjustedScore > bestScore) {
+      bestBlock = block;
+      bestScore = adjustedScore;
     }
   }
 
-  return bestIndex >= 0 ? { blockStart: bestIndex, blockEnd: bestIndex } : null;
+  return bestBlock
+    ? { blockStart: bestBlock.blockIndex, blockEnd: bestBlock.blockIndex, score: bestScore }
+    : null;
 }
 
 function buildKeywordSearchRow(
   entry: CatalogEntry,
   manifest: AttachmentManifest,
-  query: string,
+  query: KeywordQueryProfile,
   score: number,
 ): SearchResultRow & { referenceOnly: boolean } {
-  const range =
-    findExactPhraseBlockRange(manifest, query) ??
-    findBestBlockByTerms(manifest, extractQueryTerms(query)) ??
-    { blockStart: 0, blockEnd: 0 };
-  return buildSearchRow(entry, manifest, range, score);
+  const exactRange = query.normalizedQuery ? findExactPhraseBlockRange(manifest, query.normalizedQuery) : null;
+  if (exactRange) {
+    return buildSearchRow(entry, manifest, exactRange, score);
+  }
+
+  const bestBlock = findBestBlockByTerms(manifest, query);
+  const titleScore = scoreKeywordText(entry.title, query);
+  if (titleScore > (bestBlock?.score ?? 0)) {
+    return buildTitleSearchRow(entry, score);
+  }
+  if (bestBlock) {
+    return buildSearchRow(entry, manifest, { blockStart: bestBlock.blockStart, blockEnd: bestBlock.blockEnd }, score);
+  }
+  return buildSearchRow(entry, manifest, { blockStart: 0, blockEnd: 0 }, score);
 }
 
 function buildHybridSearchRow(
@@ -316,14 +584,17 @@ export async function searchLiterature(
     // Keyword search (default): FTS5 with porter stemmer.
     const keywordIndex = await keywordFactory(config);
     try {
+      // Bootstrap the SQLite keyword index lazily so upgraded installs work before the next sync.
+      await keywordIndex.syncIndex?.(readyEntries, { upserts: [], deleteDocKeys: [] });
       const results = await keywordIndex.search(query, limit);
+      const keywordQuery = buildKeywordQueryProfile(query);
       mapped = results
         .filter((result) => behavior.minScore === undefined || result.score >= behavior.minScore)
         .map((result) => {
           const entry = entryByDocKey.get(result.docKey);
           if (!entry || !entry.manifestPath || !exists(entry.manifestPath)) return null;
           const manifest = readManifestFile(entry.manifestPath);
-          return buildKeywordSearchRow(entry, manifest, query, result.score);
+          return buildKeywordSearchRow(entry, manifest, keywordQuery, result.score);
         })
         .filter((value): value is ReturnType<typeof buildKeywordSearchRow> => value !== null)
         .sort((a, b) => b.score - a.score);
