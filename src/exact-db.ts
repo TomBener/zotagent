@@ -87,23 +87,54 @@ function intersectDocKeys(left: Set<string>, right: Set<string>): Set<string> {
   return intersection;
 }
 
-/** Use ripgrep token filtering to narrow candidate files, then do precise matching on those hits. */
-function rgCandidates(normalizedQuery: string, dir: string): Set<string> | null {
-  let candidates: Set<string> | null = null;
+const MAX_CANDIDATES = 100;
 
-  for (const token of normalizedQuery.split(" ")) {
-    if (!token) continue;
+/** Try full phrase first (fast, narrow), then merge with per-token intersection for normalization mismatches. */
+function rgCandidates(normalizedQuery: string, dir: string): Set<string> | null {
+  // 1. Try the full phrase — this is the fast path for most queries.
+  const phraseHits = rgTokenCandidates(normalizedQuery, dir);
+  if (phraseHits === null) return null; // rg not available
+
+  // 2. When the phrase matched, return immediately — this keeps search fast.
+  //    The token fallback only runs when the exact phrase is absent from all files,
+  //    catching cases like line breaks inside the phrase.
+  if (phraseHits.size > 0) return phraseHits;
+
+  const tokens = normalizedQuery.split(" ").filter((t) => t.length > 0);
+  if (tokens.length <= 1) return phraseHits;
+
+  // Sort tokens by descending length so the rarest (longest) token runs first,
+  // producing the smallest initial candidate set.
+  const sorted = [...tokens].sort((a, b) => b.length - a.length);
+
+  let candidates: Set<string> | null = null;
+  for (const token of sorted) {
     const tokenCandidates = rgTokenCandidates(token, dir);
-    if (tokenCandidates === null) {
-      return null;
-    }
+    if (tokenCandidates === null) return null;
     candidates = candidates === null ? tokenCandidates : intersectDocKeys(candidates, tokenCandidates);
-    if (candidates.size === 0) {
-      return candidates;
-    }
+    if (candidates.size === 0) return candidates;
   }
 
-  return candidates ?? new Set<string>();
+  // Merge phrase hits (always included) with token-intersection candidates.
+  const merged = new Set(phraseHits);
+  if (candidates) {
+    for (const docKey of candidates) merged.add(docKey);
+  }
+
+  // Cap to avoid slow normalizeExactText on too many files.
+  // Phrase hits are already in the set so they're always retained.
+  if (merged.size > MAX_CANDIDATES) {
+    const capped = new Set<string>();
+    // Ensure phrase hits are always included.
+    for (const docKey of phraseHits) capped.add(docKey);
+    for (const docKey of merged) {
+      if (capped.size >= MAX_CANDIDATES) break;
+      capped.add(docKey);
+    }
+    return capped;
+  }
+
+  return merged;
 }
 
 function scanAllFiles(dir: string): string[] {
