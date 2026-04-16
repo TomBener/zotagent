@@ -25,6 +25,7 @@ const BOOLEAN_FLAGS = new Set([
   "exact",
   "has-file",
   "help",
+  "lex",
   "rerank",
   "retry-errors",
   "version",
@@ -183,7 +184,7 @@ Usage:
   zotagent version
   zotagent add [--doi <doi> | --s2-paper-id <id>] [--title <text>] [--author <name>] [--year <text>] [--publication <text>] [--url <url>] [--url-date <date>] [--collection-key <key>] [--item-type <type>]
   zotagent s2 "<text>" [--limit <n>]
-  zotagent search "<text>" [--exact] [--limit <n>] [--min-score <n>] [--rerank]
+  zotagent search "<text>" [--exact] [--lex] [--limit <n>] [--min-score <n>] [--rerank]
   zotagent search-in "<text>" (--file <path> | --item-key <key> | --citation-key <key>) [--limit <n>]
   zotagent metadata "<text>" [--limit <n>] [--field <field>] [--has-file]
   zotagent read (--file <path> | --item-key <key> | --citation-key <key>) [--offset-block <n>] [--limit-blocks <n>]
@@ -212,9 +213,11 @@ Commands:
 
   search
     Search indexed Zotero documents.
+    Default mode uses hybrid search (BM25 + vector + LLM query expansion).
+    --lex uses BM25 keyword search only. Faster and lighter than hybrid, no LLM models loaded.
     --exact uses exact substring search.
     qmd reranking is skipped by default; --rerank enables it for narrower queries.
-    --exact cannot be combined with --rerank.
+    --exact, --lex, and --rerank cannot be combined with each other.
 
   search-in
     Search within one indexed document or a selected set of matching attachments.
@@ -259,6 +262,7 @@ Options:
   --citation-key <key>        Resolve an indexed attachment by citation key for search-in, read, fulltext, or expand.
   --clean                     For fulltext, apply heuristic cleanup instead of returning the original normalized markdown.
   --exact                     Use exact substring search.
+  --lex                       Use BM25 keyword search only (no LLM, fast, low memory).
   --limit <n>                 Return up to n search results. Default: 10 for search, 20 for metadata.
   --min-score <n>             Drop lower-scoring search hits before mapping.
   --rerank                    Enable qmd reranking for search. Slower, useful for narrower queries.
@@ -479,7 +483,7 @@ async function main(): Promise<void> {
           emitError("UNEXPECTED_ARGUMENT", '`--query` is not supported. Use: zotagent s2 "<text>"');
           return;
         }
-        const invalidFlags = ["exact", "rerank", "min-score", "field", "has-file", "has-pdf"].filter(
+        const invalidFlags = ["exact", "lex", "rerank", "min-score", "field", "has-file", "has-pdf"].filter(
           (flag) => flag in parsed.flags,
         );
         if (invalidFlags.length > 0) {
@@ -521,9 +525,18 @@ async function main(): Promise<void> {
           return;
         }
         const exact = getBooleanFlag(parsed.flags, "exact");
+        const lex = getBooleanFlag(parsed.flags, "lex");
         const explicitRerank = getBooleanFlag(parsed.flags, "rerank") ? true : undefined;
+        if (exact && lex) {
+          emitError("UNEXPECTED_ARGUMENT", '`--exact` cannot be combined with `--lex`.');
+          return;
+        }
         if (exact && explicitRerank === true) {
           emitError("UNEXPECTED_ARGUMENT", '`--exact` cannot be combined with `--rerank`.');
+          return;
+        }
+        if (lex && explicitRerank === true) {
+          emitError("UNEXPECTED_ARGUMENT", '`--lex` cannot be combined with `--rerank`.');
           return;
         }
         const limitInput = parseNumericFlag(parsed.flags, "limit", {
@@ -548,6 +561,7 @@ async function main(): Promise<void> {
         const minScore = minScoreInput.value;
         const data = await searchLiterature(query, limit, overrides, openQmdClient, {
           ...(exact ? { exact: true } : {}),
+          ...(lex ? { lex: true } : {}),
           ...(explicitRerank !== undefined ? { rerank: explicitRerank } : {}),
           ...(minScore !== undefined ? { minScore } : {}),
           ...(!exact ? { progress: (message: string) => process.stderr.write(`${message}\n`) } : {}),
@@ -615,7 +629,7 @@ async function main(): Promise<void> {
           emitError("UNEXPECTED_ARGUMENT", '`--query` is not supported. Use: zotagent metadata "<text>"');
           return;
         }
-        const invalidFlags = ["exact", "rerank", "min-score"].filter(
+        const invalidFlags = ["exact", "lex", "rerank", "min-score"].filter(
           (flag) => flag in parsed.flags,
         );
         if (invalidFlags.length > 0) {

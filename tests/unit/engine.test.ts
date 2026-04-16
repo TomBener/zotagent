@@ -537,6 +537,331 @@ test("searchLiterature exact mode returns title-only matches when the body does 
   assert.equal(result.results[0]!.blockEnd, 0);
 });
 
+test("searchLiterature lex mode uses searchLex and skips hybrid search", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-lex-"));
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const lexDocKey = "9".repeat(40);
+  const lexManifestPath = join(manifestsDir, `${lexDocKey}${MANIFEST_EXT}`);
+
+  writeManifest(lexManifestPath, {
+    docKey: lexDocKey,
+    itemKey: "ITEM9",
+    title: "Dangwei Shuji and Governance",
+    authors: ["A"],
+    filePath: "/tmp/lex.pdf",
+    normalizedPath: join(dataDir, "normalized", `${lexDocKey}.md`),
+    blocks: [
+      {
+        blockIndex: 0,
+        blockType: "paragraph",
+        sectionPath: ["Intro"],
+        text: "Introduction to party governance.",
+        charStart: 0,
+        charEnd: 32,
+        lineStart: 1,
+        lineEnd: 1,
+        isReferenceLike: false,
+      },
+      {
+        blockIndex: 1,
+        blockType: "paragraph",
+        sectionPath: ["Body"],
+        text: "The top leader is the company party secretary, dangwei shuji.",
+        charStart: 34,
+        charEnd: 94,
+        lineStart: 3,
+        lineEnd: 3,
+        isReferenceLike: false,
+      },
+    ],
+  });
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [
+      {
+        docKey: lexDocKey,
+        itemKey: "ITEM9",
+        title: "Dangwei Shuji and Governance",
+        authors: ["A"],
+        filePath: "/tmp/lex.pdf",
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: 1,
+        mtimeMs: 1,
+        sourceHash: "hash9",
+        lastIndexedAt: new Date().toISOString(),
+        normalizedPath: join(dataDir, "normalized", `${lexDocKey}.md`),
+        manifestPath: lexManifestPath,
+      },
+    ],
+  });
+
+  let hybridSearchCalled = false;
+  let lexSearchCalled = false;
+
+  const fakeFactory = async () => ({
+    search: async () => {
+      hybridSearchCalled = true;
+      return [];
+    },
+    searchLex: async (query: string, options?: { limit?: number }) => {
+      lexSearchCalled = true;
+      return [
+        {
+          filepath: `qmd://library/${lexDocKey}.md`,
+          displayPath: `library/${lexDocKey}.md`,
+          title: "Dangwei Shuji and Governance",
+          body: "Introduction to party governance.\n\nThe top leader is the company party secretary, dangwei shuji.",
+          score: 0.85,
+          docid: "999999",
+          context: null,
+        },
+      ];
+    },
+    update: async () => ({}),
+    embed: async () => ({}),
+    getStatus: async () => ({ documents: 1, collections: [], embeddings: { total: 1, stale: 0 } }),
+    listContexts: async () => [],
+    addContext: async () => true,
+    removeContext: async () => true,
+    close: async () => {},
+  });
+
+  const result = await searchLiterature(
+    "dangwei shuji",
+    10,
+    {
+      bibliographyJsonPath: join(root, "bibliography.json"),
+      attachmentsRoot: root,
+      dataDir,
+    },
+    fakeFactory,
+    { lex: true },
+  );
+
+  assert.equal(hybridSearchCalled, false);
+  assert.equal(lexSearchCalled, true);
+  assert.equal(result.results.length, 1);
+  assert.equal(result.results[0]!.itemKey, "ITEM9");
+  assert.match(result.results[0]!.passage, /dangwei shuji/i);
+});
+
+test("searchLiterature lex mode returns title-only matches when the body does not contain the phrase", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-lex-title-"));
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docKey = "a".repeat(40);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
+
+  writeManifest(manifestPath, {
+    docKey,
+    itemKey: "ITEMA",
+    title: "Dangwei Shuji in Chinese Firms",
+    authors: ["A"],
+    filePath: "/tmp/lex-title.pdf",
+    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+    blocks: [
+      {
+        blockIndex: 0,
+        blockType: "paragraph",
+        sectionPath: ["Body"],
+        text: "The article body uses only a translated description.",
+        charStart: 0,
+        charEnd: 51,
+        lineStart: 1,
+        lineEnd: 1,
+        isReferenceLike: false,
+      },
+    ],
+  });
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [
+      {
+        docKey,
+        itemKey: "ITEMA",
+        title: "Dangwei Shuji in Chinese Firms",
+        authors: ["A"],
+        filePath: "/tmp/lex-title.pdf",
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: 1,
+        mtimeMs: 1,
+        sourceHash: "hasha",
+        lastIndexedAt: new Date().toISOString(),
+        normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+        manifestPath,
+      },
+    ],
+  });
+
+  const fakeFactory = async () => ({
+    search: async () => [],
+    searchLex: async () => [
+      {
+        filepath: `qmd://library/${docKey}.md`,
+        displayPath: `library/${docKey}.md`,
+        title: "Dangwei Shuji in Chinese Firms",
+        body: "The article body uses only a translated description.",
+        score: 0.85,
+        docid: "aaaaaa",
+        context: null,
+      },
+    ],
+    update: async () => ({}),
+    embed: async () => ({}),
+    getStatus: async () => ({ documents: 1, collections: [], embeddings: { total: 1, stale: 0 } }),
+    listContexts: async () => [],
+    addContext: async () => true,
+    removeContext: async () => true,
+    close: async () => {},
+  });
+
+  const result = await searchLiterature(
+    "dangwei shuji",
+    10,
+    {
+      bibliographyJsonPath: join(root, "bibliography.json"),
+      attachmentsRoot: root,
+      dataDir,
+    },
+    fakeFactory,
+    { lex: true },
+  );
+
+  assert.equal(result.results.length, 1);
+  assert.equal(result.results[0]!.itemKey, "ITEMA");
+  assert.equal(result.results[0]!.passage, "Dangwei Shuji in Chinese Firms");
+  assert.equal(result.results[0]!.blockStart, 0);
+  assert.equal(result.results[0]!.blockEnd, 0);
+});
+
+test("searchLiterature lex mode maps stemmed BM25 hits to the matching block", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-lex-stem-"));
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docKey = "b".repeat(40);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
+
+  writeManifest(manifestPath, {
+    docKey,
+    itemKey: "ITEMB",
+    title: "Chinese Firm Governance",
+    authors: ["A"],
+    filePath: "/tmp/lex-stem.pdf",
+    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+    blocks: [
+      {
+        blockIndex: 0,
+        blockType: "paragraph",
+        sectionPath: ["Intro"],
+        text: "Introduction and acknowledgements.",
+        charStart: 0,
+        charEnd: 34,
+        lineStart: 1,
+        lineEnd: 1,
+        isReferenceLike: false,
+      },
+      {
+        blockIndex: 1,
+        blockType: "paragraph",
+        sectionPath: ["Body"],
+        text: "The firm appoints a party secretary.",
+        charStart: 36,
+        charEnd: 73,
+        lineStart: 3,
+        lineEnd: 3,
+        isReferenceLike: false,
+      },
+    ],
+  });
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [
+      {
+        docKey,
+        itemKey: "ITEMB",
+        title: "Chinese Firm Governance",
+        authors: ["A"],
+        filePath: "/tmp/lex-stem.pdf",
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: 1,
+        mtimeMs: 1,
+        sourceHash: "hashb",
+        lastIndexedAt: new Date().toISOString(),
+        normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+        manifestPath,
+      },
+    ],
+  });
+
+  const fakeFactory = async () => ({
+    search: async () => [],
+    searchLex: async () => [
+      {
+        filepath: `qmd://library/${docKey}.md`,
+        displayPath: `library/${docKey}.md`,
+        title: "Chinese Firm Governance",
+        body: "Introduction and acknowledgements.\n\nThe firm appoints a party secretary.",
+        score: 0.8,
+        docid: "bbbbbb",
+        context: null,
+      },
+    ],
+    update: async () => ({}),
+    embed: async () => ({}),
+    getStatus: async () => ({ documents: 1, collections: [], embeddings: { total: 1, stale: 0 } }),
+    listContexts: async () => [],
+    addContext: async () => true,
+    removeContext: async () => true,
+    close: async () => {},
+  });
+
+  const result = await searchLiterature(
+    "firms",
+    10,
+    {
+      bibliographyJsonPath: join(root, "bibliography.json"),
+      attachmentsRoot: root,
+      dataDir,
+    },
+    fakeFactory,
+    { lex: true },
+  );
+
+  assert.equal(result.results.length, 1);
+  assert.equal(result.results[0]!.itemKey, "ITEMB");
+  assert.equal(result.results[0]!.passage, "The firm appoints a party secretary.");
+  assert.equal(result.results[0]!.blockStart, 1);
+  assert.equal(result.results[0]!.blockEnd, 1);
+});
+
 test("searchWithinDocuments returns passages from the selected attachment", () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-search-in-"));
   const dataDir = join(root, "data");

@@ -272,7 +272,7 @@ test("help summarizes current commands and keeps config-only overrides out of th
   assert.match(result.stdout, /zotagent version/);
   assert.match(result.stdout, /zotagent add \[--doi <doi> \| --s2-paper-id <id>\] \[--title <text>\]/);
   assert.match(result.stdout, /zotagent s2 "<text>" \[--limit <n>\]/);
-  assert.match(result.stdout, /zotagent search "<text>" \[--exact\] \[--limit <n>\]/);
+  assert.match(result.stdout, /zotagent search "<text>" \[--exact\] \[--lex\] \[--limit <n>\]/);
   assert.match(result.stdout, /zotagent search-in "<text>" \(\[?--file <path> \| --item-key <key> \| --citation-key <key>\)? \[--limit <n>\]/);
   assert.match(result.stdout, /zotagent metadata "<text>" \[--limit <n>\] \[--field <field>\] \[--has-file\]/);
   assert.match(result.stdout, /zotagent fulltext \(\[?--file <path> \| --item-key <key> \| --citation-key <key>\)? \[--clean\]/);
@@ -385,6 +385,22 @@ test("search rejects combining exact mode with rerank", () => {
   assert.equal(result.status, 1);
   assert.match(result.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
   assert.match(result.stdout, /`--exact` cannot be combined with `--rerank`/);
+});
+
+test("search rejects combining lex mode with exact", () => {
+  const result = runCli(["search", "--lex", "--exact", "dangwei shuji"]);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
+  assert.match(result.stdout, /`--exact` cannot be combined with `--lex`/);
+});
+
+test("search rejects combining lex mode with rerank", () => {
+  const result = runCli(["search", "--lex", "--rerank", "dangwei shuji"]);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
+  assert.match(result.stdout, /`--lex` cannot be combined with `--rerank`/);
 });
 
 test("metadata rejects removed query flag and points to positional usage", () => {

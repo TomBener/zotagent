@@ -13,7 +13,13 @@ interface SearchBehaviorOptions {
   rerank?: boolean;
   minScore?: number;
   exact?: boolean;
+  lex?: boolean;
   progress?: (message: string) => void;
+}
+
+interface LexQueryProfile {
+  normalizedQuery: string;
+  terms: string[];
 }
 
 function resolveReadyEntries(
@@ -169,6 +175,278 @@ function buildTitleSearchRow(
   };
 }
 
+function tokenizeLexText(text: string): string[] {
+  return text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
+}
+
+function isLexConsonant(word: string, index: number): boolean {
+  const char = word[index];
+  if (char === undefined) return false;
+  if ("aeiou".includes(char)) return false;
+  if (char === "y") {
+    return index === 0 ? true : !isLexConsonant(word, index - 1);
+  }
+  return true;
+}
+
+function lexMeasure(word: string): number {
+  let count = 0;
+  let index = 0;
+  while (index < word.length) {
+    while (index < word.length && isLexConsonant(word, index)) index += 1;
+    if (index >= word.length) break;
+    while (index < word.length && !isLexConsonant(word, index)) index += 1;
+    count += 1;
+  }
+  return count;
+}
+
+function lexContainsVowel(word: string): boolean {
+  for (let index = 0; index < word.length; index += 1) {
+    if (!isLexConsonant(word, index)) return true;
+  }
+  return false;
+}
+
+function lexEndsWithDoubleConsonant(word: string): boolean {
+  return (
+    word.length >= 2
+    && word[word.length - 1] === word[word.length - 2]
+    && isLexConsonant(word, word.length - 1)
+  );
+}
+
+function lexEndsWithCvc(word: string): boolean {
+  if (word.length < 3) return false;
+  const a = word.length - 3;
+  const b = word.length - 2;
+  const c = word.length - 1;
+  if (!isLexConsonant(word, a) || isLexConsonant(word, b) || !isLexConsonant(word, c)) return false;
+  const last = word[c];
+  return last !== "w" && last !== "x" && last !== "y";
+}
+
+function stemLexToken(token: string): string {
+  if (!/^[a-z]+$/u.test(token) || token.length < 3) return token;
+
+  let word = token;
+  const replaceSuffix = (suffix: string, replacement: string, minimumMeasure: number): boolean => {
+    if (!word.endsWith(suffix)) return false;
+    const stem = word.slice(0, -suffix.length);
+    if (lexMeasure(stem) <= minimumMeasure) return false;
+    word = stem + replacement;
+    return true;
+  };
+
+  if (word.endsWith("sses")) {
+    word = word.slice(0, -2);
+  } else if (word.endsWith("ies")) {
+    word = word.slice(0, -2);
+  } else if (word.endsWith("ss")) {
+    // Keep "ss" intact.
+  } else if (word.endsWith("s")) {
+    word = word.slice(0, -1);
+  }
+
+  let strippedEdOrIng = false;
+  if (word.endsWith("eed")) {
+    const stem = word.slice(0, -3);
+    if (lexMeasure(stem) > 0) word = stem + "ee";
+  } else if (word.endsWith("ed")) {
+    const stem = word.slice(0, -2);
+    if (lexContainsVowel(stem)) {
+      word = stem;
+      strippedEdOrIng = true;
+    }
+  } else if (word.endsWith("ing")) {
+    const stem = word.slice(0, -3);
+    if (lexContainsVowel(stem)) {
+      word = stem;
+      strippedEdOrIng = true;
+    }
+  }
+
+  if (strippedEdOrIng) {
+    if (word.endsWith("at") || word.endsWith("bl") || word.endsWith("iz")) {
+      word += "e";
+    } else if (lexEndsWithDoubleConsonant(word) && !/[lsz]$/u.test(word)) {
+      word = word.slice(0, -1);
+    } else if (lexMeasure(word) === 1 && lexEndsWithCvc(word)) {
+      word += "e";
+    }
+  }
+
+  if (word.endsWith("y")) {
+    const stem = word.slice(0, -1);
+    if (lexContainsVowel(stem)) word = stem + "i";
+  }
+
+  const step2: Array<[string, string]> = [
+    ["ational", "ate"],
+    ["tional", "tion"],
+    ["enci", "ence"],
+    ["anci", "ance"],
+    ["izer", "ize"],
+    ["abli", "able"],
+    ["alli", "al"],
+    ["entli", "ent"],
+    ["eli", "e"],
+    ["ousli", "ous"],
+    ["ization", "ize"],
+    ["ation", "ate"],
+    ["ator", "ate"],
+    ["alism", "al"],
+    ["iveness", "ive"],
+    ["fulness", "ful"],
+    ["ousness", "ous"],
+    ["aliti", "al"],
+    ["iviti", "ive"],
+    ["biliti", "ble"],
+    ["logi", "log"],
+  ];
+  for (const [suffix, replacement] of step2) {
+    if (replaceSuffix(suffix, replacement, 0)) break;
+  }
+
+  const step3: Array<[string, string]> = [
+    ["icate", "ic"],
+    ["ative", ""],
+    ["alize", "al"],
+    ["iciti", "ic"],
+    ["ical", "ic"],
+    ["ful", ""],
+    ["ness", ""],
+  ];
+  for (const [suffix, replacement] of step3) {
+    if (replaceSuffix(suffix, replacement, 0)) break;
+  }
+
+  const step4 = [
+    "ement",
+    "ance",
+    "ence",
+    "able",
+    "ible",
+    "ment",
+    "ant",
+    "ent",
+    "ism",
+    "ate",
+    "iti",
+    "ous",
+    "ive",
+    "ize",
+    "al",
+    "er",
+    "ic",
+    "ou",
+  ];
+  for (const suffix of step4) {
+    if (replaceSuffix(suffix, "", 1)) break;
+  }
+  if (word.endsWith("ion")) {
+    const stem = word.slice(0, -3);
+    if (lexMeasure(stem) > 1 && /[st]$/u.test(stem)) {
+      word = stem;
+    }
+  }
+
+  if (word.endsWith("e")) {
+    const stem = word.slice(0, -1);
+    const measure = lexMeasure(stem);
+    if (measure > 1 || (measure === 1 && !lexEndsWithCvc(stem))) {
+      word = stem;
+    }
+  }
+
+  if (lexMeasure(word) > 1 && lexEndsWithDoubleConsonant(word) && word.endsWith("l")) {
+    word = word.slice(0, -1);
+  }
+
+  return word;
+}
+
+function buildLexQueryProfile(query: string): LexQueryProfile {
+  return {
+    normalizedQuery: normalizeExactText(query),
+    terms: [...new Set(tokenizeLexText(query).map((token) => stemLexToken(token)).filter((token) => token.length > 0))],
+  };
+}
+
+function scoreLexText(text: string, query: LexQueryProfile): number {
+  const normalized = normalizeExactText(text);
+  const phraseHits = query.normalizedQuery ? countOccurrences(normalized, query.normalizedQuery) : 0;
+  const tokenCounts = new Map<string, number>();
+  for (const token of tokenizeLexText(text)) {
+    const stem = stemLexToken(token);
+    tokenCounts.set(stem, (tokenCounts.get(stem) ?? 0) + 1);
+  }
+
+  let matchedTerms = 0;
+  let totalTermHits = 0;
+  for (const term of query.terms) {
+    const hits = tokenCounts.get(term) ?? 0;
+    if (hits > 0) {
+      matchedTerms += 1;
+      totalTermHits += hits;
+    }
+  }
+
+  if (phraseHits === 0 && matchedTerms === 0) return 0;
+  return (
+    phraseHits * 10
+    + (query.terms.length > 0 ? (matchedTerms / query.terms.length) * 4 : 0)
+    + Math.min(totalTermHits, 5)
+  );
+}
+
+function findFallbackLexRange(manifest: AttachmentManifest): { blockStart: number; blockEnd: number } {
+  const block = manifest.blocks.find(
+    (candidate) => !isBoilerplateLikeText(candidate.text) && !isTableOfContentsLikeText(candidate.text),
+  ) ?? manifest.blocks[0];
+  const blockIndex = block?.blockIndex ?? 0;
+  return { blockStart: blockIndex, blockEnd: blockIndex };
+}
+
+function buildLexSearchRow(
+  entry: CatalogEntry,
+  manifest: AttachmentManifest,
+  query: LexQueryProfile,
+  score: number,
+): SearchResultRow & { referenceOnly: boolean } {
+  const exactRange = query.normalizedQuery ? findExactPhraseBlockRange(manifest, query.normalizedQuery) : null;
+  if (exactRange) {
+    return buildSearchRow(entry, manifest, exactRange, score);
+  }
+
+  let bestBlock: ManifestBlock | null = null;
+  let bestBlockScore = 0;
+  for (const block of manifest.blocks) {
+    const baseScore = scoreLexText(`${block.sectionPath.join(" ")} ${block.text}`, query);
+    if (baseScore === 0) continue;
+
+    const adjustedScore =
+      baseScore
+      + (block.blockType === "heading" ? 0.5 : 0)
+      - (isBoilerplateLikeText(block.text) ? 1 : 0)
+      - (isTableOfContentsLikeText(block.text) ? 1 : 0);
+    if (adjustedScore <= 0) continue;
+    if (!bestBlock || adjustedScore > bestBlockScore) {
+      bestBlock = block;
+      bestBlockScore = adjustedScore;
+    }
+  }
+
+  const titleScore = scoreLexText(entry.title, query);
+  if (titleScore > bestBlockScore) {
+    return buildTitleSearchRow(entry, score);
+  }
+  if (bestBlock) {
+    return buildSearchRow(entry, manifest, { blockStart: bestBlock.blockIndex, blockEnd: bestBlock.blockIndex }, score);
+  }
+  return buildSearchRow(entry, manifest, findFallbackLexRange(manifest), score);
+}
+
 function buildHybridSearchRow(
   entry: CatalogEntry,
   manifest: AttachmentManifest,
@@ -258,82 +536,104 @@ export async function searchLiterature(
   }
 
   const entryByDocKey = new Map(readyEntries.map((entry) => [entry.docKey, entry]));
-  const mapped = behavior.exact
-    ? await (async () => {
-        const normalizedQuery = normalizeExactText(query);
-        const exactIndex = await exactFactory(config);
-        try {
-          const titleScores = new Map<string, number>();
-          for (const entry of readyEntries) {
-            titleScores.set(entry.docKey, countExactMatches(normalizeExactText(entry.title), normalizedQuery));
-          }
 
-          const scoreByDocKey = new Map<string, number>();
-          const candidateLimit = Math.max(limit, readyEntries.length);
-          for (const candidate of await exactIndex.searchExactCandidates(query, candidateLimit)) {
-            scoreByDocKey.set(candidate.docKey, candidate.score + (titleScores.get(candidate.docKey) ?? 0));
-          }
-          for (const entry of readyEntries) {
-            const titleScore = titleScores.get(entry.docKey) ?? 0;
-            if (titleScore > 0 && !scoreByDocKey.has(entry.docKey)) {
-              scoreByDocKey.set(entry.docKey, titleScore);
-            }
-          }
+  let mapped: Array<SearchResultRow & { referenceOnly: boolean }>;
 
-          return [...scoreByDocKey.entries()]
-            .filter(([, score]) => behavior.minScore === undefined || score >= behavior.minScore)
-            .map(([docKey, score]) => {
-              const entry = entryByDocKey.get(docKey);
-              if (!entry) return null;
-              const titleScore = titleScores.get(docKey) ?? 0;
-              if (!entry.manifestPath || !exists(entry.manifestPath)) {
-                return titleScore > 0 ? buildTitleSearchRow(entry, score) : null;
-              }
-              const manifest = readManifestFile(entry.manifestPath);
-              const range = findExactPhraseBlockRange(manifest, query);
-              if (range) {
-                return buildSearchRow(entry, manifest, range, score);
-              }
-              return titleScore > 0 ? buildTitleSearchRow(entry, score) : null;
-            })
-            .filter((value): value is ReturnType<typeof buildSearchRow> => value !== null)
-            .sort((a, b) => b.score - a.score);
-        } finally {
-          await exactIndex.close();
+  if (behavior.exact) {
+    const normalizedQuery = normalizeExactText(query);
+    const exactIndex = await exactFactory(config);
+    try {
+      const titleScores = new Map<string, number>();
+      for (const entry of readyEntries) {
+        titleScores.set(entry.docKey, countExactMatches(normalizeExactText(entry.title), normalizedQuery));
+      }
+
+      const scoreByDocKey = new Map<string, number>();
+      const candidateLimit = Math.max(limit, readyEntries.length);
+      for (const candidate of await exactIndex.searchExactCandidates(query, candidateLimit)) {
+        scoreByDocKey.set(candidate.docKey, candidate.score + (titleScores.get(candidate.docKey) ?? 0));
+      }
+      for (const entry of readyEntries) {
+        const titleScore = titleScores.get(entry.docKey) ?? 0;
+        if (titleScore > 0 && !scoreByDocKey.has(entry.docKey)) {
+          scoreByDocKey.set(entry.docKey, titleScore);
         }
-      })()
-    : await (async () => {
-        const qmd = await qmdFactory(config);
-        try {
-          const rerank = behavior.rerank ?? false;
-          behavior.progress?.(
-            rerank
-              ? "qmd search: running hybrid query with rerank"
-              : "qmd search: running hybrid query without rerank",
-          );
-          return (
-            await qmd.search({
-              query,
-              limit,
-              rerank,
-              ...(behavior.minScore !== undefined ? { minScore: behavior.minScore } : {}),
-            })
-          )
-            .map((result) => {
-              const docKey =
-                docKeyFromSearchResultPath(result.file) ?? docKeyFromSearchResultPath(result.displayPath);
-              if (!docKey) return null;
-              const entry = entryByDocKey.get(docKey);
-              if (!entry || !entry.manifestPath || !exists(entry.manifestPath)) return null;
-              const manifest = readManifestFile(entry.manifestPath);
-              return buildHybridSearchRow(entry, manifest, result);
-            })
-            .filter((value): value is ReturnType<typeof buildHybridSearchRow> => value !== null)
-            .sort((a, b) => b.score - a.score);
-        } finally {
-          await qmd.close();
-        }
-      })();
+      }
+
+      mapped = [...scoreByDocKey.entries()]
+        .filter(([, score]) => behavior.minScore === undefined || score >= behavior.minScore)
+        .map(([docKey, score]) => {
+          const entry = entryByDocKey.get(docKey);
+          if (!entry) return null;
+          const titleScore = titleScores.get(docKey) ?? 0;
+          if (!entry.manifestPath || !exists(entry.manifestPath)) {
+            return titleScore > 0 ? buildTitleSearchRow(entry, score) : null;
+          }
+          const manifest = readManifestFile(entry.manifestPath);
+          const range = findExactPhraseBlockRange(manifest, query);
+          if (range) {
+            return buildSearchRow(entry, manifest, range, score);
+          }
+          return titleScore > 0 ? buildTitleSearchRow(entry, score) : null;
+        })
+        .filter((value): value is ReturnType<typeof buildSearchRow> => value !== null)
+        .sort((a, b) => b.score - a.score);
+    } finally {
+      await exactIndex.close();
+    }
+  } else if (behavior.lex) {
+    const qmd = await qmdFactory(config);
+    try {
+      behavior.progress?.("qmd search: running BM25 keyword query");
+      const lexQuery = buildLexQueryProfile(query);
+      const results = await qmd.searchLex(query, { limit });
+      mapped = results
+        .filter((result) => behavior.minScore === undefined || result.score >= behavior.minScore)
+        .map((result) => {
+          const docKey = docKeyFromSearchResultPath(result.filepath) ??
+            docKeyFromSearchResultPath(result.displayPath);
+          if (!docKey) return null;
+          const entry = entryByDocKey.get(docKey);
+          if (!entry || !entry.manifestPath || !exists(entry.manifestPath)) return null;
+          const manifest = readManifestFile(entry.manifestPath);
+          return buildLexSearchRow(entry, manifest, lexQuery, result.score);
+        })
+        .filter((value): value is ReturnType<typeof buildLexSearchRow> => value !== null)
+        .sort((a, b) => b.score - a.score);
+    } finally {
+      await qmd.close();
+    }
+  } else {
+    const qmd = await qmdFactory(config);
+    try {
+      const rerank = behavior.rerank ?? false;
+      behavior.progress?.(
+        rerank
+          ? "qmd search: running hybrid query with rerank"
+          : "qmd search: running hybrid query without rerank",
+      );
+      const results = await qmd.search({
+        query,
+        limit,
+        rerank,
+        ...(behavior.minScore !== undefined ? { minScore: behavior.minScore } : {}),
+      });
+      mapped = results
+        .map((result) => {
+          const docKey =
+            docKeyFromSearchResultPath(result.file) ?? docKeyFromSearchResultPath(result.displayPath);
+          if (!docKey) return null;
+          const entry = entryByDocKey.get(docKey);
+          if (!entry || !entry.manifestPath || !exists(entry.manifestPath)) return null;
+          const manifest = readManifestFile(entry.manifestPath);
+          return buildHybridSearchRow(entry, manifest, result);
+        })
+        .filter((value): value is ReturnType<typeof buildHybridSearchRow> => value !== null)
+        .sort((a, b) => b.score - a.score);
+    } finally {
+      await qmd.close();
+    }
+  }
 
   const substantive = mapped.filter((row) => !row.referenceOnly);
   const references = mapped.filter((row) => row.referenceOnly);
