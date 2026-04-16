@@ -159,11 +159,6 @@ test("runSync relays SIGINT instead of swallowing it", () => {
         removeContext: async () => true,
         close: async () => {},
       });
-      const fakeExactFactory = async () => ({
-        rebuildExactIndex: async () => {},
-        searchExactCandidates: async () => [],
-        close: async () => {},
-      });
       const fakeExtractBatch = async () => {
         setInterval(() => {}, 1000);
         return await new Promise(() => {});
@@ -180,7 +175,6 @@ test("runSync relays SIGINT instead of swallowing it", () => {
           dataDir,
         },
         fakeFactory,
-        fakeExactFactory,
         fakeExtractBatch,
         () => {},
       );
@@ -233,11 +227,6 @@ test("runSync does not swallow uncaught exceptions", () => {
         removeContext: async () => true,
         close: async () => {},
       });
-      const fakeExactFactory = async () => ({
-        rebuildExactIndex: async () => {},
-        searchExactCandidates: async () => [],
-        close: async () => {},
-      });
       const fakeExtractBatch = async () => {
         setInterval(() => {}, 1000);
         return await new Promise(() => {});
@@ -254,7 +243,6 @@ test("runSync does not swallow uncaught exceptions", () => {
           dataDir,
         },
         fakeFactory,
-        fakeExactFactory,
         fakeExtractBatch,
         () => {},
       );
@@ -341,8 +329,6 @@ test("runSync skips unchanged ready pdfs and refreshes qmd contexts", async () =
   writeCatalogFile(join(indexDir, "catalog.json"), previousCatalog);
 
   const calls = {
-    exactRebuild: 0,
-    exactClose: 0,
     update: 0,
     embed: 0,
     removed: 0,
@@ -377,16 +363,6 @@ test("runSync skips unchanged ready pdfs and refreshes qmd contexts", async () =
       calls.closed += 1;
     },
   });
-  const fakeExactFactory = async () => ({
-    rebuildExactIndex: async () => {
-      calls.exactRebuild += 1;
-    },
-    searchExactCandidates: async () => [],
-    close: async () => {
-      calls.exactClose += 1;
-    },
-  });
-
   const result = await runSync(
     {
       bibliographyJsonPath: bibliographyPath,
@@ -394,13 +370,10 @@ test("runSync skips unchanged ready pdfs and refreshes qmd contexts", async () =
       dataDir,
     },
     fakeFactory,
-    fakeExactFactory,
   );
 
   assert.equal(result.stats.skippedAttachments, 1);
   assert.equal(result.stats.updatedAttachments, 0);
-  assert.equal(calls.exactRebuild, 1);
-  assert.equal(calls.exactClose, 1);
   assert.equal(calls.update, 1);
   assert.equal(calls.embed, 1);
   assert.equal(calls.removed, 1);
@@ -410,163 +383,6 @@ test("runSync skips unchanged ready pdfs and refreshes qmd contexts", async () =
   const logBody = readFileSync(result.logPath, "utf-8");
   assert.match(logBody, /## Skipped Files/);
   assert.match(logBody, /paper\.pdf: reused existing indexed output/);
-});
-
-test("runSync sends exact-index deltas when incremental sync is available", async () => {
-  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-exact-delta-"));
-  const attachmentsRoot = join(root, "attachments");
-  const dataDir = join(root, "data");
-  const indexDir = join(dataDir, "index");
-  const manifestsDir = join(dataDir, "manifests");
-  const normalizedDir = join(dataDir, "normalized");
-  mkdirSync(join(attachmentsRoot, "papers"), { recursive: true });
-  mkdirSync(indexDir, { recursive: true });
-  mkdirSync(manifestsDir, { recursive: true });
-  mkdirSync(normalizedDir, { recursive: true });
-
-  const oldPdfPath = join(attachmentsRoot, "papers", "old.pdf");
-  const newPdfPath = join(attachmentsRoot, "papers", "new.pdf");
-  writeFileSync(oldPdfPath, "old-pdf");
-  writeFileSync(newPdfPath, "new-pdf");
-
-  const oldDocKey = sha1("papers/old.pdf");
-  const newDocKey = sha1("papers/new.pdf");
-  const oldManifestPath = join(manifestsDir, `${oldDocKey}${MANIFEST_EXT}`);
-  const oldNormalizedPath = join(normalizedDir, `${oldDocKey}.md`);
-  writeFileSync(oldNormalizedPath, "old body", "utf-8");
-  writeFileSync(
-    oldManifestPath,
-    JSON.stringify({
-      docKey: oldDocKey,
-      itemKey: "OLD1",
-      title: "Old Paper",
-      authors: ["A Author"],
-      filePath: oldPdfPath,
-      normalizedPath: oldNormalizedPath,
-      blocks: [],
-    }),
-    "utf-8",
-  );
-
-  writeCatalogFile(join(indexDir, "catalog.json"), {
-    version: 1,
-    generatedAt: new Date().toISOString(),
-    entries: [
-      {
-        docKey: oldDocKey,
-        itemKey: "OLD1",
-        citationKey: "oldcite",
-        title: "Old Paper",
-        authors: ["A Author"],
-        filePath: oldPdfPath,
-        fileExt: "pdf",
-        exists: true,
-        supported: true,
-        extractStatus: "ready",
-        size: statSync(oldPdfPath).size,
-        mtimeMs: Math.trunc(statSync(oldPdfPath).mtimeMs),
-        sourceHash: "oldhash",
-        lastIndexedAt: new Date().toISOString(),
-        normalizedPath: oldNormalizedPath,
-        manifestPath: oldManifestPath,
-      },
-    ],
-  });
-
-  const bibliographyPath = join(root, "bibliography.json");
-  writeFileSync(
-    bibliographyPath,
-    JSON.stringify([
-      {
-        id: "newcite",
-        title: "New Paper",
-        author: [{ family: "B", given: "Author" }],
-        file: newPdfPath,
-        "zotero-item-key": "NEW1",
-      },
-    ]),
-    "utf-8",
-  );
-
-  let captured:
-    | {
-        readyDocKeys: string[];
-        upsertDocKeys: string[];
-        deleteDocKeys: string[];
-      }
-    | undefined;
-  let rebuildCalls = 0;
-
-  const fakeFactory = async () => ({
-    search: async () => [],
-    searchLex: async () => [],
-    update: async () => ({}),
-    embed: async () => ({}),
-    getStatus: async () => ({ totalDocuments: 1, needsEmbedding: 0, hasVectorIndex: true, collections: [] }),
-    listContexts: async () => [],
-    addContext: async () => true,
-    removeContext: async () => true,
-    close: async () => {},
-  });
-  const fakeExactFactory = async () => ({
-    rebuildExactIndex: async () => {
-      rebuildCalls += 1;
-    },
-    syncExactIndex: async (
-      readyEntries: Array<{ docKey: string }>,
-      changes: { upserts: Array<{ docKey: string }>; deleteDocKeys: string[] },
-    ) => {
-      captured = {
-        readyDocKeys: readyEntries.map((entry) => entry.docKey),
-        upsertDocKeys: changes.upserts.map((entry) => entry.docKey),
-        deleteDocKeys: changes.deleteDocKeys,
-      };
-    },
-    searchExactCandidates: async () => [],
-    close: async () => {},
-  });
-  const fakeExtractBatch = async (batch: Array<{ docKey: string; filePath: string; itemKey: string }>) => {
-    const out = new Map<string, { manifestPath: string; normalizedPath: string }>();
-    for (const attachment of batch) {
-      const normalizedPath = join(normalizedDir, `${attachment.docKey}.md`);
-      const manifestPath = join(manifestsDir, `${attachment.docKey}${MANIFEST_EXT}`);
-      writeFileSync(normalizedPath, "new body", "utf-8");
-      writeManifestFile(
-        manifestPath,
-        {
-          docKey: attachment.docKey,
-          itemKey: attachment.itemKey,
-          title: "New Paper",
-          authors: ["B Author"],
-          filePath: attachment.filePath,
-          normalizedPath,
-          blocks: [],
-        },
-      );
-      out.set(attachment.docKey, { manifestPath, normalizedPath });
-    }
-    return out;
-  };
-
-  const result = await runSync(
-    {
-      bibliographyJsonPath: bibliographyPath,
-      attachmentsRoot,
-      dataDir,
-    },
-    fakeFactory,
-    fakeExactFactory,
-    fakeExtractBatch,
-    () => {},
-  );
-
-  assert.equal(result.stats.readyAttachments, 1);
-  assert.equal(rebuildCalls, 0);
-  assert.deepEqual(captured, {
-    readyDocKeys: [newDocKey],
-    upsertDocKeys: [newDocKey],
-    deleteDocKeys: [oldDocKey],
-  });
 });
 
 test("runSync resumes from existing normalized and manifest outputs when catalog state is missing", async () => {
@@ -633,11 +449,6 @@ test("runSync resumes from existing normalized and manifest outputs when catalog
     removeContext: async () => true,
     close: async () => {},
   });
-  const fakeExactFactory = async () => ({
-    rebuildExactIndex: async () => {},
-    searchExactCandidates: async () => [],
-    close: async () => {},
-  });
   const fakeExtractBatch = async () => {
     extractCalls += 1;
     return new Map();
@@ -650,7 +461,6 @@ test("runSync resumes from existing normalized and manifest outputs when catalog
       dataDir,
     },
     fakeFactory,
-    fakeExactFactory,
     fakeExtractBatch,
     () => {},
   );
@@ -730,11 +540,6 @@ test("runSync re-extracts attachments when fallback normalized output is empty",
     removeContext: async () => true,
     close: async () => {},
   });
-  const fakeExactFactory = async () => ({
-    rebuildExactIndex: async () => {},
-    searchExactCandidates: async () => [],
-    close: async () => {},
-  });
   const fakeExtractBatch = async (batch: Array<{ docKey: string; filePath: string; itemKey: string }>) => {
     extractCalls += 1;
     const attachment = batch[0]!;
@@ -761,7 +566,6 @@ test("runSync re-extracts attachments when fallback normalized output is empty",
       dataDir,
     },
     fakeFactory,
-    fakeExactFactory,
     fakeExtractBatch,
     () => {},
   );
@@ -867,11 +671,6 @@ test("runSync keeps embedding until qmd no longer reports pending documents", as
     removeContext: async () => true,
     close: async () => {},
   });
-  const fakeExactFactory = async () => ({
-    rebuildExactIndex: async () => {},
-    searchExactCandidates: async () => [],
-    close: async () => {},
-  });
 
   await runSync(
     {
@@ -880,7 +679,6 @@ test("runSync keeps embedding until qmd no longer reports pending documents", as
       dataDir,
     },
     fakeFactory,
-    fakeExactFactory,
   );
 
   assert.equal(embedCalls, 3);
@@ -922,11 +720,6 @@ test("runSync marks empty txt extraction output as error", async () => {
     removeContext: async () => true,
     close: async () => {},
   });
-  const fakeExactFactory = async () => ({
-    rebuildExactIndex: async () => {},
-    searchExactCandidates: async () => [],
-    close: async () => {},
-  });
 
   const result = await runSync(
     {
@@ -935,7 +728,6 @@ test("runSync marks empty txt extraction output as error", async () => {
       dataDir,
     },
     fakeFactory,
-    fakeExactFactory,
     () => Promise.resolve(new Map()),
     () => {},
   );
@@ -984,11 +776,6 @@ test("runSync indexes txt attachments without Java extraction", async () => {
     removeContext: async () => true,
     close: async () => {},
   });
-  const fakeExactFactory = async () => ({
-    rebuildExactIndex: async () => {},
-    searchExactCandidates: async () => [],
-    close: async () => {},
-  });
   const fakeExtractBatch = async () => {
     extractBatchCalls += 1;
     return new Map();
@@ -1001,7 +788,6 @@ test("runSync indexes txt attachments without Java extraction", async () => {
       dataDir,
     },
     fakeFactory,
-    fakeExactFactory,
     fakeExtractBatch,
     () => {},
   );
@@ -1129,11 +915,6 @@ test("runSync reuses a ready index when bibliography paths come from another mac
     },
     close: async () => {},
   });
-  const fakeExactFactory = async () => ({
-    rebuildExactIndex: async () => {},
-    searchExactCandidates: async () => [],
-    close: async () => {},
-  });
 
   const result = await runSync(
     {
@@ -1142,7 +923,6 @@ test("runSync reuses a ready index when bibliography paths come from another mac
       dataDir,
     },
     fakeFactory,
-    fakeExactFactory,
   );
 
   assert.equal(result.stats.skippedAttachments, 1);
@@ -1340,11 +1120,6 @@ test("runSync keeps cached outputs when attachment disappears from the current c
     removeContext: async () => true,
     close: async () => {},
   });
-  const fakeExactFactory = async () => ({
-    rebuildExactIndex: async () => {},
-    searchExactCandidates: async () => [],
-    close: async () => {},
-  });
 
   const result = await runSync(
     {
@@ -1353,7 +1128,6 @@ test("runSync keeps cached outputs when attachment disappears from the current c
       dataDir,
     },
     fakeFactory,
-    fakeExactFactory,
   );
 
   assert.equal(result.stats.removedAttachments, 1);
@@ -1444,11 +1218,6 @@ test("runSync reuses cached outputs after an attachment temporarily disappears",
     removeContext: async () => true,
     close: async () => {},
   });
-  const fakeExactFactory = async () => ({
-    rebuildExactIndex: async () => {},
-    searchExactCandidates: async () => [],
-    close: async () => {},
-  });
 
   unlinkSync(pdfPath);
   const missingResult = await runSync(
@@ -1458,7 +1227,6 @@ test("runSync reuses cached outputs after an attachment temporarily disappears",
       dataDir,
     },
     fakeFactory,
-    fakeExactFactory,
     async () => new Map(),
     () => {},
   );
@@ -1476,7 +1244,6 @@ test("runSync reuses cached outputs after an attachment temporarily disappears",
       dataDir,
     },
     fakeFactory,
-    fakeExactFactory,
     async () => {
       extractCalls += 1;
       return new Map();
@@ -1552,11 +1319,6 @@ test("runSync skips unchanged previous extraction errors by default", async () =
     removeContext: async () => true,
     close: async () => {},
   });
-  const fakeExactFactory = async () => ({
-    rebuildExactIndex: async () => {},
-    searchExactCandidates: async () => [],
-    close: async () => {},
-  });
   let extractCalls = 0;
   let javaChecks = 0;
 
@@ -1567,7 +1329,6 @@ test("runSync skips unchanged previous extraction errors by default", async () =
       dataDir,
     },
     fakeFactory,
-    fakeExactFactory,
     async () => {
       extractCalls += 1;
       return new Map();
@@ -1654,11 +1415,6 @@ test("runSync retries unchanged previous errors when requested and passes custom
     removeContext: async () => true,
     close: async () => {},
   });
-  const fakeExactFactory = async () => ({
-    rebuildExactIndex: async () => {},
-    searchExactCandidates: async () => [],
-    close: async () => {},
-  });
   let extractCalls = 0;
   let seenTimeoutMs: number | undefined;
   const fakeExtractBatch = async (
@@ -1698,7 +1454,6 @@ test("runSync retries unchanged previous errors when requested and passes custom
       dataDir,
     },
     fakeFactory,
-    fakeExactFactory,
     fakeExtractBatch,
     () => {},
     { retryErrors: true, pdfTimeoutMs: 1_800_000 },
@@ -1767,11 +1522,6 @@ test("runSync extracts book attachments in single-file batches by default", asyn
     removeContext: async () => true,
     close: async () => {},
   });
-  const fakeExactFactory = async () => ({
-    rebuildExactIndex: async () => {},
-    searchExactCandidates: async () => [],
-    close: async () => {},
-  });
   const batches: string[][] = [];
   const fakeExtractBatch = async (batch: Array<{ docKey: string; filePath: string; itemKey: string }>) => {
     batches.push(batch.map((attachment) => attachment.itemKey));
@@ -1808,7 +1558,6 @@ test("runSync extracts book attachments in single-file batches by default", asyn
       dataDir,
     },
     fakeFactory,
-    fakeExactFactory,
     fakeExtractBatch,
     () => {},
   );
@@ -1865,11 +1614,6 @@ test("runSync honors explicit PDF batch size", async () => {
     removeContext: async () => true,
     close: async () => {},
   });
-  const fakeExactFactory = async () => ({
-    rebuildExactIndex: async () => {},
-    searchExactCandidates: async () => [],
-    close: async () => {},
-  });
   const batchSizes: number[] = [];
   const fakeExtractBatch = async (batch: Array<{ docKey: string; filePath: string; itemKey: string }>) => {
     batchSizes.push(batch.length);
@@ -1906,7 +1650,6 @@ test("runSync honors explicit PDF batch size", async () => {
       dataDir,
     },
     fakeFactory,
-    fakeExactFactory,
     fakeExtractBatch,
     () => {},
     { pdfBatchSize: 1 },
@@ -1962,11 +1705,6 @@ test("runSync records extraction failures per attachment and continues indexing 
     removeContext: async () => true,
     close: async () => {},
   });
-  const fakeExactFactory = async () => ({
-    rebuildExactIndex: async () => {},
-    searchExactCandidates: async () => [],
-    close: async () => {},
-  });
 
   const fakeExtractBatch = async (batch: Array<{ docKey: string; filePath: string; itemKey: string }>) => {
     const out = new Map<string, { manifestPath: string; normalizedPath: string }>();
@@ -2008,7 +1746,6 @@ test("runSync records extraction failures per attachment and continues indexing 
       dataDir,
     },
     fakeFactory,
-    fakeExactFactory,
     fakeExtractBatch,
     () => {},
   );
@@ -2085,11 +1822,6 @@ test("runSync retries a timed out batch one file at a time", async () => {
     removeContext: async () => true,
     close: async () => {},
   });
-  const fakeExactFactory = async () => ({
-    rebuildExactIndex: async () => {},
-    searchExactCandidates: async () => [],
-    close: async () => {},
-  });
 
   let batchCalls = 0;
   const fakeExtractBatch = async (batch: Array<{ docKey: string; filePath: string; itemKey: string }>) => {
@@ -2131,7 +1863,6 @@ test("runSync retries a timed out batch one file at a time", async () => {
       dataDir,
     },
     fakeFactory,
-    fakeExactFactory,
     fakeExtractBatch,
     () => {},
   );

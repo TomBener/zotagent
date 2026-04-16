@@ -190,13 +190,6 @@ async function createIndexedFixture(): Promise<{
   };
   writeCatalogFile(join(indexDir, "catalog.json"), catalog);
 
-  const exactIndex = await openExactIndex(createConfig(bibliographyPath, attachmentsRoot, dataDir));
-  try {
-    await exactIndex.rebuildExactIndex(catalog.entries);
-  } finally {
-    await exactIndex.close();
-  }
-
   return { root, bibliographyPath, attachmentsRoot, dataDir, docKey, filePath, manifestPath, citationKey };
 }
 
@@ -591,29 +584,17 @@ test("search exact returns elapsedMs in meta", async () => {
   assert.equal(typeof parsed.meta?.elapsedMs, "number");
 });
 
-test("exact index client rebuilds a searchable on-disk index", async () => {
+test("exact index client searches normalized files on disk", async () => {
   const fixture = await createIndexedFixture();
   const config = createConfig(fixture.bibliographyPath, fixture.attachmentsRoot, fixture.dataDir);
   const exactIndex = await openExactIndex(config);
 
   try {
-    const firstPass = await exactIndex.searchExactCandidates("dangwei shuji", 10);
-    assert.deepEqual(firstPass.map((row) => row.docKey), [fixture.docKey]);
+    const results = await exactIndex.searchExactCandidates("dangwei shuji", 10);
+    assert.deepEqual(results.map((row) => row.docKey), [fixture.docKey]);
 
-    await exactIndex.rebuildExactIndex([
-      readyEntry(
-        fixture.dataDir,
-        fixture.docKey,
-        "ITEM9",
-        fixture.citationKey,
-        "Exact match",
-        fixture.filePath,
-        fixture.manifestPath,
-      ),
-    ]);
-
-    const secondPass = await exactIndex.searchExactCandidates("dangwei shuji", 10);
-    assert.deepEqual(secondPass.map((row) => row.docKey), [fixture.docKey]);
+    const missing = await exactIndex.searchExactCandidates("nonexistent phrase xyz", 10);
+    assert.deepEqual(missing, []);
   } finally {
     await exactIndex.close();
   }

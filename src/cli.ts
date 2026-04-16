@@ -307,7 +307,6 @@ function compactPathMap(paths: ReturnType<typeof getDataPaths>): ReturnType<type
     normalizedDir: compactHomePath(paths.normalizedDir),
     manifestsDir: compactHomePath(paths.manifestsDir),
     indexDir: compactHomePath(paths.indexDir),
-    exactDbPath: compactHomePath(paths.exactDbPath),
     tempDir: compactHomePath(paths.tempDir),
     qmdDbPath: compactHomePath(paths.qmdDbPath),
     catalogPath: compactHomePath(paths.catalogPath),
@@ -374,7 +373,7 @@ async function main(): Promise<void> {
           emitError("INVALID_ARGUMENT", "`--pdf-batch-size` must be a positive integer.");
           return;
         }
-        const result = await runSync(overrides, openQmdClient, undefined, undefined, undefined, {
+        const result = await runSync(overrides, openQmdClient, undefined, undefined, {
           ...(getBooleanFlag(parsed.flags, "retry-errors") ? { retryErrors: true } : {}),
           ...(pdfTimeoutMs !== undefined ? { pdfTimeoutMs } : {}),
           ...(pdfBatchSize !== undefined ? { pdfBatchSize } : {}),

@@ -22,7 +22,6 @@ import { extractEpub } from "./epub.js";
 import { extractHtml } from "./html-extract.js";
 import { openQmdClient, type QmdFactory } from "./qmd.js";
 import { mapEntriesByDocKey, readCatalogFile, summarizeCatalog, writeCatalogFile } from "./state.js";
-import { openExactIndex, type ExactIndexFactory } from "./exact-db.js";
 import type { AttachmentCatalogEntry, AttachmentManifest, CatalogEntry, CatalogFile, SyncStats } from "./types.js";
 import {
   MANIFEST_EXT,
@@ -788,7 +787,6 @@ async function embedQmdUntilSettled(
 export async function runSync(
   overrides: ConfigOverrides = {},
   qmdFactory: QmdFactory = openQmdClient,
-  exactFactory: ExactIndexFactory = openExactIndex,
   extractBatchFn: ExtractBatchFn = extractBatch,
   requireJavaFn: () => void = requireJava,
   options: SyncRunOptions = {},
@@ -878,8 +876,6 @@ export async function runSync(
     const previousCatalog = readCatalogFile(paths.catalogPath);
     const previousByDocKey = mapEntriesByDocKey(previousCatalog);
     const nextEntries: CatalogEntry[] = [];
-    const exactUpserts = new Map<string, CatalogEntry>();
-    const exactDeletes = new Set<string>();
     const changedAttachments: AttachmentCatalogEntry[] = [];
     const staleDocKeys = new Set(previousCatalog.entries.map((entry) => entry.docKey));
     const fileOutcomes: SyncFileOutcome[] = [];
@@ -916,9 +912,6 @@ export async function runSync(
       if (attachment.supported) stats.supportedAttachments += 1;
 
       if (!attachment.supported) {
-        if (previousByDocKey.get(attachment.docKey)?.extractStatus === "ready") {
-          exactDeletes.add(attachment.docKey);
-        }
         fileOutcomes.push({
           kind: "unsupported",
           filePath: attachment.filePath,
@@ -935,9 +928,6 @@ export async function runSync(
 
       const current = statSync(attachment.filePath, { throwIfNoEntry: false });
       if (!current || !attachment.exists) {
-        if (previousByDocKey.get(attachment.docKey)?.extractStatus === "ready") {
-          exactDeletes.add(attachment.docKey);
-        }
         fileOutcomes.push({
           kind: "missing",
           filePath: attachment.filePath,
@@ -1009,9 +999,6 @@ export async function runSync(
         manifestPath: previousIsReadyAndUnchanged ? previous.manifestPath : fallbackManifestPath,
       });
       nextEntries.push(nextEntry);
-      if (!previousIsReadyAndUnchanged) {
-        exactUpserts.set(nextEntry.docKey, nextEntry);
-      }
       fileOutcomes.push({
         kind: "skipped",
         filePath: attachment.filePath,
@@ -1064,7 +1051,6 @@ export async function runSync(
         manifestPath: written.manifestPath,
       });
       nextEntries.push(nextEntry);
-      exactUpserts.set(nextEntry.docKey, nextEntry);
       stats.readyAttachments += 1;
       stats.updatedAttachments += 1;
       stats.indexedAttachments += 1;
@@ -1072,9 +1058,6 @@ export async function runSync(
 
     function recordErroredAttachment(attachment: AttachmentCatalogEntry, error: unknown): void {
       const previous = previousByDocKey.get(attachment.docKey);
-      if (previous?.extractStatus === "ready") {
-        exactDeletes.add(attachment.docKey);
-      }
       deleteIfExists(previous?.normalizedPath);
       deleteIfExists(previous?.manifestPath);
 
@@ -1260,7 +1243,6 @@ export async function runSync(
     }
 
     for (const docKey of staleDocKeys) {
-      exactDeletes.add(docKey);
       stats.removedAttachments += 1;
     }
 
@@ -1273,22 +1255,6 @@ export async function runSync(
     writeProgressCatalog(paths.catalogPath, nextEntries);
 
     const readyEntries = nextEntries.filter((entry) => entry.extractStatus === "ready");
-    const exactIndex = await exactFactory(config);
-    try {
-      const deleteDocKeys = [...exactDeletes].filter((docKey) => !exactUpserts.has(docKey));
-      if (exactIndex.syncExactIndex) {
-        logger.info("Updating exact search index...", { console: true });
-        await exactIndex.syncExactIndex(readyEntries, {
-          upserts: [...exactUpserts.values()],
-          deleteDocKeys,
-        });
-      } else {
-        logger.info("Rebuilding exact search index...", { console: true });
-        await exactIndex.rebuildExactIndex(readyEntries);
-      }
-    } finally {
-      await exactIndex.close();
-    }
 
     const qmd = await qmdFactory(config);
     try {

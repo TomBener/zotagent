@@ -405,7 +405,6 @@ test("searchLiterature exact mode uses the exact index and skips qmd", async () 
     close: async () => {},
   });
   const fakeExactFactory = async () => ({
-    rebuildExactIndex: async () => {},
     searchExactCandidates: async (inputQuery: string, inputLimit: number) => {
       capturedExactQuery = inputQuery;
       capturedExactLimit = inputLimit;
