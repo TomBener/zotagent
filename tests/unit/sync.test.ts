@@ -7,10 +7,10 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  buildHiddenJavaToolOptions,
+  buildJavaToolOptions,
   runProcessWithTimeout,
   runSync,
-  withHiddenJavaDockIcon,
+  withJavaToolOptions,
 } from "../../src/sync.js";
 import { readCatalogFile, writeCatalogFile } from "../../src/state.js";
 import type { CatalogFile } from "../../src/types.js";
@@ -27,23 +27,31 @@ function runInlineModule(script: string, timeout = 5_000) {
   });
 }
 
-test("buildHiddenJavaToolOptions appends dock-hiding flag without dropping existing options", () => {
+test("buildJavaToolOptions always adds -Xss and optionally dock-hide flag", () => {
   assert.equal(
-    buildHiddenJavaToolOptions("-Xmx2g"),
-    "-Xmx2g -Dapple.awt.UIElement=true",
+    buildJavaToolOptions("-Xmx2g", { hideDockIcon: true }),
+    "-Xmx2g -Xss32m -Dapple.awt.UIElement=true",
   );
   assert.equal(
-    buildHiddenJavaToolOptions("-Xmx2g -Dapple.awt.UIElement=true"),
-    "-Xmx2g -Dapple.awt.UIElement=true",
+    buildJavaToolOptions("-Xmx2g -Xss32m -Dapple.awt.UIElement=true", { hideDockIcon: true }),
+    "-Xmx2g -Xss32m -Dapple.awt.UIElement=true",
   );
-  assert.equal(buildHiddenJavaToolOptions(undefined), "-Dapple.awt.UIElement=true");
+  assert.equal(
+    buildJavaToolOptions(undefined, { hideDockIcon: true }),
+    "-Xss32m -Dapple.awt.UIElement=true",
+  );
+  assert.equal(
+    buildJavaToolOptions("-Xmx2g", { hideDockIcon: false }),
+    "-Xmx2g -Xss32m",
+  );
+  assert.equal(buildJavaToolOptions(undefined, { hideDockIcon: false }), "-Xss32m");
 });
 
-test("withHiddenJavaDockIcon only applies on macOS and restores environment afterwards", async () => {
+test("withJavaToolOptions injects -Xss everywhere and adds dock-hide only on macOS, restoring env", async () => {
   const env: NodeJS.ProcessEnv = {};
   let seenDuringTask = "";
 
-  const result = await withHiddenJavaDockIcon(
+  const result = await withJavaToolOptions(
     async () => {
       seenDuringTask = env.JAVA_TOOL_OPTIONS || "";
       return "ok";
@@ -52,27 +60,27 @@ test("withHiddenJavaDockIcon only applies on macOS and restores environment afte
   );
 
   assert.equal(result, "ok");
-  assert.equal(seenDuringTask, "-Dapple.awt.UIElement=true");
+  assert.equal(seenDuringTask, "-Xss32m -Dapple.awt.UIElement=true");
   assert.equal(env.JAVA_TOOL_OPTIONS, undefined);
 
   env.JAVA_TOOL_OPTIONS = "-Xmx1g";
-  await withHiddenJavaDockIcon(
+  await withJavaToolOptions(
     async () => {
       seenDuringTask = env.JAVA_TOOL_OPTIONS || "";
     },
     { platform: "linux", env },
   );
-  assert.equal(seenDuringTask, "-Xmx1g");
+  assert.equal(seenDuringTask, "-Xmx1g -Xss32m");
   assert.equal(env.JAVA_TOOL_OPTIONS, "-Xmx1g");
 
   env.ZOTAGENT_SHOW_JAVA_DOCK_ICON = "1";
-  await withHiddenJavaDockIcon(
+  await withJavaToolOptions(
     async () => {
       seenDuringTask = env.JAVA_TOOL_OPTIONS || "";
     },
     { platform: "darwin", env },
   );
-  assert.equal(seenDuringTask, "-Xmx1g");
+  assert.equal(seenDuringTask, "-Xmx1g -Xss32m");
   assert.equal(env.JAVA_TOOL_OPTIONS, "-Xmx1g");
 });
 

@@ -36,8 +36,33 @@ import {
 } from "./utils.js";
 
 const HIDE_JAVA_DOCK_ICON_FLAG = "-Dapple.awt.UIElement=true";
+const JVM_STACK_SIZE_FLAG = "-Xss32m";
 const ODL_JAR_NAME = "opendataloader-pdf-cli.jar";
-const ODL_SINGLE_PDF_TIMEOUT_MS = 180_000;
+const ODL_SINGLE_PDF_TIMEOUT_MS = 600_000;
+const ODL_STRUCTURAL_BUG_PATTERNS = [
+  /StackOverflowError/i,
+  /HeadingProcessor/i,
+  /LevelProcessor/i,
+  /Comparison method violates/i,
+  /outside raster/i,
+];
+const ODL_EMPTY_OUTPUT_PATTERN = /Extracted output was empty/i;
+const ODL_TIMEOUT_PATTERN = /timed out after/i;
+
+function isOdlStructuralBug(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return ODL_STRUCTURAL_BUG_PATTERNS.some((pattern) => pattern.test(message));
+}
+
+function isOdlEmptyOutput(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return ODL_EMPTY_OUTPUT_PATTERN.test(message);
+}
+
+function isOdlTimeout(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return ODL_TIMEOUT_PATTERN.test(message);
+}
 const ODL_EXTRA_BATCH_TIMEOUT_MS = 30_000;
 const ODL_FORCE_KILL_GRACE_MS = 1_000;
 const ODL_DEFAULT_BATCH_SIZE = 8;
@@ -245,17 +270,25 @@ function shouldHideJavaDockIcon(
   return platform === "darwin" && env.ZOTAGENT_SHOW_JAVA_DOCK_ICON !== "1";
 }
 
-export function buildHiddenJavaToolOptions(existing: string | undefined): string {
-  if (!existing || existing.trim().length === 0) {
-    return HIDE_JAVA_DOCK_ICON_FLAG;
+export function buildJavaToolOptions(
+  existing: string | undefined,
+  options: { hideDockIcon: boolean },
+): string {
+  const flags: string[] = [JVM_STACK_SIZE_FLAG];
+  if (options.hideDockIcon) {
+    flags.push(HIDE_JAVA_DOCK_ICON_FLAG);
   }
-  if (existing.includes(HIDE_JAVA_DOCK_ICON_FLAG)) {
-    return existing;
+  const base = existing && existing.trim().length > 0 ? existing : "";
+  const parts = base.length > 0 ? [base] : [];
+  for (const flag of flags) {
+    if (!parts.some((part) => part.includes(flag))) {
+      parts.push(flag);
+    }
   }
-  return `${existing} ${HIDE_JAVA_DOCK_ICON_FLAG}`;
+  return parts.join(" ");
 }
 
-export async function withHiddenJavaDockIcon<T>(
+export async function withJavaToolOptions<T>(
   task: () => Promise<T>,
   options: {
     platform?: NodeJS.Platform;
@@ -263,12 +296,10 @@ export async function withHiddenJavaDockIcon<T>(
   } = {},
 ): Promise<T> {
   const env = options.env ?? process.env;
-  if (!shouldHideJavaDockIcon(options.platform, env)) {
-    return await task();
-  }
-
   const previous = env.JAVA_TOOL_OPTIONS;
-  env.JAVA_TOOL_OPTIONS = buildHiddenJavaToolOptions(previous);
+  env.JAVA_TOOL_OPTIONS = buildJavaToolOptions(previous, {
+    hideDockIcon: shouldHideJavaDockIcon(options.platform, env),
+  });
 
   try {
     return await task();
@@ -601,7 +632,147 @@ export type SyncRunOptions = {
   pdfBatchSize?: number;
 };
 
+async function extractBatchPdftotext(
+  batch: AttachmentCatalogEntry[],
+  tempRoot: string,
+  manifestsDir: string,
+  normalizedDir: string,
+  options: ExtractBatchOptions = {},
+): Promise<Map<string, ExtractedPaths>> {
+  const tempDir = mkdtempSync(join(tempRoot, "pdftotext-"));
+  const byDocKey = new Map<string, ExtractedPaths>();
+
+  try {
+    for (const attachment of batch) {
+      const textPath = join(tempDir, `${attachment.docKey}.txt`);
+      await runProcessWithTimeout({
+        command: "pdftotext",
+        args: ["-layout", attachment.filePath, textPath],
+        timeoutMs: options.timeoutMs ?? ODL_SINGLE_PDF_TIMEOUT_MS,
+        label: "pdftotext extraction",
+      });
+
+      if (!exists(textPath)) {
+        throw new Error(`pdftotext output not found for ${attachment.filePath}`);
+      }
+
+      const normalizedPath = resolve(normalizedDir, `${attachment.docKey}.md`);
+      const manifestPath = resolve(manifestsDir, `${attachment.docKey}${MANIFEST_EXT}`);
+      ensureParentDir(normalizedPath);
+      ensureParentDir(manifestPath);
+
+      const built = buildMarkdownManifest(
+        attachment,
+        readFileSync(textPath, "utf-8"),
+        normalizedPath,
+      );
+      assertNonEmptyExtractedOutput(attachment.filePath, built);
+
+      writeFileSync(normalizedPath, built.markdown, "utf-8");
+      writeManifestFile(manifestPath, built.manifest);
+      byDocKey.set(attachment.docKey, { manifestPath, normalizedPath });
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+
+  return byDocKey;
+}
+
+async function extractBatchTextOnly(
+  batch: AttachmentCatalogEntry[],
+  tempRoot: string,
+  manifestsDir: string,
+  normalizedDir: string,
+  options: ExtractBatchOptions = {},
+): Promise<Map<string, ExtractedPaths>> {
+  const tempDir = mkdtempSync(join(tempRoot, "odl-text-"));
+  const byDocKey = new Map<string, ExtractedPaths>();
+
+  try {
+    await withJavaToolOptions(() =>
+      runOdlConvert(
+        batch.map((attachment) => attachment.filePath),
+        {
+          outputDir: tempDir,
+          format: "text",
+        },
+        options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {},
+      ),
+    );
+
+    for (const attachment of batch) {
+      const stem = stemForFile(attachment.filePath);
+      const textPath = resolve(tempDir, `${stem}.txt`);
+      if (!exists(textPath)) {
+        throw new Error(`OpenDataLoader text output not found for ${attachment.filePath}`);
+      }
+
+      const normalizedPath = resolve(normalizedDir, `${attachment.docKey}.md`);
+      const manifestPath = resolve(manifestsDir, `${attachment.docKey}${MANIFEST_EXT}`);
+      ensureParentDir(normalizedPath);
+      ensureParentDir(manifestPath);
+
+      const built = buildMarkdownManifest(
+        attachment,
+        readFileSync(textPath, "utf-8"),
+        normalizedPath,
+      );
+      assertNonEmptyExtractedOutput(attachment.filePath, built);
+
+      writeFileSync(normalizedPath, built.markdown, "utf-8");
+      writeManifestFile(manifestPath, built.manifest);
+      byDocKey.set(attachment.docKey, { manifestPath, normalizedPath });
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+
+  return byDocKey;
+}
+
 async function extractBatch(
+  batch: AttachmentCatalogEntry[],
+  tempRoot: string,
+  manifestsDir: string,
+  normalizedDir: string,
+  options: ExtractBatchOptions = {},
+): Promise<Map<string, ExtractedPaths>> {
+  if (batch.length !== 1) {
+    return await extractBatchStructured(batch, tempRoot, manifestsDir, normalizedDir, options);
+  }
+
+  let primaryError: unknown;
+  try {
+    return await extractBatchStructured(batch, tempRoot, manifestsDir, normalizedDir, options);
+  } catch (err) {
+    primaryError = err;
+  }
+
+  if (isOdlStructuralBug(primaryError)) {
+    try {
+      return await extractBatchTextOnly(batch, tempRoot, manifestsDir, normalizedDir, options);
+    } catch {
+      // fall through to pdftotext
+    }
+  }
+
+  if (
+    isOdlStructuralBug(primaryError) ||
+    isOdlEmptyOutput(primaryError) ||
+    isOdlTimeout(primaryError)
+  ) {
+    try {
+      return await extractBatchPdftotext(batch, tempRoot, manifestsDir, normalizedDir, options);
+    } catch {
+      throw primaryError;
+    }
+  }
+
+  throw primaryError;
+}
+
+async function extractBatchStructured(
   batch: AttachmentCatalogEntry[],
   tempRoot: string,
   manifestsDir: string,
@@ -612,7 +783,7 @@ async function extractBatch(
   const byDocKey = new Map<string, ExtractedPaths>();
 
   try {
-    await withHiddenJavaDockIcon(() =>
+    await withJavaToolOptions(() =>
       runOdlConvert(
         batch.map((attachment) => attachment.filePath),
         {
