@@ -173,132 +173,104 @@ function overridesFromFlags(flags: Record<string, FlagValue>): ConfigOverrides {
 }
 
 function printHelp(): void {
-  console.log(`zotagent
+  console.log(`zotagent — Zotero CLI for AI agents.
 
-Search indexed Zotero documents or bibliography metadata and follow hits with read or expand.
+Usage: zotagent <command> [flags]
 
-Usage:
-  zotagent sync [--attachments-root <path>] [--retry-errors] [--pdf-timeout-ms <n>] [--pdf-batch-size <n>]
-  zotagent status
-  zotagent version
-  zotagent add [--doi <doi> | --s2-paper-id <id>] [--title <text>] [--author <name>] [--year <text>] [--publication <text>] [--url <url>] [--url-date <date>] [--collection-key <key>] [--item-type <type>]
-  zotagent s2 "<text>" [--limit <n>]
-  zotagent search "<text>" [--keyword | --semantic] [--limit <n>] [--min-score <n>]
-  zotagent search-in "<text>" (--file <path> | --item-key <key> | --citation-key <key>) [--limit <n>]
-  zotagent metadata "<text>" [--limit <n>] [--field <field>] [--has-file]
-  zotagent read (--file <path> | --item-key <key> | --citation-key <key>) [--offset-block <n>] [--limit-blocks <n>]
-  zotagent fulltext (--file <path> | --item-key <key> | --citation-key <key>) [--clean]
-  zotagent expand (--file <path> | --item-key <key> | --citation-key <key>) --block-start <n> [--block-end <n>] [--radius <n>]
-
-Commands:
-  sync
-    Refresh the local index.
-    Use --attachments-root to index only a Zotero subfolder.
-    Unchanged extraction errors are skipped by default; use --retry-errors to retry them.
+Index
+  sync [--attachments-root <path>] [--retry-errors] [--pdf-timeout-ms <n>] [--pdf-batch-size <n>]
+      Build or refresh the local index of PDF, EPUB, HTML, and TXT attachments.
+      Unchanged extraction errors are skipped by default; pass --retry-errors to retry them.
+        --attachments-root <path>   Index only a Zotero subfolder.
+        --retry-errors              Retry unchanged files that failed extraction earlier.
+        --pdf-timeout-ms <n>        Override the OpenDataLoader timeout for each PDF extraction call.
+        --pdf-batch-size <n>        Override the maximum number of PDFs per extraction batch.
 
   status
-    Show attachment counts, local index paths, and qmd status.
+      Show attachment counts, local index paths, and qmd status.
 
-  version
-    Print the current zotagent version.
+Add to Zotero
+  add [--doi <doi> | --s2-paper-id <id>] [--title <text>] [--author <name>] [--year <text>]
+      [--publication <text>] [--url <url>] [--url-date <date>] [--collection-key <key>] [--item-type <type>]
+      Create a Zotero item and return its itemKey. Prefer --doi when available.
+      --s2-paper-id imports from Semantic Scholar (and still prefers DOI when present).
+        --doi <doi>                 Import from DOI metadata when possible.
+        --s2-paper-id <id>          Import a Semantic Scholar paper by paperId.
+        --title <text>              Set title for manual add or DOI fallback.
+        --author <name>             Add an author. Repeat for multiple authors.
+        --year <text>               Set the Zotero date field.
+        --publication <text>        Set journal, website, or container title when supported.
+        --url <url>                 Set the item URL.
+        --url-date <date>           Set the access date for the URL.
+        --collection-key <key>      Add the new item to a Zotero collection by collection key.
+        --item-type <type>          Override the Zotero item type. Default: journalArticle or webpage.
 
-  add
-    Add a Zotero item and return its itemKey immediately.
-    Prefer --doi when available. --s2-paper-id imports from Semantic Scholar and still prefers DOI when present.
+  s2 "<text>" [--limit <n>]
+      Search Semantic Scholar; pass a returned paperId to \`add --s2-paper-id\`.
 
-  s2
-    Search Semantic Scholar papers by keyword.
-    Use a returned paperId with add --s2-paper-id to create a Zotero item.
+Search
+  search "<text>" [--keyword | --semantic] [--limit <n>] [--min-score <n>]
+      Search indexed documents.
+      Default is keyword search (FTS5 with porter stemming): "exact phrase", OR, NOT, NEAR, prefix*.
+      --semantic uses vector + LLM query expansion (slower, heavier); cannot combine with --keyword.
+        --limit <n>                 Return up to n search results. Default: 10 for search, 20 for metadata.
+        --min-score <n>             Drop lower-scoring search hits before mapping.
 
-  search
-    Search indexed Zotero documents.
-    Default is keyword search (FTS5 with porter stemming).
-    Supports FTS5 query syntax: "exact phrase", OR, NOT, NEAR, prefix*.
-    --semantic uses vector + LLM query expansion for meaning-based search (slower, heavier).
-    --keyword and --semantic cannot be combined.
+  search-in "<text>" (--file <path> | --item-key <key> | --citation-key <key>) [--limit <n>]
+      Search within one indexed document or a selected set of matching attachments.
 
-  search-in
-    Search within one indexed document or a selected set of matching attachments.
-    Use one of --file, --item-key, or --citation-key to limit the search scope.
+  metadata "<text>" [--limit <n>] [--field <field>] [--has-file]
+      Search Zotero bibliography metadata from bibliography.json.
+        --field <field>             Limit metadata search to title, author, year, abstract, journal,
+                                    or publisher. Repeatable.
+        --has-file                  Keep only metadata results with a supported indexed attachment.
 
-  metadata
-    Search Zotero bibliography metadata from bibliography.json.
-    --field can be repeated and supports: title, author, year, abstract, journal, publisher.
-    --has-file keeps only results with a supported indexed attachment path.
+Read
+  read (--file <path> | --item-key <key> | --citation-key <key>) [--offset-block <n>] [--limit-blocks <n>]
+      Read blocks directly from a local manifest. Use one of --file, --item-key, or --citation-key.
+        --offset-block <n>          Start reading at block n. Default: 0.
+        --limit-blocks <n>          Read up to n blocks. Default: 20.
 
-  read
-    Read blocks directly from a local manifest.
-    Use one of --file, --item-key, or --citation-key.
+  fulltext (--file <path> | --item-key <key> | --citation-key <key>) [--clean]
+      Output agent-friendly full text from a local manifest.
+      Returns the original normalized markdown by default. Returns all matching attachments
+      when --item-key or --citation-key maps to multiple files.
+        --clean                     For fulltext, apply heuristic cleanup (drops duplicate blocks
+                                    and common boilerplate such as citation notices and TOC lines).
 
-  fulltext
-    Output agent-friendly full text from a local manifest.
-    Returns the original normalized markdown by default, without content filtering.
-    Use --clean to remove duplicate blocks and common boilerplate such as citation notices and table-of-contents lines.
-    Returns all matching attachments for --item-key or --citation-key.
-    Use one of --file, --item-key, or --citation-key.
+  expand (--file <path> | --item-key <key> | --citation-key <key>) --block-start <n> [--block-end <n>] [--radius <n>]
+      Expand around a search hit or block range from a local manifest.
+        --block-start <n>           Start block for expand.
+        --block-end <n>             End block for expand. Default: block-start.
+        --radius <n>                Include n blocks before and after. Default: 2.
 
-  expand
-    Expand around a search hit or block range from a local manifest.
-    Use one of --file, --item-key, or --citation-key.
+Document selectors (used by search-in, read, fulltext, expand)
+  --file <path>                 Path to an indexed attachment.
+  --item-key <key>              Resolve an indexed attachment by Zotero item key.
+  --citation-key <key>          Resolve an indexed attachment by citation key.
 
-Options:
-  --attachments-root <path>   Limit sync to a Zotero subfolder.
-  --retry-errors              Retry unchanged files that failed extraction earlier.
-  --pdf-timeout-ms <n>        Override the OpenDataLoader timeout for each PDF extraction call.
-  --pdf-batch-size <n>        Override the maximum number of PDFs per extraction batch.
-  --doi <doi>                 Import from DOI metadata when possible.
-  --s2-paper-id <id>          Import a Semantic Scholar paper by paperId.
-  --title <text>              Set title for manual add or DOI fallback.
-  --author <name>             Add an author. Repeat for multiple authors.
-  --year <text>               Set the Zotero date field.
-  --publication <text>        Set journal, website, or container title when supported.
-  --url <url>                 Set the item URL.
-  --url-date <date>           Set the access date for the URL.
-  --collection-key <key>      Add the new item to a Zotero collection by collection key.
-  --item-type <type>          Override the Zotero item type. Default: journalArticle or webpage.
-  --item-key <key>            Resolve an indexed attachment by Zotero item key for search-in, read, fulltext, or expand.
-  --citation-key <key>        Resolve an indexed attachment by citation key for search-in, read, fulltext, or expand.
-  --clean                     For fulltext, apply heuristic cleanup instead of returning the original normalized markdown.
-  --keyword                   Use keyword search (default). FTS5 with porter stemming.
-  --semantic                  Use semantic search. Vector + LLM query expansion (slower, heavier).
-  --limit <n>                 Return up to n search results. Default: 10 for search, 20 for metadata.
-  --min-score <n>             Drop lower-scoring search hits before mapping.
-  --field <field>             Limit metadata search to title, author, year, abstract, journal, or publisher.
-  --has-file                  Keep only metadata results with a supported indexed attachment.
-  --offset-block <n>          Start reading at block n. Default: 0.
-  --limit-blocks <n>          Read up to n blocks. Default: 20.
-  --block-start <n>           Start block for expand.
-  --block-end <n>             End block for expand. Default: block-start.
-  --radius <n>                Include n blocks before and after. Default: 2.
-  --version                   Print the current zotagent version.
+Other
+  version, --version            Print the current zotagent version.
+  help, --help                  Show this help.
 
-Examples:
-  zotagent add --doi "10.1016/j.econmod.2026.107590"
-  zotagent add --s2-paper-id "f2005ed06241e8aa6f55f7ed9279a56b92038128"
-  zotagent add --title "Working Paper" --author "Jane Doe" --year 2026 --collection-key "ABCD1234" --url "https://example.com"
-  zotagent s2 "state-owned enterprise governance" --limit 5
-  zotagent search "dangwei shuji"
-  zotagent search "party secretary governance" --semantic
-  zotagent search-in "dangwei shuji" --item-key KG326EEI
-  zotagent search "state-owned enterprise governance" --limit 5 --min-score 0.4
-  zotagent metadata "American Journal of Political Science" --field journal
-  zotagent read --item-key KG326EEI
-  zotagent read --citation-key lee2024aging
-  zotagent fulltext --item-key KG326EEI
-  zotagent fulltext --item-key KG326EEI --clean
-  zotagent expand --item-key KG326EEI --block-start 10 --radius 2
-  zotagent status
-  zotagent version
-  zotagent sync --attachments-root "/path/to/zotero/subfolder"
-  zotagent sync --retry-errors --pdf-timeout-ms 1800000
-  zotagent sync --pdf-batch-size 1
-
-Config:
-  Paths and other defaults are read from ~/.zotagent/config.json.
+Config
+  Paths and credentials are read from ~/.zotagent/config.json.
   The add command also needs zoteroLibraryId, zoteroLibraryType, and zoteroApiKey.
   zoteroLibraryType supports both user and group.
-  zoteroCollectionKey sets the default collection for new add commands.
+  zoteroCollectionKey sets the default collection for new items created by add.
   The s2 command and --s2-paper-id also need semanticScholarApiKey.
+
+Examples
+  zotagent sync
+  zotagent add --doi "10.1016/j.econmod.2026.107590"
+  zotagent s2 "state-owned enterprise governance" --limit 5
+  zotagent search '"aging in China" NOT famine'
+  zotagent search "party secretary governance" --semantic
+  zotagent search-in "dangwei shuji" --item-key KG326EEI
+  zotagent metadata "American Journal of Political Science" --field journal
+  zotagent read --item-key KG326EEI
+  zotagent fulltext --citation-key lee2024aging --clean
+  zotagent expand --item-key KG326EEI --block-start 10 --radius 2
 `);
 }
 

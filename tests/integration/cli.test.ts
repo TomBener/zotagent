@@ -271,45 +271,73 @@ test("help summarizes current commands and keeps config-only overrides out of th
   const result = runCli(["help"]);
 
   assert.equal(result.status, 0);
-  assert.match(result.stdout, /Usage:/);
+  assert.match(result.stdout, /^zotagent — Zotero CLI for AI agents\./m);
+  assert.match(result.stdout, /Usage: zotagent <command> \[flags\]/);
+
+  // Command signatures grouped under section headings.
+  assert.match(result.stdout, /^Index$/m);
   assert.match(
     result.stdout,
-    /zotagent sync \[--attachments-root <path>\] \[--retry-errors\] \[--pdf-timeout-ms <n>\] \[--pdf-batch-size <n>\]/,
+    /sync \[--attachments-root <path>\] \[--retry-errors\] \[--pdf-timeout-ms <n>\] \[--pdf-batch-size <n>\]/,
   );
-  assert.match(result.stdout, /zotagent version/);
-  assert.match(result.stdout, /zotagent add \[--doi <doi> \| --s2-paper-id <id>\] \[--title <text>\]/);
-  assert.match(result.stdout, /zotagent s2 "<text>" \[--limit <n>\]/);
-  assert.match(result.stdout, /zotagent search "<text>" \[--keyword \| --semantic\] \[--limit <n>\]/);
-  assert.match(result.stdout, /zotagent search-in "<text>" \(\[?--file <path> \| --item-key <key> \| --citation-key <key>\)? \[--limit <n>\]/);
-  assert.match(result.stdout, /zotagent metadata "<text>" \[--limit <n>\] \[--field <field>\] \[--has-file\]/);
-  assert.match(result.stdout, /zotagent fulltext \(\[?--file <path> \| --item-key <key> \| --citation-key <key>\)? \[--clean\]/);
-  assert.match(result.stdout, /Options:/);
+  assert.match(result.stdout, /^\s+status$/m);
+  assert.match(result.stdout, /^Add to Zotero$/m);
+  assert.match(result.stdout, /add \[--doi <doi> \| --s2-paper-id <id>\] \[--title <text>\]/);
+  assert.match(result.stdout, /s2 "<text>" \[--limit <n>\]/);
+  assert.match(result.stdout, /^Search$/m);
+  assert.match(result.stdout, /search "<text>" \[--keyword \| --semantic\] \[--limit <n>\] \[--min-score <n>\]/);
+  assert.match(
+    result.stdout,
+    /search-in "<text>" \(--file <path> \| --item-key <key> \| --citation-key <key>\) \[--limit <n>\]/,
+  );
+  assert.match(result.stdout, /metadata "<text>" \[--limit <n>\] \[--field <field>\] \[--has-file\]/);
+  assert.match(result.stdout, /^Read$/m);
+  assert.match(
+    result.stdout,
+    /read \(--file <path> \| --item-key <key> \| --citation-key <key>\) \[--offset-block <n>\] \[--limit-blocks <n>\]/,
+  );
+  assert.match(
+    result.stdout,
+    /fulltext \(--file <path> \| --item-key <key> \| --citation-key <key>\) \[--clean\]/,
+  );
+  assert.match(
+    result.stdout,
+    /expand \(--file <path> \| --item-key <key> \| --citation-key <key>\) --block-start <n> \[--block-end <n>\] \[--radius <n>\]/,
+  );
+
+  // Per-command flag descriptions live near their command, not in a global Options block.
+  assert.doesNotMatch(result.stdout, /^Options:$/m);
+  assert.match(result.stdout, /--retry-errors\s+Retry unchanged files that failed extraction earlier\./);
+  assert.match(result.stdout, /--pdf-timeout-ms <n>\s+Override the OpenDataLoader timeout/);
+  assert.match(result.stdout, /--pdf-batch-size <n>\s+Override the maximum number of PDFs per extraction batch\./);
   assert.match(result.stdout, /--doi <doi>\s+Import from DOI metadata when possible\./);
   assert.match(result.stdout, /--s2-paper-id <id>\s+Import a Semantic Scholar paper by paperId\./);
   assert.match(result.stdout, /--collection-key <key>\s+Add the new item to a Zotero collection by collection key\./);
   assert.match(result.stdout, /--item-type <type>\s+Override the Zotero item type\./);
-  assert.match(result.stdout, /--version\s+Print the current zotagent version\./);
-  assert.match(result.stdout, /--retry-errors\s+Retry unchanged files that failed extraction earlier\./);
-  assert.match(result.stdout, /--pdf-timeout-ms <n>\s+Override the OpenDataLoader timeout/);
-  assert.match(result.stdout, /--pdf-batch-size <n>\s+Override the maximum number of PDFs per extraction batch\./);
   assert.match(
     result.stdout,
     /--limit <n>\s+Return up to n search results\. Default: 10 for search, 20 for metadata\./,
   );
   assert.match(result.stdout, /Default is keyword search/);
-  assert.match(result.stdout, /search-in\s+Search within one indexed document or a selected set of matching attachments\./);
-  assert.match(result.stdout, /--semantic\s+Use semantic search/);
   assert.match(result.stdout, /--field <field>\s+Limit metadata search/);
   assert.match(result.stdout, /--has-file\s+Keep only metadata results/);
-  assert.match(result.stdout, /zotagent expand \(\[?--file <path> \| --item-key <key> \| --citation-key <key>\)?/);
-  assert.match(result.stdout, /Use one of --file, --item-key, or --citation-key\./);
-  assert.match(result.stdout, /fulltext\s+Output agent-friendly full text from a local manifest\./);
   assert.match(result.stdout, /--clean\s+For fulltext, apply heuristic cleanup/);
-  assert.match(result.stdout, /--item-key <key>\s+Resolve an indexed attachment by Zotero item key/);
-  assert.match(result.stdout, /--citation-key <key>\s+Resolve an indexed attachment by citation key/);
+
+  // Document selectors are described once in their own block.
+  assert.match(result.stdout, /^Document selectors \(used by search-in, read, fulltext, expand\)$/m);
+  assert.match(result.stdout, /--file <path>\s+Path to an indexed attachment\./);
+  assert.match(result.stdout, /--item-key <key>\s+Resolve an indexed attachment by Zotero item key\./);
+  assert.match(result.stdout, /--citation-key <key>\s+Resolve an indexed attachment by citation key\./);
+
+  // Other / config / examples sections are present.
+  assert.match(result.stdout, /version, --version\s+Print the current zotagent version\./);
+  assert.match(result.stdout, /help, --help\s+Show this help\./);
+  assert.match(result.stdout, /Paths and credentials are read from \~\/\.zotagent\/config\.json\./);
   assert.match(result.stdout, /zoteroLibraryType supports both user and group\./);
   assert.match(result.stdout, /zoteroCollectionKey sets the default collection/);
-  assert.match(result.stdout, /Paths and other defaults are read from \~\/\.zotagent\/config\.json\./);
+  assert.match(result.stdout, /^Examples$/m);
+
+  // Config-only overrides should not appear in user-facing help.
   assert.doesNotMatch(result.stdout, /--bibliography <path>/);
   assert.doesNotMatch(result.stdout, /--data-dir <path>/);
   assert.doesNotMatch(result.stdout, /--qmd-embed-model <uri>/);
