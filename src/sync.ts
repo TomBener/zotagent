@@ -882,7 +882,7 @@ async function extractNonPdfAttachment(
   return { manifestPath, normalizedPath };
 }
 
-function buildContext(entry: CatalogEntry): string {
+export function buildContext(entry: CatalogEntry): string {
   const parts = [
     entry.title,
     entry.authors.length > 0 ? entry.authors.join(", ") : undefined,
@@ -902,15 +902,27 @@ function writeProgressCatalog(path: string, entries: CatalogEntry[]): void {
 }
 
 async function syncQmdContexts(qmd: Awaited<ReturnType<QmdFactory>>, readyEntries: CatalogEntry[]): Promise<void> {
-  const existing = await qmd.listContexts();
-  for (const row of existing) {
+  const existingContexts = new Map<string, string>();
+  for (const row of await qmd.listContexts()) {
     if (row.collection === "library") {
-      await qmd.removeContext("library", row.path);
+      existingContexts.set(row.path, row.context);
     }
   }
 
+  const desired = new Map<string, string>();
   for (const entry of readyEntries) {
-    await qmd.addContext("library", `/${entry.docKey}.md`, buildContext(entry));
+    desired.set(`/${entry.docKey}.md`, buildContext(entry));
+  }
+
+  for (const path of existingContexts.keys()) {
+    if (!desired.has(path)) {
+      await qmd.removeContext("library", path);
+    }
+  }
+
+  for (const [path, contextText] of desired) {
+    if (existingContexts.get(path) === contextText) continue;
+    await qmd.addContext("library", path, contextText);
   }
 }
 

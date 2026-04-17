@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  buildContext,
   buildJavaToolOptions,
   runProcessWithTimeout,
   runSync,
@@ -393,6 +394,105 @@ test("runSync skips unchanged ready pdfs and refreshes qmd contexts", async () =
   const logBody = readFileSync(result.logPath, "utf-8");
   assert.match(logBody, /## Skipped Files/);
   assert.match(logBody, /paper\.pdf: reused existing indexed output/);
+});
+
+test("runSync skips qmd context writes when existing contexts already match", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-ctx-noop-"));
+  const attachmentsRoot = join(root, "attachments");
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  const normalizedDir = join(dataDir, "normalized");
+  mkdirSync(join(attachmentsRoot, "papers"), { recursive: true });
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+  mkdirSync(normalizedDir, { recursive: true });
+
+  const pdfPath = join(attachmentsRoot, "papers", "paper.pdf");
+  writeFileSync(pdfPath, "pdf");
+  const pdfStat = statSync(pdfPath);
+  const docKey = sha1("papers/paper.pdf");
+  const normalizedPath = join(normalizedDir, `${docKey}.md`);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
+  writeFileSync(normalizedPath, "Body");
+  writeManifestFile(manifestPath, {
+    docKey,
+    itemKey: "ITEM1",
+    title: "Paper",
+    authors: ["Author One"],
+    filePath: pdfPath,
+    normalizedPath,
+    blocks: [],
+  });
+
+  const bibliographyPath = join(root, "bibliography.json");
+  writeFileSync(
+    bibliographyPath,
+    JSON.stringify([
+      {
+        id: "cite",
+        title: "Paper",
+        author: [{ family: "One", given: "Author" }],
+        file: pdfPath,
+        "zotero-item-key": "ITEM1",
+      },
+    ]),
+    "utf-8",
+  );
+
+  const matchingEntry = {
+    docKey,
+    itemKey: "ITEM1",
+    citationKey: "cite",
+    title: "Paper",
+    authors: ["One Author"],
+    filePath: pdfPath,
+    fileExt: "pdf" as const,
+    exists: true,
+    supported: true,
+    extractStatus: "ready" as const,
+    size: pdfStat.size,
+    mtimeMs: Math.trunc(pdfStat.mtimeMs),
+    sourceHash: "existinghash",
+    lastIndexedAt: new Date().toISOString(),
+    normalizedPath,
+    manifestPath,
+  };
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [matchingEntry],
+  });
+
+  const expectedContext = buildContext(matchingEntry);
+  const calls = { added: 0, removed: 0 };
+  const fakeFactory = async () => ({
+    search: async () => [],
+    searchLex: async () => [],
+    update: async () => ({}),
+    embed: async () => ({}),
+    getStatus: async () => ({ totalDocuments: 1, needsEmbedding: 0, hasVectorIndex: true, collections: [] }),
+    listContexts: async () => [
+      { collection: "library", path: `/${docKey}.md`, context: expectedContext },
+    ],
+    addContext: async () => {
+      calls.added += 1;
+      return true;
+    },
+    removeContext: async () => {
+      calls.removed += 1;
+      return true;
+    },
+    close: async () => {},
+  });
+
+  await runSync(
+    { bibliographyJsonPath: bibliographyPath, attachmentsRoot, dataDir },
+    fakeFactory,
+  );
+
+  assert.equal(calls.added, 0);
+  assert.equal(calls.removed, 0);
 });
 
 test("runSync resumes from existing normalized and manifest outputs when catalog state is missing", async () => {
