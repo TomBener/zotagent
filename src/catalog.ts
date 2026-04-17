@@ -279,9 +279,20 @@ export function loadCatalog(config: AppConfig): CatalogData {
     }
   }
 
-  attachments.sort((a, b) => a.filePath.localeCompare(b.filePath));
+  const deduped = preferEpubOverPdf(attachments);
+  deduped.sort((a, b) => a.filePath.localeCompare(b.filePath));
   records.sort((a, b) => a.itemKey.localeCompare(b.itemKey));
-  return { records, attachments };
+  return { records, attachments: deduped };
+}
+
+export function preferEpubOverPdf(
+  attachments: AttachmentCatalogEntry[],
+): AttachmentCatalogEntry[] {
+  const hasEpubByItem = new Map<string, boolean>();
+  for (const a of attachments) {
+    if (a.fileExt === "epub") hasEpubByItem.set(a.itemKey, true);
+  }
+  return attachments.filter((a) => !(a.fileExt === "pdf" && hasEpubByItem.get(a.itemKey)));
 }
 
 export function authorsToText(authors: string[]): string {

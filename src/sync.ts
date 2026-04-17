@@ -1415,8 +1415,29 @@ export async function runSync(
       writeProgressCatalog(paths.catalogPath, nextEntries);
     }
 
+    const bibliographyReferencedPaths = new Set(
+      catalogData.records.flatMap((record) => record.attachmentPaths),
+    );
     for (const docKey of staleDocKeys) {
       stats.removedAttachments += 1;
+      const previous = previousByDocKey.get(docKey);
+      // Only prune cached artifacts for deliberately-deduplicated attachments
+      // (the file is still referenced by the bibliography, just filtered from
+      // the indexer queue). Attachments that simply disappeared from disk or
+      // from Zotero keep their cache so a future sync can resume without
+      // re-extracting.
+      if (!previous || !bibliographyReferencedPaths.has(previous.filePath)) continue;
+      const manifestPath = resolve(paths.manifestsDir, `${docKey}${MANIFEST_EXT}`);
+      const normalizedPath = resolve(paths.normalizedDir, `${docKey}.md`);
+      for (const p of [manifestPath, normalizedPath]) {
+        if (exists(p)) {
+          try {
+            unlinkSync(p);
+          } catch {
+            // tolerate races / permission issues
+          }
+        }
+      }
     }
 
     nextEntries.sort((a, b) => a.filePath.localeCompare(b.filePath));

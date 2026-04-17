@@ -21,14 +21,22 @@ test("loadCatalog keeps attachments inside root and marks supported file types",
     bibliographyPath,
     JSON.stringify([
       {
-        id: "citekey",
+        id: "paper",
         title: "Paper",
         author: [{ family: "Smith", given: "Jane" }],
         issued: { "date-parts": [[2024]] },
         "container-title": "Journal of Testing",
-        file: `${pdfPath};${epubPath};/tmp/outside.pdf`,
+        file: `${pdfPath};/tmp/outside.pdf`,
         type: "article-journal",
         "zotero-item-key": "ITEM1",
+      },
+      {
+        id: "book",
+        title: "Book",
+        author: [{ family: "Smith", given: "Jane" }],
+        file: epubPath,
+        type: "book",
+        "zotero-item-key": "ITEM2",
       },
     ]),
     "utf-8",
@@ -41,16 +49,60 @@ test("loadCatalog keeps attachments inside root and marks supported file types",
     warnings: [],
   });
 
-  assert.equal(catalog.records.length, 1);
-  assert.deepEqual(catalog.records[0]?.authorSearchTexts, ["Smith Jane", "Jane Smith"]);
-  assert.equal(catalog.records[0]?.journal, "Journal of Testing");
-  assert.deepEqual(catalog.records[0]?.supportedFiles, [pdfPath, epubPath]);
-  assert.equal(catalog.records[0]?.hasSupportedFile, true);
+  assert.equal(catalog.records.length, 2);
+  const paperRecord = catalog.records.find((r) => r.itemKey === "ITEM1");
+  assert.deepEqual(paperRecord?.authorSearchTexts, ["Smith Jane", "Jane Smith"]);
+  assert.equal(paperRecord?.journal, "Journal of Testing");
+  assert.deepEqual(paperRecord?.supportedFiles, [pdfPath]);
+  assert.equal(paperRecord?.hasSupportedFile, true);
   assert.equal(catalog.attachments.length, 2);
   assert.equal(catalog.attachments[0]!.supported, true);
   assert.equal(catalog.attachments[0]!.fileExt, "epub");
   assert.equal(catalog.attachments[1]!.supported, true);
   assert.equal(catalog.attachments[1]!.fileExt, "pdf");
+});
+
+test("loadCatalog skips PDF attachments when the same itemKey also has an EPUB", () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-catalog-dedup-"));
+  const attachmentsRoot = join(root, "attachments");
+  mkdirSync(join(attachmentsRoot, "books"), { recursive: true });
+  const pdfPath = join(attachmentsRoot, "books", "Graham - 2016 - Vertical.pdf");
+  const epubPath = join(attachmentsRoot, "books", "Graham - 2016 - Vertical.epub");
+  const soloPdfPath = join(attachmentsRoot, "books", "Paper - 2024.pdf");
+  writeFileSync(pdfPath, "pdf");
+  writeFileSync(epubPath, "epub");
+  writeFileSync(soloPdfPath, "pdf");
+
+  const bibliographyPath = join(root, "bibliography.json");
+  writeFileSync(
+    bibliographyPath,
+    JSON.stringify([
+      {
+        title: "Vertical",
+        file: `${pdfPath};${epubPath}`,
+        "zotero-item-key": "BOOK",
+      },
+      {
+        title: "Paper without EPUB sibling",
+        file: soloPdfPath,
+        "zotero-item-key": "PAPER",
+      },
+    ]),
+    "utf-8",
+  );
+
+  const catalog = loadCatalog({
+    bibliographyJsonPath: bibliographyPath,
+    attachmentsRoot,
+    dataDir: join(root, "data"),
+    warnings: [],
+  });
+
+  const paths = catalog.attachments.map((a) => a.filePath).sort();
+  assert.deepEqual(paths, [epubPath, soloPdfPath].sort());
+  // The record still reflects both files existed on disk — dedup only affects the indexer queue.
+  const book = catalog.records.find((r) => r.itemKey === "BOOK");
+  assert.deepEqual(book?.attachmentPaths.sort(), [pdfPath, epubPath].sort());
 });
 
 test("loadCatalog remaps bibliography attachment paths into the current attachmentsRoot", () => {
@@ -69,17 +121,21 @@ test("loadCatalog remaps bibliography attachment paths into the current attachme
     bibliographyPath,
     JSON.stringify([
       {
-        id: "citekey",
+        id: "paper",
         title: "Portable Paper",
         author: [{ family: "Smith", given: "Jane" }],
         issued: { "date-parts": [[2024]] },
-        file: `${join(bibliographyRoot, "papers", "paper.pdf")};${join(
-          bibliographyRoot,
-          "papers",
-          "book.epub",
-        )}`,
+        file: join(bibliographyRoot, "papers", "paper.pdf"),
         type: "article-journal",
         "zotero-item-key": "ITEM1",
+      },
+      {
+        id: "book",
+        title: "Portable Book",
+        author: [{ family: "Smith", given: "Jane" }],
+        file: join(bibliographyRoot, "papers", "book.epub"),
+        type: "book",
+        "zotero-item-key": "ITEM2",
       },
     ]),
     "utf-8",
@@ -92,8 +148,14 @@ test("loadCatalog remaps bibliography attachment paths into the current attachme
     warnings: [],
   });
 
-  assert.deepEqual(catalog.records[0]?.attachmentPaths, [pdfPath, epubPath]);
-  assert.deepEqual(catalog.records[0]?.supportedFiles, [pdfPath, epubPath]);
+  assert.deepEqual(
+    catalog.records.find((r) => r.itemKey === "ITEM1")?.attachmentPaths,
+    [pdfPath],
+  );
+  assert.deepEqual(
+    catalog.records.find((r) => r.itemKey === "ITEM2")?.attachmentPaths,
+    [epubPath],
+  );
   assert.deepEqual(
     catalog.attachments.map((entry) => entry.docKey),
     [sha1("papers/book.epub"), sha1("papers/paper.pdf")],
