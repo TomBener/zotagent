@@ -112,11 +112,8 @@ test("searchLiterature prefers substantive hits over reference-only hits", async
   };
   writeCatalogFile(join(indexDir, "catalog.json"), catalog);
 
-  let capturedSearchOptions: { query?: string; limit?: number; rerank?: boolean; minScore?: number } | undefined;
-
   const fakeFactory = async () => ({
-    search: async (options: { query?: string; limit?: number; rerank?: boolean; minScore?: number }) => {
-      capturedSearchOptions = options;
+    search: async (_options: { query?: string; limit?: number; rerank?: boolean; minScore?: number }) => {
       return [
         {
           file: `qmd://library/${referenceDocKey}.md`,
@@ -145,7 +142,7 @@ test("searchLiterature prefers substantive hits over reference-only hits", async
     searchLex: async () => [],
     update: async () => ({}),
     embed: async () => ({}),
-    getStatus: async () => ({ documents: 2, collections: [], embeddings: { total: 2, stale: 0 } }),
+    getStatus: async () => ({ totalDocuments: 2, needsEmbedding: 0, hasVectorIndex: true, collections: [] }),
     listContexts: async () => [],
     addContext: async () => true,
     removeContext: async () => true,
@@ -232,7 +229,7 @@ test("searchLiterature keyword mode uses the keyword index and skips qmd", async
     searchLex: async () => [],
     update: async () => ({}),
     embed: async () => ({}),
-    getStatus: async () => ({ documents: 1, collections: [], embeddings: { total: 1, stale: 0 } }),
+    getStatus: async () => ({ totalDocuments: 1, needsEmbedding: 0, hasVectorIndex: true, collections: [] }),
     listContexts: async () => [],
     addContext: async () => true,
     removeContext: async () => true,
@@ -242,7 +239,7 @@ test("searchLiterature keyword mode uses the keyword index and skips qmd", async
   let keywordSearchCalled = false;
   const fakeKeywordFactory = async () => ({
     rebuildIndex: async () => {},
-    search: async (query: string) => {
+    search: async (_query: string) => {
       keywordSearchCalled = true;
       return [{ docKey, score: 1.5 }];
     },

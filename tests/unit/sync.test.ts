@@ -15,8 +15,22 @@ import {
   withJavaToolOptions,
 } from "../../src/sync.js";
 import { readCatalogFile, writeCatalogFile } from "../../src/state.js";
-import type { CatalogFile } from "../../src/types.js";
+import type { CatalogFile, ManifestBlock } from "../../src/types.js";
 import { MANIFEST_EXT, readManifestFile, sha1, writeManifestFile } from "../../src/utils.js";
+
+function trivialBlock(): ManifestBlock {
+  return {
+    blockIndex: 0,
+    blockType: "paragraph",
+    sectionPath: [],
+    text: "Body",
+    charStart: 0,
+    charEnd: 4,
+    lineStart: 1,
+    lineEnd: 1,
+    isReferenceLike: false,
+  };
+}
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 const syncModuleUrl = new URL("../../src/sync.ts", import.meta.url).href;
@@ -315,7 +329,7 @@ test("runSync skips unchanged ready pdfs and refreshes qmd contexts", async () =
       authors: ["A"],
       filePath: pdfPath,
       normalizedPath,
-      blocks: [],
+      blocks: [trivialBlock()],
     },
   );
 
@@ -443,7 +457,7 @@ test("runSync skips qmd context writes when existing contexts already match", as
     authors: ["Author One"],
     filePath: pdfPath,
     normalizedPath,
-    blocks: [],
+    blocks: [trivialBlock()],
   });
 
   const bibliographyPath = join(root, "bibliography.json");
@@ -543,7 +557,7 @@ test("runSync resumes from existing normalized and manifest outputs when catalog
       authors: ["A Author"],
       filePath: pdfPath,
       normalizedPath,
-      blocks: [],
+      blocks: [trivialBlock()],
     },
   );
 
@@ -710,6 +724,144 @@ test("runSync re-extracts attachments when fallback normalized output is empty",
   assert.equal(readFileSync(normalizedPath, "utf-8"), "Recovered body");
 });
 
+test("runSync re-extracts ready entries whose cached manifest has zero blocks", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-empty-blocks-"));
+  const attachmentsRoot = join(root, "attachments");
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  const normalizedDir = join(dataDir, "normalized");
+  mkdirSync(join(attachmentsRoot, "papers"), { recursive: true });
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+  mkdirSync(normalizedDir, { recursive: true });
+
+  const pdfPath = join(attachmentsRoot, "papers", "paper.pdf");
+  writeFileSync(pdfPath, "pdf");
+  const currentStat = statSync(pdfPath);
+  const docKey = sha1("papers/paper.pdf");
+  const normalizedPath = join(normalizedDir, `${docKey}.md`);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
+  // Non-empty normalized.md (passes the empty-normalized guard) + manifest with no blocks.
+  writeFileSync(normalizedPath, "Stale body", "utf-8");
+  writeManifestFile(
+    manifestPath,
+    {
+      docKey,
+      itemKey: "ITEM1",
+      title: "Paper",
+      authors: ["A Author"],
+      filePath: pdfPath,
+      normalizedPath,
+      blocks: [],
+    },
+  );
+
+  const bibliographyPath = join(root, "bibliography.json");
+  writeFileSync(
+    bibliographyPath,
+    JSON.stringify([
+      {
+        id: "cite",
+        title: "Paper",
+        author: [{ family: "A", given: "Author" }],
+        file: pdfPath,
+        "zotero-item-key": "ITEM1",
+      },
+    ]),
+    "utf-8",
+  );
+
+  // Catalog says the entry is "ready" with matching size/mtime, so without the
+  // empty-blocks guard sync would happily reuse the empty manifest.
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [
+      {
+        docKey,
+        itemKey: "ITEM1",
+        citationKey: "cite",
+        title: "Paper",
+        authors: ["A Author"],
+        filePath: pdfPath,
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: currentStat.size,
+        mtimeMs: Math.trunc(currentStat.mtimeMs),
+        sourceHash: "stalehash",
+        lastIndexedAt: new Date().toISOString(),
+        normalizedPath,
+        manifestPath,
+      },
+    ],
+  });
+
+  let extractCalls = 0;
+  const fakeFactory = async () => ({
+    search: async () => [],
+    searchLex: async () => [],
+    update: async () => ({}),
+    embed: async () => ({}),
+    getStatus: async () => ({ totalDocuments: 1, needsEmbedding: 0, hasVectorIndex: true, collections: [] }),
+    listContexts: async () => [],
+    addContext: async () => true,
+    removeContext: async () => true,
+    close: async () => {},
+  });
+  const fakeExtractBatch = async (batch: Array<{ docKey: string; filePath: string; itemKey: string }>) => {
+    extractCalls += 1;
+    const attachment = batch[0]!;
+    writeFileSync(normalizedPath, "Recovered body", "utf-8");
+    writeManifestFile(
+      manifestPath,
+      {
+        docKey: attachment.docKey,
+        itemKey: attachment.itemKey,
+        title: "Paper",
+        authors: ["A Author"],
+        filePath: attachment.filePath,
+        normalizedPath,
+        blocks: [
+          {
+            blockIndex: 0,
+            blockType: "paragraph",
+            sectionPath: ["Body"],
+            text: "Recovered body",
+            charStart: 0,
+            charEnd: 14,
+            lineStart: 1,
+            lineEnd: 1,
+            isReferenceLike: false,
+          },
+        ],
+      },
+    );
+    return new Map([[attachment.docKey, { manifestPath, normalizedPath }]]);
+  };
+
+  const result = await runSync(
+    {
+      bibliographyJsonPath: bibliographyPath,
+      attachmentsRoot,
+      dataDir,
+    },
+    fakeFactory,
+    undefined,
+    fakeExtractBatch,
+    () => {},
+  );
+
+  assert.equal(extractCalls, 1);
+  assert.equal(result.stats.readyAttachments, 1);
+  assert.equal(result.stats.updatedAttachments, 1);
+  assert.equal(result.stats.skippedAttachments, 0);
+  const refreshed = readManifestFile(manifestPath);
+  assert.equal(refreshed.blocks.length, 1);
+});
+
 test("runSync keeps embedding until qmd no longer reports pending documents", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-sync-embed-loop-"));
   const attachmentsRoot = join(root, "attachments");
@@ -738,7 +890,7 @@ test("runSync keeps embedding until qmd no longer reports pending documents", as
       authors: ["A"],
       filePath: pdfPath,
       normalizedPath,
-      blocks: [],
+      blocks: [trivialBlock()],
     },
   );
 
@@ -973,7 +1125,7 @@ test("runSync reuses a ready index when bibliography paths come from another mac
       authors: ["A"],
       filePath: foreignPath,
       normalizedPath,
-      blocks: [],
+      blocks: [trivialBlock()],
     },
   );
 
@@ -1314,7 +1466,7 @@ test("runSync reuses cached outputs after an attachment temporarily disappears",
       authors: ["A Author"],
       filePath: pdfPath,
       normalizedPath,
-      blocks: [],
+      blocks: [trivialBlock()],
     },
   );
   writeCatalogFile(join(indexDir, "catalog.json"), {

@@ -119,7 +119,7 @@ class SyncLogger {
   readonly latestLogPath: string;
 
   constructor(
-    private readonly paths: ReturnType<typeof getDataPaths>,
+    paths: ReturnType<typeof getDataPaths>,
     private readonly config: ReturnType<typeof resolveConfig>,
     private readonly startedAt: Date,
   ) {
@@ -526,6 +526,7 @@ function hasReusableArtifacts(
 
   const manifest = tryReadManifestFile(manifestPath);
   if (!manifest) return false;
+  if (manifest.blocks.length === 0) return false;
 
   return manifest.docKey === attachment.docKey && manifest.itemKey === attachment.itemKey;
 }
