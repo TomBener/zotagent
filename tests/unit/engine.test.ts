@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { expandDocument, fullTextDocument, fullTextDocuments, readDocument, searchLiterature, searchWithinDocuments } from "../../src/engine.js";
+import { expandDocument, fullTextDocument, readDocument, searchLiterature, searchWithinDocuments } from "../../src/engine.js";
 import { writeCatalogFile } from "../../src/state.js";
 import type { AttachmentManifest, CatalogFile } from "../../src/types.js";
 import { MANIFEST_EXT, writeManifestFile } from "../../src/utils.js";
@@ -693,13 +693,16 @@ test("searchWithinDocuments searches across multiple attachments for the same ke
   );
 
   assert.equal(result.results.length, 2);
-  assert.deepEqual(
-    result.results.map((row) => row.file),
-    ["/tmp/search-one.pdf", "/tmp/search-two.pdf"],
+  for (const row of result.results) {
+    assert.equal("file" in row, false);
+  }
+  assert.ok(
+    result.results[1]!.blockStart > result.results[0]!.blockStart,
+    "second attachment's block index should sit past the merged separator",
   );
 });
 
-test("readDocument reports multi-attachment conflict and expandDocument returns context blocks", () => {
+test("readDocument merges multi-attachment itemKey and expandDocument uses item-global blocks", () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-read-"));
   const dataDir = join(root, "data");
   const indexDir = join(dataDir, "index");
@@ -810,26 +813,30 @@ test("readDocument reports multi-attachment conflict and expandDocument returns 
     ],
   });
 
-  assert.throws(
-    () =>
-      readDocument(
-        {
-          itemKey: "ITEM1",
-          offsetBlock: 0,
-          limitBlocks: 20,
-        },
-        {
-          bibliographyJsonPath: join(root, "bibliography.json"),
-          attachmentsRoot: root,
-          dataDir,
-        },
-      ),
-    /Multiple indexed attachments found/,
+  const read = readDocument(
+    {
+      itemKey: "ITEM1",
+      offsetBlock: 0,
+      limitBlocks: 20,
+    },
+    {
+      bibliographyJsonPath: join(root, "bibliography.json"),
+      attachmentsRoot: root,
+      dataDir,
+    },
   );
+
+  assert.deepEqual(read.files, ["/tmp/doc-one.pdf", "/tmp/doc-two.pdf"]);
+  // Doc One has 3 blocks (0..2). Block 3 is the "Attachment: doc-two.pdf" separator.
+  // Doc Two has 0 blocks, so total = 4.
+  assert.equal(read.totalBlocks, 4);
+  assert.equal(read.blocks.length, 4);
+  assert.equal(read.blocks[3]!.blockType, "heading");
+  assert.match(read.blocks[3]!.text, /Attachment: doc-two\.pdf/);
 
   const expanded = expandDocument(
     {
-      file: "/tmp/doc-one.pdf",
+      itemKey: "ITEM1",
       blockStart: 1,
       blockEnd: 1,
       radius: 1,
@@ -932,7 +939,7 @@ test("expandDocument resolves a unique attachment by itemKey", () => {
   );
 
   assert.equal(expanded.itemKey, "ITEM5");
-  assert.equal(expanded.file, "/tmp/doc-five.pdf");
+  assert.deepEqual(expanded.files, ["/tmp/doc-five.pdf"]);
   assert.equal(expanded.contextStart, 0);
   assert.equal(expanded.contextEnd, 1);
   assert.equal(expanded.passage, "Second block.");
@@ -1023,7 +1030,7 @@ test("readDocument resolves a unique attachment by citationKey", () => {
 
   assert.equal(read.itemKey, "ITEM6");
   assert.equal(read.citationKey, "wang2024soe");
-  assert.equal(read.file, "/tmp/doc-six.pdf");
+  assert.deepEqual(read.files, ["/tmp/doc-six.pdf"]);
   assert.equal(read.blocks.length, 1);
   assert.equal(read.blocks[0]!.text, "Second block.");
 });
@@ -1276,7 +1283,7 @@ test("fullTextDocument strips boilerplate when clean is enabled", () => {
   assert.doesNotMatch(fullText.content, /To cite this article/i);
 });
 
-test("fullTextDocuments returns all matches for duplicate itemKey and citationKey", () => {
+test("fullTextDocument merges multiple attachments under one itemKey or citationKey", () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-fulltext-multi-"));
   const dataDir = join(root, "data");
   const indexDir = join(dataDir, "index");
@@ -1377,7 +1384,7 @@ test("fullTextDocuments returns all matches for duplicate itemKey and citationKe
     ],
   });
 
-  const fullTextsByItemKey = fullTextDocuments(
+  const mergedByItemKey = fullTextDocument(
     {
       itemKey: "ITEMM",
     },
@@ -1387,7 +1394,7 @@ test("fullTextDocuments returns all matches for duplicate itemKey and citationKe
       dataDir,
     },
   );
-  const fullTextsByCitationKey = fullTextDocuments(
+  const mergedByCitationKey = fullTextDocument(
     {
       citationKey: "lee2024multi",
     },
@@ -1398,26 +1405,19 @@ test("fullTextDocuments returns all matches for duplicate itemKey and citationKe
     },
   );
 
-  assert.equal(fullTextsByItemKey.results.length, 2);
-  assert.equal(fullTextsByCitationKey.results.length, 2);
-  assert.deepEqual(
-    fullTextsByItemKey.results.map((row) => row.file),
-    ["/tmp/multi-one.pdf", "/tmp/multi-two.pdf"],
-  );
-  assert.deepEqual(
-    fullTextsByCitationKey.results.map((row) => row.file),
-    ["/tmp/multi-one.pdf", "/tmp/multi-two.pdf"],
-  );
-  assert.match(fullTextsByItemKey.results[0]!.content, /Unique paragraph one\./);
-  assert.match(fullTextsByItemKey.results[1]!.content, /Unique paragraph two\./);
+  assert.deepEqual(mergedByItemKey.files, ["/tmp/multi-one.pdf", "/tmp/multi-two.pdf"]);
+  assert.deepEqual(mergedByCitationKey.files, ["/tmp/multi-one.pdf", "/tmp/multi-two.pdf"]);
+  assert.match(mergedByItemKey.content, /Unique paragraph one\./);
+  assert.match(mergedByItemKey.content, /Unique paragraph two\./);
+  assert.match(mergedByItemKey.content, /# Attachment: multi-two\.pdf/);
 });
 
-test("expandDocument rejects passing both file and citationKey", () => {
+test("expandDocument rejects passing both itemKey and citationKey", () => {
   assert.throws(
     () =>
       expandDocument(
         {
-          file: "/tmp/doc.pdf",
+          itemKey: "ITEM1",
           citationKey: "smith2024doc",
           blockStart: 0,
           blockEnd: 0,
@@ -1425,6 +1425,6 @@ test("expandDocument rejects passing both file and citationKey", () => {
         },
         {},
       ),
-    /Provide exactly one of --file <path>, --item-key <key>, or --citation-key <key>\./,
+    /Provide exactly one of --item-key <key> or --citation-key <key>\./,
   );
 });

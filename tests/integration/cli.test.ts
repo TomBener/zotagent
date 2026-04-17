@@ -288,21 +288,21 @@ test("help summarizes current commands and keeps config-only overrides out of th
   assert.match(result.stdout, /search "<text>" \[--keyword \| --semantic\] \[--limit <n>\] \[--min-score <n>\]/);
   assert.match(
     result.stdout,
-    /search-in "<text>" \(--file <path> \| --item-key <key> \| --citation-key <key>\) \[--limit <n>\]/,
+    /search-in "<text>" \(--item-key <key> \| --citation-key <key>\) \[--limit <n>\]/,
   );
   assert.match(result.stdout, /metadata "<text>" \[--limit <n>\] \[--field <field>\] \[--has-file\]/);
   assert.match(result.stdout, /^Read$/m);
   assert.match(
     result.stdout,
-    /read \(--file <path> \| --item-key <key> \| --citation-key <key>\) \[--offset-block <n>\] \[--limit-blocks <n>\]/,
+    /read \(--item-key <key> \| --citation-key <key>\) \[--offset-block <n>\] \[--limit-blocks <n>\]/,
   );
   assert.match(
     result.stdout,
-    /fulltext \(--file <path> \| --item-key <key> \| --citation-key <key>\) \[--clean\]/,
+    /fulltext \(--item-key <key> \| --citation-key <key>\) \[--clean\]/,
   );
   assert.match(
     result.stdout,
-    /expand \(--file <path> \| --item-key <key> \| --citation-key <key>\) --block-start <n> \[--block-end <n>\] \[--radius <n>\]/,
+    /expand \(--item-key <key> \| --citation-key <key>\) --block-start <n> \[--block-end <n>\] \[--radius <n>\]/,
   );
 
   // Per-command flag descriptions live near their command, not in a global Options block.
@@ -321,13 +321,12 @@ test("help summarizes current commands and keeps config-only overrides out of th
   assert.match(result.stdout, /Default is keyword search/);
   assert.match(result.stdout, /--field <field>\s+Limit metadata search/);
   assert.match(result.stdout, /--has-file\s+Keep only metadata results/);
-  assert.match(result.stdout, /--clean\s+For fulltext, apply heuristic cleanup/);
+  assert.match(result.stdout, /--clean\s+Apply heuristic cleanup/);
 
   // Document selectors are described once in their own block.
   assert.match(result.stdout, /^Document selectors \(used by search-in, read, fulltext, expand\)$/m);
-  assert.match(result.stdout, /--file <path>\s+Path to an indexed attachment\./);
-  assert.match(result.stdout, /--item-key <key>\s+Resolve an indexed attachment by Zotero item key\./);
-  assert.match(result.stdout, /--citation-key <key>\s+Resolve an indexed attachment by citation key\./);
+  assert.match(result.stdout, /--item-key <key>\s+Resolve an indexed item by Zotero item key\./);
+  assert.match(result.stdout, /--citation-key <key>\s+Resolve an indexed item by citation key\./);
 
   // Other / config / examples sections are present.
   assert.match(result.stdout, /version, --version\s+Print the current zotagent version\./);
@@ -470,11 +469,23 @@ test("search rejects invalid limit and min-score values", () => {
 });
 
 test("search-in rejects conflicting selectors and invalid limit values", () => {
-  const conflict = runCli(["search-in", "party", "--file", "/tmp/paper.pdf", "--item-key", "ITEM1"]);
+  const conflict = runCli([
+    "search-in",
+    "party",
+    "--item-key",
+    "ITEM1",
+    "--citation-key",
+    "cite1",
+  ]);
 
   assert.equal(conflict.status, 1);
   assert.match(conflict.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
-  assert.match(conflict.stdout, /Provide exactly one of --file <path>, --item-key <key>, or --citation-key <key>\./);
+  assert.match(conflict.stdout, /Provide exactly one of --item-key <key> or --citation-key <key>\./);
+
+  const legacyFile = runCli(["search-in", "party", "--file", "/tmp/paper.pdf"]);
+  assert.equal(legacyFile.status, 1);
+  assert.match(legacyFile.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
+  assert.match(legacyFile.stdout, /`--file` has been removed/);
 
   const invalidLimit = runCli(["search-in", "party", "--item-key", "ITEM1", "--limit", "0"]);
 
@@ -492,11 +503,16 @@ test("metadata rejects invalid limit values", () => {
 });
 
 test("read rejects conflicting selectors and invalid numeric values", () => {
-  const conflict = runCli(["read", "--file", "/tmp/paper.pdf", "--item-key", "ITEM1"]);
+  const conflict = runCli(["read", "--item-key", "ITEM1", "--citation-key", "cite1"]);
 
   assert.equal(conflict.status, 1);
   assert.match(conflict.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
-  assert.match(conflict.stdout, /Provide exactly one of --file <path>, --item-key <key>, or --citation-key <key>\./);
+  assert.match(conflict.stdout, /Provide exactly one of --item-key <key> or --citation-key <key>\./);
+
+  const legacyFile = runCli(["read", "--file", "/tmp/paper.pdf"]);
+  assert.equal(legacyFile.status, 1);
+  assert.match(legacyFile.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
+  assert.match(legacyFile.stdout, /`--file` has been removed/);
 
   const invalidOffset = runCli(["read", "--item-key", "ITEM1", "--offset-block", "-1"]);
 
@@ -508,17 +524,22 @@ test("read rejects conflicting selectors and invalid numeric values", () => {
 test("expand rejects conflicting selectors and invalid numeric values", () => {
   const conflict = runCli([
     "expand",
-    "--file",
-    "/tmp/paper.pdf",
     "--item-key",
     "ITEM1",
+    "--citation-key",
+    "cite1",
     "--block-start",
     "1",
   ]);
 
   assert.equal(conflict.status, 1);
   assert.match(conflict.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
-  assert.match(conflict.stdout, /Provide exactly one of --file <path>, --item-key <key>, or --citation-key <key>\./);
+  assert.match(conflict.stdout, /Provide exactly one of --item-key <key> or --citation-key <key>\./);
+
+  const legacyFile = runCli(["expand", "--file", "/tmp/paper.pdf", "--block-start", "1"]);
+  assert.equal(legacyFile.status, 1);
+  assert.match(legacyFile.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
+  assert.match(legacyFile.stdout, /`--file` has been removed/);
 
   const invalidRange = runCli(["expand", "--item-key", "ITEM1", "--block-start", "2", "--block-end", "1"]);
 
@@ -528,11 +549,16 @@ test("expand rejects conflicting selectors and invalid numeric values", () => {
 });
 
 test("fulltext rejects conflicting selectors", () => {
-  const conflict = runCli(["fulltext", "--file", "/tmp/paper.pdf", "--item-key", "ITEM1"]);
+  const conflict = runCli(["fulltext", "--item-key", "ITEM1", "--citation-key", "cite1"]);
 
   assert.equal(conflict.status, 1);
   assert.match(conflict.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
-  assert.match(conflict.stdout, /Provide exactly one of --file <path>, --item-key <key>, or --citation-key <key>\./);
+  assert.match(conflict.stdout, /Provide exactly one of --item-key <key> or --citation-key <key>\./);
+
+  const legacyFile = runCli(["fulltext", "--file", "/tmp/paper.pdf"]);
+  assert.equal(legacyFile.status, 1);
+  assert.match(legacyFile.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
+  assert.match(legacyFile.stdout, /`--file` has been removed/);
 });
 
 test("metadata accumulates repeated field filters", () => {
@@ -660,7 +686,6 @@ test("search-in returns passages within a selected document", async () => {
     data: {
       results: Array<{
         itemKey: string;
-        file: string;
         passage: string;
         blockStart: number;
         blockEnd: number;
@@ -671,7 +696,7 @@ test("search-in returns passages within a selected document", async () => {
   assert.equal(parsed.ok, true);
   assert.equal(parsed.data.results.length > 0, true);
   assert.equal(parsed.data.results[0]!.itemKey, "ITEM9");
-  assert.equal(parsed.data.results[0]!.file, fixture.filePath);
+  assert.equal("file" in parsed.data.results[0]!, false);
   assert.match(parsed.data.results[0]!.passage, /dangwei shuji/i);
   assert.equal(parsed.data.results[0]!.blockStart, 0);
   assert.equal(parsed.data.results[0]!.blockEnd, 0);
@@ -700,14 +725,20 @@ test("search-in searches across all attachments when one key maps to multiple PD
   const parsed = JSON.parse(result.stdout) as {
     ok: boolean;
     data: {
-      results: Array<{ file: string; passage: string }>;
+      results: Array<{ passage: string; blockStart: number; blockEnd: number }>;
     };
   };
   assert.equal(parsed.ok, true);
   assert.equal(parsed.data.results.length, 2);
-  assert.deepEqual(parsed.data.results.map((row) => row.file), fixture.filePaths);
+  for (const row of parsed.data.results) {
+    assert.equal("file" in row, false);
+  }
   assert.match(parsed.data.results[0]!.passage, /Unique paragraph 1\./);
   assert.match(parsed.data.results[1]!.passage, /Unique paragraph 2\./);
+  assert.ok(
+    parsed.data.results[1]!.blockStart > parsed.data.results[0]!.blockStart,
+    "second attachment's block index should be offset past the separator",
+  );
 });
 
 test("expand resolves a unique attachment by itemKey", async () => {
@@ -734,7 +765,7 @@ test("expand resolves a unique attachment by itemKey", async () => {
     ok: boolean;
     data: {
       itemKey: string;
-      file: string;
+      files: string[];
       contextStart: number;
       contextEnd: number;
       passage: string;
@@ -742,7 +773,7 @@ test("expand resolves a unique attachment by itemKey", async () => {
   };
   assert.equal(parsed.ok, true);
   assert.equal(parsed.data.itemKey, "ITEM9");
-  assert.equal(parsed.data.file, fixture.filePath);
+  assert.deepEqual(parsed.data.files, [fixture.filePath]);
   assert.equal(parsed.data.contextStart, 0);
   assert.equal(parsed.data.contextEnd, 2);
   assert.match(parsed.data.passage, /Party organization shapes firm governance\./);
@@ -771,14 +802,14 @@ test("read resolves a unique attachment by citationKey", async () => {
     data: {
       itemKey: string;
       citationKey?: string;
-      file: string;
+      files: string[];
       blocks: Array<{ text: string }>;
     };
   };
   assert.equal(parsed.ok, true);
   assert.equal(parsed.data.itemKey, "ITEM9");
   assert.equal(parsed.data.citationKey, fixture.citationKey);
-  assert.equal(parsed.data.file, fixture.filePath);
+  assert.deepEqual(parsed.data.files, [fixture.filePath]);
   assert.equal(parsed.data.blocks.length, 1);
   assert.match(parsed.data.blocks[0]!.text, /company party secretary/);
 });
@@ -802,31 +833,28 @@ test("fulltext returns agent-friendly markdown", async () => {
   const parsed = JSON.parse(result.stdout) as {
     ok: boolean;
     data: {
-      results: Array<{
-        itemKey: string;
-        file: string;
-        format: string;
-        source: string;
-        keptBlocks: number;
-        skippedBoilerplateBlocks: number;
-        skippedDuplicateBlocks: number;
-        content: string;
-      }>;
+      itemKey: string;
+      files: string[];
+      format: string;
+      source: string;
+      keptBlocks: number;
+      skippedBoilerplateBlocks: number;
+      skippedDuplicateBlocks: number;
+      content: string;
     };
   };
   assert.equal(parsed.ok, true);
-  assert.equal(parsed.data.results.length, 1);
-  assert.equal(parsed.data.results[0]!.itemKey, "ITEM9");
-  assert.equal(parsed.data.results[0]!.file, fixture.filePath);
-  assert.equal(parsed.data.results[0]!.format, "markdown");
-  assert.equal(parsed.data.results[0]!.source, "normalized");
-  assert.equal(parsed.data.results[0]!.keptBlocks, 5);
-  assert.equal(parsed.data.results[0]!.skippedBoilerplateBlocks, 0);
-  assert.equal(parsed.data.results[0]!.skippedDuplicateBlocks, 0);
-  assert.match(parsed.data.results[0]!.content, /dangwei shuji/);
-  assert.equal(parsed.data.results[0]!.content.match(/Party organization shapes firm governance\./g)?.length, 2);
-  assert.match(parsed.data.results[0]!.content, /To cite this article/i);
-  assert.match(parsed.data.results[0]!.content, /Smith, J\./);
+  assert.equal(parsed.data.itemKey, "ITEM9");
+  assert.deepEqual(parsed.data.files, [fixture.filePath]);
+  assert.equal(parsed.data.format, "markdown");
+  assert.equal(parsed.data.source, "normalized");
+  assert.equal(parsed.data.keptBlocks, 5);
+  assert.equal(parsed.data.skippedBoilerplateBlocks, 0);
+  assert.equal(parsed.data.skippedDuplicateBlocks, 0);
+  assert.match(parsed.data.content, /dangwei shuji/);
+  assert.equal(parsed.data.content.match(/Party organization shapes firm governance\./g)?.length, 2);
+  assert.match(parsed.data.content, /To cite this article/i);
+  assert.match(parsed.data.content, /Smith, J\./);
 });
 
 test("fulltext clean strips common boilerplate", async () => {
@@ -849,23 +877,21 @@ test("fulltext clean strips common boilerplate", async () => {
   const parsed = JSON.parse(result.stdout) as {
     ok: boolean;
     data: {
-      results: Array<{
-        keptBlocks: number;
-        skippedBoilerplateBlocks: number;
-        skippedDuplicateBlocks: number;
-        content: string;
-      }>;
+      keptBlocks: number;
+      skippedBoilerplateBlocks: number;
+      skippedDuplicateBlocks: number;
+      content: string;
     };
   };
   assert.equal(parsed.ok, true);
-  assert.equal(parsed.data.results[0]!.keptBlocks, 3);
-  assert.equal(parsed.data.results[0]!.skippedBoilerplateBlocks, 1);
-  assert.equal(parsed.data.results[0]!.skippedDuplicateBlocks, 1);
-  assert.doesNotMatch(parsed.data.results[0]!.content, /To cite this article/i);
-  assert.match(parsed.data.results[0]!.content, /Smith, J\./);
+  assert.equal(parsed.data.keptBlocks, 3);
+  assert.equal(parsed.data.skippedBoilerplateBlocks, 1);
+  assert.equal(parsed.data.skippedDuplicateBlocks, 1);
+  assert.doesNotMatch(parsed.data.content, /To cite this article/i);
+  assert.match(parsed.data.content, /Smith, J\./);
 });
 
-test("fulltext returns all matched attachments for duplicate itemKey or citationKey", async () => {
+test("fulltext merges multiple attachments under one itemKey or citationKey into one document", async () => {
   const fixture = await createMultiIndexedFixture();
 
   const byItemKey = runCli([
@@ -896,25 +922,20 @@ test("fulltext returns all matched attachments for duplicate itemKey or citation
 
   const parsedItem = JSON.parse(byItemKey.stdout) as {
     ok: boolean;
-    data: { results: Array<{ file: string; content: string }> };
+    data: { itemKey: string; files: string[]; content: string };
   };
   const parsedCitation = JSON.parse(byCitationKey.stdout) as {
     ok: boolean;
-    data: { results: Array<{ file: string; content: string }> };
+    data: { itemKey: string; files: string[]; content: string };
   };
 
   assert.equal(parsedItem.ok, true);
   assert.equal(parsedCitation.ok, true);
-  assert.deepEqual(
-    parsedItem.data.results.map((row) => row.file),
-    fixture.filePaths,
-  );
-  assert.deepEqual(
-    parsedCitation.data.results.map((row) => row.file),
-    fixture.filePaths,
-  );
-  assert.match(parsedItem.data.results[0]!.content, /Unique paragraph 1\./);
-  assert.match(parsedItem.data.results[1]!.content, /Unique paragraph 2\./);
+  assert.deepEqual(parsedItem.data.files, fixture.filePaths);
+  assert.deepEqual(parsedCitation.data.files, fixture.filePaths);
+  assert.match(parsedItem.data.content, /Unique paragraph 1\./);
+  assert.match(parsedItem.data.content, /Unique paragraph 2\./);
+  assert.match(parsedItem.data.content, /# Attachment: /);
 });
 
 test("expand resolves a unique attachment by citationKey", async () => {
@@ -942,7 +963,7 @@ test("expand resolves a unique attachment by citationKey", async () => {
     data: {
       itemKey: string;
       citationKey?: string;
-      file: string;
+      files: string[];
       contextStart: number;
       contextEnd: number;
     };
@@ -950,7 +971,7 @@ test("expand resolves a unique attachment by citationKey", async () => {
   assert.equal(parsed.ok, true);
   assert.equal(parsed.data.itemKey, "ITEM9");
   assert.equal(parsed.data.citationKey, fixture.citationKey);
-  assert.equal(parsed.data.file, fixture.filePath);
+  assert.deepEqual(parsed.data.files, [fixture.filePath]);
   assert.equal(parsed.data.contextStart, 0);
   assert.equal(parsed.data.contextEnd, 2);
 });

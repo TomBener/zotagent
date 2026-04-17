@@ -1,13 +1,15 @@
 import { readFileSync } from "node:fs";
+import { basename as pathBasename } from "node:path";
 
 import { getDataPaths, resolveConfig, type ConfigOverrides } from "./config.js";
 import { findExactPhraseBlockRange, normalizeExactText } from "./exact.js";
 import { isBoilerplateLikeText, isTableOfContentsLikeText } from "./heuristics.js";
 import { openKeywordIndex, type KeywordIndexFactory } from "./keyword-db.js";
+import { mergeManifestsForItem } from "./manifest.js";
 import { openQmdClient, type QmdFactory } from "./qmd.js";
 import { getReadyEntries, readCatalogFile, summarizeCatalog } from "./state.js";
 import type { AttachmentManifest, CatalogEntry, ManifestBlock, SearchResultRow } from "./types.js";
-import { cleanText, compactHomePath, exists, normalizePathForLookup, overlap, readManifestFile } from "./utils.js";
+import { cleanText, compactHomePath, exists, overlap, readManifestFile } from "./utils.js";
 
 interface SearchBehaviorOptions {
   semantic?: boolean;
@@ -21,71 +23,101 @@ interface KeywordQueryProfile {
 }
 
 function resolveReadyEntries(
-  fileOrItem: { file?: string; itemKey?: string; citationKey?: string },
+  selector: { itemKey?: string; citationKey?: string },
   entries: CatalogEntry[],
-  options: { allowMultipleMatches?: boolean } = {},
 ): CatalogEntry[] {
   const selectors = [
-    fileOrItem.file ? "--file <path>" : null,
-    fileOrItem.itemKey ? "--item-key <key>" : null,
-    fileOrItem.citationKey ? "--citation-key <key>" : null,
+    selector.itemKey ? "--item-key <key>" : null,
+    selector.citationKey ? "--citation-key <key>" : null,
   ].filter((value): value is string => value !== null);
 
   if (selectors.length > 1) {
-    throw new Error(
-      "Provide exactly one of --file <path>, --item-key <key>, or --citation-key <key>.",
-    );
+    throw new Error("Provide exactly one of --item-key <key> or --citation-key <key>.");
   }
 
-  if (fileOrItem.file) {
-    const normalized = normalizePathForLookup(fileOrItem.file);
-    const matched = entries.find((entry) => normalizePathForLookup(entry.filePath) === normalized);
-    if (!matched) {
-      throw new Error(`Indexed attachment not found for file: ${fileOrItem.file}`);
-    }
-    return [matched];
-  }
-
-  if (fileOrItem.itemKey) {
-    const matched = entries.filter((entry) => entry.itemKey === fileOrItem.itemKey);
+  if (selector.itemKey) {
+    const matched = entries
+      .filter((entry) => entry.itemKey === selector.itemKey)
+      .sort((a, b) => a.filePath.localeCompare(b.filePath));
     if (matched.length === 0) {
-      throw new Error(`No indexed attachment found for itemKey: ${fileOrItem.itemKey}`);
-    }
-    if (matched.length > 1 && !options.allowMultipleMatches) {
-      throw new Error(
-        JSON.stringify({
-          message: `Multiple indexed attachments found for itemKey: ${fileOrItem.itemKey}`,
-          files: matched.map((entry) => compactHomePath(entry.filePath)),
-        }),
-      );
+      throw new Error(`No indexed attachment found for itemKey: ${selector.itemKey}`);
     }
     return matched;
   }
 
-  if (fileOrItem.citationKey) {
-    const matched = entries.filter((entry) => entry.citationKey === fileOrItem.citationKey);
+  if (selector.citationKey) {
+    const matched = entries
+      .filter((entry) => entry.citationKey === selector.citationKey)
+      .sort((a, b) => a.filePath.localeCompare(b.filePath));
     if (matched.length === 0) {
-      throw new Error(`No indexed attachment found for citationKey: ${fileOrItem.citationKey}`);
-    }
-    if (matched.length > 1 && !options.allowMultipleMatches) {
-      throw new Error(
-        JSON.stringify({
-          message: `Multiple indexed attachments found for citationKey: ${fileOrItem.citationKey}`,
-          files: matched.map((entry) => compactHomePath(entry.filePath)),
-        }),
-      );
+      throw new Error(`No indexed attachment found for citationKey: ${selector.citationKey}`);
     }
     return matched;
   }
 
-  throw new Error("Provide one of --file <path>, --item-key <key>, or --citation-key <key>.");
+  throw new Error("Provide one of --item-key <key> or --citation-key <key>.");
 }
 
-function resolveReadyEntry(
-  fileOrItem: { file?: string; itemKey?: string; citationKey?: string },
-  entries: CatalogEntry[],
-): CatalogEntry {
-  return resolveReadyEntries(fileOrItem, entries)[0]!;
+function groupReadyEntriesByItemKey(entries: CatalogEntry[]): Map<string, CatalogEntry[]> {
+  const groups = new Map<string, CatalogEntry[]>();
+  for (const entry of entries) {
+    const list = groups.get(entry.itemKey);
+    if (list) {
+      list.push(entry);
+    } else {
+      groups.set(entry.itemKey, [entry]);
+    }
+  }
+  for (const list of groups.values()) {
+    list.sort((a, b) => a.filePath.localeCompare(b.filePath));
+  }
+  return groups;
+}
+
+function readManifestCached(
+  entry: CatalogEntry,
+  cache: Map<string, AttachmentManifest>,
+): AttachmentManifest {
+  const cached = cache.get(entry.docKey);
+  if (cached) return cached;
+  if (!entry.manifestPath || !exists(entry.manifestPath)) {
+    throw new Error(`Indexed manifest not found for file: ${entry.filePath}`);
+  }
+  const manifest = readManifestFile(entry.manifestPath);
+  cache.set(entry.docKey, manifest);
+  return manifest;
+}
+
+function attachmentGlobalOffset(
+  entry: CatalogEntry,
+  itemGroup: CatalogEntry[],
+  cache: Map<string, AttachmentManifest>,
+): number {
+  if (itemGroup.length <= 1) return 0;
+  const idx = itemGroup.findIndex((e) => e.docKey === entry.docKey);
+  if (idx <= 0) return 0;
+  let offset = 0;
+  for (let i = 0; i < idx; i += 1) {
+    const sibling = itemGroup[i]!;
+    const manifest = readManifestCached(sibling, cache);
+    offset += manifest.blocks.length + 1;
+  }
+  return offset;
+}
+
+function loadMergedManifestForGroup(
+  itemGroup: CatalogEntry[],
+  cache: Map<string, AttachmentManifest>,
+): AttachmentManifest {
+  if (itemGroup.length === 1) {
+    return readManifestCached(itemGroup[0]!, cache);
+  }
+  const manifests = itemGroup.map((entry) => readManifestCached(entry, cache));
+  return mergeManifestsForItem(manifests);
+}
+
+function itemFilePaths(itemGroup: CatalogEntry[]): string[] {
+  return itemGroup.map((entry) => compactHomePath(entry.filePath));
 }
 
 export function mapChunkToBlockRange(
@@ -132,6 +164,7 @@ function buildSearchRow(
   entry: CatalogEntry,
   manifest: AttachmentManifest,
   range: { blockStart: number; blockEnd: number },
+  globalOffset: number,
   score: number,
 ): SearchResultRow & { referenceOnly: boolean } {
   const blocks = manifest.blocks.filter(
@@ -145,10 +178,9 @@ function buildSearchRow(
     title: entry.title,
     authors: entry.authors,
     ...(entry.year ? { year: entry.year } : {}),
-    file: compactHomePath(entry.filePath),
     passage: blocks.map((block) => block.text).join("\n\n"),
-    blockStart: range.blockStart,
-    blockEnd: range.blockEnd,
+    blockStart: range.blockStart + globalOffset,
+    blockEnd: range.blockEnd + globalOffset,
     score: Math.round((score - (referenceOnly ? 0.05 : 0)) * 10000) / 10000,
     referenceOnly,
   };
@@ -156,6 +188,7 @@ function buildSearchRow(
 
 function buildTitleSearchRow(
   entry: CatalogEntry,
+  globalOffset: number,
   score: number,
 ): SearchResultRow & { referenceOnly: boolean } {
   return {
@@ -164,10 +197,9 @@ function buildTitleSearchRow(
     title: entry.title,
     authors: entry.authors,
     ...(entry.year ? { year: entry.year } : {}),
-    file: compactHomePath(entry.filePath),
     passage: entry.title,
-    blockStart: 0,
-    blockEnd: 0,
+    blockStart: globalOffset,
+    blockEnd: globalOffset,
     score: Math.round(score * 10000) / 10000,
     referenceOnly: false,
   };
@@ -445,31 +477,39 @@ function buildKeywordSearchRow(
   entry: CatalogEntry,
   manifest: AttachmentManifest,
   query: KeywordQueryProfile,
+  globalOffset: number,
   score: number,
 ): SearchResultRow & { referenceOnly: boolean } {
   const exactRange = query.normalizedQuery ? findExactPhraseBlockRange(manifest, query.normalizedQuery) : null;
   if (exactRange) {
-    return buildSearchRow(entry, manifest, exactRange, score);
+    return buildSearchRow(entry, manifest, exactRange, globalOffset, score);
   }
 
   const bestBlock = findBestBlockByTerms(manifest, query);
   const titleScore = scoreKeywordText(entry.title, query);
   if (titleScore > (bestBlock?.score ?? 0)) {
-    return buildTitleSearchRow(entry, score);
+    return buildTitleSearchRow(entry, globalOffset, score);
   }
   if (bestBlock) {
-    return buildSearchRow(entry, manifest, { blockStart: bestBlock.blockStart, blockEnd: bestBlock.blockEnd }, score);
+    return buildSearchRow(
+      entry,
+      manifest,
+      { blockStart: bestBlock.blockStart, blockEnd: bestBlock.blockEnd },
+      globalOffset,
+      score,
+    );
   }
-  return buildSearchRow(entry, manifest, { blockStart: 0, blockEnd: 0 }, score);
+  return buildSearchRow(entry, manifest, { blockStart: 0, blockEnd: 0 }, globalOffset, score);
 }
 
 function buildHybridSearchRow(
   entry: CatalogEntry,
   manifest: AttachmentManifest,
   result: { bestChunkPos: number; bestChunk: string; score: number },
+  globalOffset: number,
 ): SearchResultRow & { referenceOnly: boolean } {
   const range = mapChunkToBlockRange(manifest, result.bestChunkPos, result.bestChunk);
-  return buildSearchRow(entry, manifest, range, result.score);
+  return buildSearchRow(entry, manifest, range, globalOffset, result.score);
 }
 
 function docKeyFromSearchResultPath(resultPath: string): string | undefined {
@@ -510,7 +550,7 @@ type FullTextRow = {
   title: string;
   authors: string[];
   year?: string;
-  file: string;
+  files: string[];
   format: "markdown";
   source: "manifest" | "normalized";
   totalBlocks: number;
@@ -552,6 +592,8 @@ export async function searchLiterature(
   }
 
   const entryByDocKey = new Map(readyEntries.map((entry) => [entry.docKey, entry]));
+  const itemGroups = groupReadyEntriesByItemKey(readyEntries);
+  const manifestCache = new Map<string, AttachmentManifest>();
 
   let mapped: Array<SearchResultRow & { referenceOnly: boolean }>;
 
@@ -571,9 +613,11 @@ export async function searchLiterature(
             docKeyFromSearchResultPath(result.file) ?? docKeyFromSearchResultPath(result.displayPath);
           if (!docKey) return null;
           const entry = entryByDocKey.get(docKey);
-          if (!entry || !entry.manifestPath || !exists(entry.manifestPath)) return null;
-          const manifest = readManifestFile(entry.manifestPath);
-          return buildHybridSearchRow(entry, manifest, result);
+          if (!entry) return null;
+          const itemGroup = itemGroups.get(entry.itemKey) ?? [entry];
+          const globalOffset = attachmentGlobalOffset(entry, itemGroup, manifestCache);
+          const manifest = readManifestCached(entry, manifestCache);
+          return buildHybridSearchRow(entry, manifest, result, globalOffset);
         })
         .filter((value): value is ReturnType<typeof buildHybridSearchRow> => value !== null)
         .sort((a, b) => b.score - a.score);
@@ -599,9 +643,11 @@ export async function searchLiterature(
         .filter((result) => behavior.minScore === undefined || result.score >= behavior.minScore)
         .map((result) => {
           const entry = entryByDocKey.get(result.docKey);
-          if (!entry || !entry.manifestPath || !exists(entry.manifestPath)) return null;
-          const manifest = readManifestFile(entry.manifestPath);
-          return buildKeywordSearchRow(entry, manifest, keywordQuery, result.score);
+          if (!entry) return null;
+          const itemGroup = itemGroups.get(entry.itemKey) ?? [entry];
+          const globalOffset = attachmentGlobalOffset(entry, itemGroup, manifestCache);
+          const manifest = readManifestCached(entry, manifestCache);
+          return buildKeywordSearchRow(entry, manifest, keywordQuery, globalOffset, result.score);
         })
         .filter((value): value is ReturnType<typeof buildKeywordSearchRow> => value !== null)
         .sort((a, b) => b.score - a.score);
@@ -622,7 +668,7 @@ export async function searchLiterature(
 
 export function searchWithinDocuments(
   query: string,
-  input: { file?: string; itemKey?: string; citationKey?: string },
+  input: { itemKey?: string; citationKey?: string },
   limit: number,
   overrides: ConfigOverrides = {},
 ): {
@@ -631,21 +677,20 @@ export function searchWithinDocuments(
 } {
   const normalizedQuery = normalizeExactText(query);
   if (!normalizedQuery) {
-    throw new Error("Missing search text. Use: zotagent search-in \"<text>\" (--file <path> | --item-key <key> | --citation-key <key>)");
+    throw new Error("Missing search text. Use: zotagent search-in \"<text>\" (--item-key <key> | --citation-key <key>)");
   }
 
   const queryTerms = [...new Set(normalizedQuery.split(" ").filter((term) => term.length > 0))];
   const config = resolveConfig(overrides);
   const catalog = readCatalogFile(getDataPaths(config.dataDir).catalogPath);
-  const entries = resolveReadyEntries(input, getReadyEntries(catalog), { allowMultipleMatches: true });
+  const entries = resolveReadyEntries(input, getReadyEntries(catalog));
+  const manifestCache = new Map<string, AttachmentManifest>();
   const mapped: Array<SearchResultRow & { referenceOnly: boolean }> = [];
 
-  for (const entry of entries) {
-    if (!entry.manifestPath || !exists(entry.manifestPath)) {
-      throw new Error(`Indexed manifest not found for file: ${entry.filePath}`);
-    }
-
-    const manifest = readManifestFile(entry.manifestPath);
+  let globalOffset = 0;
+  for (let i = 0; i < entries.length; i += 1) {
+    const entry = entries[i]!;
+    const manifest = readManifestCached(entry, manifestCache);
     const candidates = new Map<string, { range: { blockStart: number; blockEnd: number }; score: number }>();
     const exactRange = findExactPhraseBlockRange(manifest, query);
     if (exactRange) {
@@ -686,11 +731,14 @@ export function searchWithinDocuments(
       }
     }
 
+    const offset = globalOffset;
     mapped.push(
       ...[...candidates.values()]
         .sort((a, b) => b.score - a.score || a.range.blockStart - b.range.blockStart)
-        .map((candidate) => buildSearchRow(entry, manifest, candidate.range, candidate.score)),
+        .map((candidate) => buildSearchRow(entry, manifest, candidate.range, offset, candidate.score)),
     );
+
+    globalOffset += manifest.blocks.length + (i < entries.length - 1 ? 1 : 0);
   }
 
   const substantive = mapped.filter((row) => !row.referenceOnly);
@@ -704,7 +752,7 @@ export function searchWithinDocuments(
 }
 
 export function readDocument(
-  input: { file?: string; itemKey?: string; citationKey?: string; offsetBlock: number; limitBlocks: number },
+  input: { itemKey?: string; citationKey?: string; offsetBlock: number; limitBlocks: number },
   overrides: ConfigOverrides = {},
 ): {
   itemKey: string;
@@ -712,7 +760,7 @@ export function readDocument(
   title: string;
   authors: string[];
   year?: string;
-  file: string;
+  files: string[];
   totalBlocks: number;
   blocks: Array<{
     blockIndex: number;
@@ -726,19 +774,18 @@ export function readDocument(
 } {
   const config = resolveConfig(overrides);
   const catalog = readCatalogFile(getDataPaths(config.dataDir).catalogPath);
-  const entry = resolveReadyEntry(input, getReadyEntries(catalog));
-  if (!entry.manifestPath || !exists(entry.manifestPath)) {
-    throw new Error(`Indexed manifest not found for file: ${entry.filePath}`);
-  }
-  const manifest = readManifestFile(entry.manifestPath);
+  const entries = resolveReadyEntries(input, getReadyEntries(catalog));
+  const manifestCache = new Map<string, AttachmentManifest>();
+  const manifest = loadMergedManifestForGroup(entries, manifestCache);
+  const primary = entries[0]!;
   const blocks = manifest.blocks.slice(input.offsetBlock, input.offsetBlock + input.limitBlocks);
   return {
-    itemKey: entry.itemKey,
-    ...(entry.citationKey ? { citationKey: entry.citationKey } : {}),
-    title: entry.title,
-    authors: entry.authors,
-    ...(entry.year ? { year: entry.year } : {}),
-    file: compactHomePath(entry.filePath),
+    itemKey: primary.itemKey,
+    ...(primary.citationKey ? { citationKey: primary.citationKey } : {}),
+    title: primary.title,
+    authors: primary.authors,
+    ...(primary.year ? { year: primary.year } : {}),
+    files: itemFilePaths(entries),
     totalBlocks: manifest.blocks.length,
     blocks: blocks.map((block) => ({
       blockIndex: block.blockIndex,
@@ -753,36 +800,48 @@ export function readDocument(
 }
 
 function buildFullTextRow(
-  entry: CatalogEntry,
+  entries: CatalogEntry[],
+  manifestCache: Map<string, AttachmentManifest>,
   options: { clean?: boolean } = {},
 ): FullTextRow {
-  if (!entry.manifestPath || !exists(entry.manifestPath)) {
-    throw new Error(`Indexed manifest not found for file: ${entry.filePath}`);
-  }
+  const primary = entries[0]!;
+  const manifest = loadMergedManifestForGroup(entries, manifestCache);
 
-  const manifest = readManifestFile(entry.manifestPath);
   if (!options.clean) {
     let content = "";
     let source: "manifest" | "normalized" = "manifest";
 
-    if (entry.normalizedPath && exists(entry.normalizedPath)) {
-      content = cleanText(readFileSync(entry.normalizedPath, "utf-8"));
+    const allHaveNormalized = entries.every(
+      (entry) => entry.normalizedPath && exists(entry.normalizedPath),
+    );
+
+    if (entries.length === 1 && allHaveNormalized) {
+      content = cleanText(readFileSync(primary.normalizedPath!, "utf-8"));
+      source = "normalized";
+    } else if (allHaveNormalized) {
+      const parts = entries.map((entry, i) => {
+        const body = cleanText(readFileSync(entry.normalizedPath!, "utf-8"));
+        if (i === 0) return body;
+        const basename = pathBasename(entry.filePath) || "attachment";
+        return `# Attachment: ${basename}\n\n${body}`;
+      });
+      content = cleanText(parts.join("\n\n"));
       source = "normalized";
     } else {
       content = renderManifestMarkdown(manifest);
     }
 
     if (!content) {
-      throw new Error(`No readable full text found for file: ${entry.filePath}`);
+      throw new Error(`No readable full text found for item: ${primary.itemKey}`);
     }
 
     return {
-      itemKey: entry.itemKey,
-      ...(entry.citationKey ? { citationKey: entry.citationKey } : {}),
-      title: entry.title,
-      authors: entry.authors,
-      ...(entry.year ? { year: entry.year } : {}),
-      file: compactHomePath(entry.filePath),
+      itemKey: primary.itemKey,
+      ...(primary.citationKey ? { citationKey: primary.citationKey } : {}),
+      title: primary.title,
+      authors: primary.authors,
+      ...(primary.year ? { year: primary.year } : {}),
+      files: itemFilePaths(entries),
       format: "markdown",
       source,
       totalBlocks: manifest.blocks.length,
@@ -803,11 +862,9 @@ function buildFullTextRow(
     const text = cleanText(block.text);
     if (!text) continue;
 
-    const looksLikeBoilerplate = options.clean
-      && (
-        isBoilerplateLikeText(text)
-        || (block.blockIndex < earlyNoiseWindow && isTableOfContentsLikeText(text))
-      );
+    const looksLikeBoilerplate =
+      isBoilerplateLikeText(text)
+      || (block.blockIndex < earlyNoiseWindow && isTableOfContentsLikeText(text));
     if (looksLikeBoilerplate) {
       skippedBoilerplateBlocks += 1;
       continue;
@@ -827,25 +884,20 @@ function buildFullTextRow(
     snippets.push(snippet);
   }
 
-  let content = cleanText(snippets.join("\n\n"));
-  let source: "manifest" | "normalized" = "manifest";
-  if (!content && entry.normalizedPath && exists(entry.normalizedPath)) {
-    content = cleanText(readFileSync(entry.normalizedPath, "utf-8"));
-    source = "normalized";
-  }
+  const content = cleanText(snippets.join("\n\n"));
   if (!content) {
-    throw new Error(`No readable full text found for file: ${entry.filePath}`);
+    throw new Error(`No readable full text found for item: ${primary.itemKey}`);
   }
 
   return {
-    itemKey: entry.itemKey,
-    ...(entry.citationKey ? { citationKey: entry.citationKey } : {}),
-    title: entry.title,
-    authors: entry.authors,
-    ...(entry.year ? { year: entry.year } : {}),
-    file: compactHomePath(entry.filePath),
+    itemKey: primary.itemKey,
+    ...(primary.citationKey ? { citationKey: primary.citationKey } : {}),
+    title: primary.title,
+    authors: primary.authors,
+    ...(primary.year ? { year: primary.year } : {}),
+    files: itemFilePaths(entries),
     format: "markdown",
-    source,
+    source: "manifest",
     totalBlocks: manifest.blocks.length,
     keptBlocks: snippets.length,
     skippedBoilerplateBlocks,
@@ -854,32 +906,20 @@ function buildFullTextRow(
   };
 }
 
-export function fullTextDocuments(
-  input: { file?: string; itemKey?: string; citationKey?: string; clean?: boolean },
+export function fullTextDocument(
+  input: { itemKey?: string; citationKey?: string; clean?: boolean },
   overrides: ConfigOverrides = {},
-): {
-  results: FullTextRow[];
-  warnings: string[];
-} {
+): FullTextRow & { warnings: string[] } {
   const config = resolveConfig(overrides);
   const catalog = readCatalogFile(getDataPaths(config.dataDir).catalogPath);
-  const entries = resolveReadyEntries(input, getReadyEntries(catalog), { allowMultipleMatches: true });
-
-  return {
-    results: entries.map((entry) => buildFullTextRow(entry, { clean: input.clean })),
-    warnings: config.warnings,
-  };
-}
-
-export function fullTextDocument(
-  input: { file?: string; itemKey?: string; citationKey?: string; clean?: boolean },
-  overrides: ConfigOverrides = {},
-): FullTextRow {
-  return fullTextDocuments(input, overrides).results[0]!;
+  const entries = resolveReadyEntries(input, getReadyEntries(catalog));
+  const manifestCache = new Map<string, AttachmentManifest>();
+  const row = buildFullTextRow(entries, manifestCache, { clean: input.clean });
+  return { ...row, warnings: config.warnings };
 }
 
 export function expandDocument(
-  input: { file?: string; itemKey?: string; citationKey?: string; blockStart: number; blockEnd: number; radius: number },
+  input: { itemKey?: string; citationKey?: string; blockStart: number; blockEnd: number; radius: number },
   overrides: ConfigOverrides = {},
 ): {
   itemKey: string;
@@ -887,7 +927,7 @@ export function expandDocument(
   title: string;
   authors: string[];
   year?: string;
-  file: string;
+  files: string[];
   contextStart: number;
   contextEnd: number;
   blockStart: number;
@@ -905,14 +945,10 @@ export function expandDocument(
 } {
   const config = resolveConfig(overrides);
   const catalog = readCatalogFile(getDataPaths(config.dataDir).catalogPath);
-  const entry = resolveReadyEntry(
-    { file: input.file, itemKey: input.itemKey, citationKey: input.citationKey },
-    getReadyEntries(catalog),
-  );
-  if (!entry.manifestPath || !exists(entry.manifestPath)) {
-    throw new Error(`Indexed manifest not found for file: ${entry.filePath}`);
-  }
-  const manifest = readManifestFile(entry.manifestPath);
+  const entries = resolveReadyEntries(input, getReadyEntries(catalog));
+  const manifestCache = new Map<string, AttachmentManifest>();
+  const manifest = loadMergedManifestForGroup(entries, manifestCache);
+  const primary = entries[0]!;
   const contextStart = Math.max(0, input.blockStart - input.radius);
   const contextEnd = Math.min(manifest.blocks.length - 1, input.blockEnd + input.radius);
   const blocks = manifest.blocks.filter(
@@ -923,12 +959,12 @@ export function expandDocument(
   );
 
   return {
-    itemKey: entry.itemKey,
-    ...(entry.citationKey ? { citationKey: entry.citationKey } : {}),
-    title: entry.title,
-    authors: entry.authors,
-    ...(entry.year ? { year: entry.year } : {}),
-    file: compactHomePath(entry.filePath),
+    itemKey: primary.itemKey,
+    ...(primary.citationKey ? { citationKey: primary.citationKey } : {}),
+    title: primary.title,
+    authors: primary.authors,
+    ...(primary.year ? { year: primary.year } : {}),
+    files: itemFilePaths(entries),
     contextStart,
     contextEnd,
     blockStart: input.blockStart,

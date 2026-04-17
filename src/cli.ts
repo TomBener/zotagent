@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 
 import { addS2PaperToZotero, addToZotero } from "./add.js";
 import { getDataPaths, type ConfigOverrides } from "./config.js";
-import { expandDocument, fullTextDocuments, getIndexStatus, readDocument, searchLiterature, searchWithinDocuments } from "./engine.js";
+import { expandDocument, fullTextDocument, getIndexStatus, readDocument, searchLiterature, searchWithinDocuments } from "./engine.js";
 import { emitError, emitOk } from "./json.js";
 import { searchMetadata } from "./metadata.js";
 import { openQmdClient } from "./qmd.js";
@@ -216,8 +216,8 @@ Search
         --limit <n>                 Return up to n search results. Default: 10 for search, 20 for metadata.
         --min-score <n>             Drop lower-scoring search hits before mapping.
 
-  search-in "<text>" (--file <path> | --item-key <key> | --citation-key <key>) [--limit <n>]
-      Search within one indexed document or a selected set of matching attachments.
+  search-in "<text>" (--item-key <key> | --citation-key <key>) [--limit <n>]
+      Search within all attachments of one indexed item.
 
   metadata "<text>" [--limit <n>] [--field <field>] [--has-file]
       Search Zotero bibliography metadata from bibliography.json.
@@ -226,28 +226,29 @@ Search
         --has-file                  Keep only metadata results with a supported indexed attachment.
 
 Read
-  read (--file <path> | --item-key <key> | --citation-key <key>) [--offset-block <n>] [--limit-blocks <n>]
-      Read blocks directly from a local manifest. Use one of --file, --item-key, or --citation-key.
+  read (--item-key <key> | --citation-key <key>) [--offset-block <n>] [--limit-blocks <n>]
+      Read blocks from a local manifest.
+      When one item has multiple indexed attachments, they are merged into one logical
+      document with monotonic block indices and "# Attachment: <name>" dividers between them.
         --offset-block <n>          Start reading at block n. Default: 0.
         --limit-blocks <n>          Read up to n blocks. Default: 20.
 
-  fulltext (--file <path> | --item-key <key> | --citation-key <key>) [--clean]
-      Output agent-friendly full text from a local manifest.
-      Returns the original normalized markdown by default. Returns all matching attachments
-      when --item-key or --citation-key maps to multiple files.
-        --clean                     For fulltext, apply heuristic cleanup (drops duplicate blocks
-                                    and common boilerplate such as citation notices and TOC lines).
+  fulltext (--item-key <key> | --citation-key <key>) [--clean]
+      Output agent-friendly full text for one item. Multi-attachment items return one
+      merged markdown document.
+        --clean                     Apply heuristic cleanup (drops duplicate blocks and
+                                    common boilerplate such as citation notices and TOC lines).
 
-  expand (--file <path> | --item-key <key> | --citation-key <key>) --block-start <n> [--block-end <n>] [--radius <n>]
+  expand (--item-key <key> | --citation-key <key>) --block-start <n> [--block-end <n>] [--radius <n>]
       Expand around a search hit or block range from a local manifest.
+      Block indices are item-global; feed blockStart from search results directly.
         --block-start <n>           Start block for expand.
         --block-end <n>             End block for expand. Default: block-start.
         --radius <n>                Include n blocks before and after. Default: 2.
 
 Document selectors (used by search-in, read, fulltext, expand)
-  --file <path>                 Path to an indexed attachment.
-  --item-key <key>              Resolve an indexed attachment by Zotero item key.
-  --citation-key <key>          Resolve an indexed attachment by citation key.
+  --item-key <key>              Resolve an indexed item by Zotero item key.
+  --citation-key <key>          Resolve an indexed item by citation key.
 
 Other
   version, --version            Print the current zotagent version.
@@ -290,18 +291,7 @@ function compactPathMap(paths: ReturnType<typeof getDataPaths>): ReturnType<type
 
 function emitDocumentLookupError(prefix: "SEARCH_IN" | "READ" | "FULLTEXT" | "EXPAND", error: unknown): void {
   const message = error instanceof Error ? error.message : String(error);
-  try {
-    const parsedError = JSON.parse(message) as { message?: string; files?: string[] };
-    emitError(
-      `${prefix}_CONFLICT`,
-      parsedError.message || message,
-      parsedError.files ? { files: parsedError.files } : undefined,
-    );
-    return;
-  } catch {
-    emitError(`${prefix}_FAILED`, message);
-    return;
-  }
+  emitError(`${prefix}_FAILED`, message);
 }
 
 async function main(): Promise<void> {
@@ -532,27 +522,30 @@ async function main(): Promise<void> {
 
       case "search-in": {
         if ("query" in parsed.flags) {
-          emitError("UNEXPECTED_ARGUMENT", '`--query` has been removed. Use: zotagent search-in "<text>" (--file <path> | --item-key <key> | --citation-key <key>)');
+          emitError("UNEXPECTED_ARGUMENT", '`--query` has been removed. Use: zotagent search-in "<text>" (--item-key <key> | --citation-key <key>)');
           return;
         }
         const query = parsed.positionals.slice(1).join(" ");
         if (!query) {
-          emitError("MISSING_ARGUMENT", 'Missing search text. Use: zotagent search-in "<text>" (--file <path> | --item-key <key> | --citation-key <key>)');
+          emitError("MISSING_ARGUMENT", 'Missing search text. Use: zotagent search-in "<text>" (--item-key <key> | --citation-key <key>)');
           return;
         }
-        const file = getStringFlag(parsed.flags, "file");
+        if ("file" in parsed.flags) {
+          emitError("UNEXPECTED_ARGUMENT", "`--file` has been removed. Use --item-key <key> or --citation-key <key>.");
+          return;
+        }
         const itemKey = getStringFlag(parsed.flags, "item-key");
         const citationKey = getStringFlag(parsed.flags, "citation-key");
-        const selectorCount = Number(Boolean(file)) + Number(Boolean(itemKey)) + Number(Boolean(citationKey));
+        const selectorCount = Number(Boolean(itemKey)) + Number(Boolean(citationKey));
         if (selectorCount > 1) {
           emitError(
             "UNEXPECTED_ARGUMENT",
-            "Provide exactly one of --file <path>, --item-key <key>, or --citation-key <key>.",
+            "Provide exactly one of --item-key <key> or --citation-key <key>.",
           );
           return;
         }
         if (selectorCount === 0) {
-          emitError("MISSING_ARGUMENT", "Provide one of --file <path>, --item-key <key>, or --citation-key <key>.");
+          emitError("MISSING_ARGUMENT", "Provide one of --item-key <key> or --citation-key <key>.");
           return;
         }
         const limitInput = parseNumericFlag(parsed.flags, "limit", {
@@ -569,7 +562,6 @@ async function main(): Promise<void> {
           const data = searchWithinDocuments(
             query,
             {
-              ...(file ? { file } : {}),
               ...(itemKey ? { itemKey } : {}),
               ...(citationKey ? { citationKey } : {}),
             },
@@ -648,19 +640,22 @@ async function main(): Promise<void> {
       }
 
       case "read": {
-        const file = getStringFlag(parsed.flags, "file");
+        if ("file" in parsed.flags) {
+          emitError("UNEXPECTED_ARGUMENT", "`--file` has been removed. Use --item-key <key> or --citation-key <key>.");
+          return;
+        }
         const itemKey = getStringFlag(parsed.flags, "item-key");
         const citationKey = getStringFlag(parsed.flags, "citation-key");
-        const selectorCount = Number(Boolean(file)) + Number(Boolean(itemKey)) + Number(Boolean(citationKey));
+        const selectorCount = Number(Boolean(itemKey)) + Number(Boolean(citationKey));
         if (selectorCount > 1) {
           emitError(
             "UNEXPECTED_ARGUMENT",
-            "Provide exactly one of --file <path>, --item-key <key>, or --citation-key <key>.",
+            "Provide exactly one of --item-key <key> or --citation-key <key>.",
           );
           return;
         }
         if (selectorCount === 0) {
-          emitError("MISSING_ARGUMENT", "Provide one of --file <path>, --item-key <key>, or --citation-key <key>.");
+          emitError("MISSING_ARGUMENT", "Provide one of --item-key <key> or --citation-key <key>.");
           return;
         }
         const offsetBlockInput = parseNumericFlag(parsed.flags, "offset-block", {
@@ -686,9 +681,8 @@ async function main(): Promise<void> {
         try {
           const data = readDocument(
             {
-              file,
-              itemKey,
-              citationKey,
+              ...(itemKey ? { itemKey } : {}),
+              ...(citationKey ? { citationKey } : {}),
               offsetBlock: offsetBlockInput.value ?? 0,
               limitBlocks: limitBlocksInput.value ?? 20,
             },
@@ -703,25 +697,27 @@ async function main(): Promise<void> {
       }
 
       case "fulltext": {
-        const file = getStringFlag(parsed.flags, "file");
+        if ("file" in parsed.flags) {
+          emitError("UNEXPECTED_ARGUMENT", "`--file` has been removed. Use --item-key <key> or --citation-key <key>.");
+          return;
+        }
         const itemKey = getStringFlag(parsed.flags, "item-key");
         const citationKey = getStringFlag(parsed.flags, "citation-key");
-        const selectorCount = Number(Boolean(file)) + Number(Boolean(itemKey)) + Number(Boolean(citationKey));
+        const selectorCount = Number(Boolean(itemKey)) + Number(Boolean(citationKey));
         if (selectorCount > 1) {
           emitError(
             "UNEXPECTED_ARGUMENT",
-            "Provide exactly one of --file <path>, --item-key <key>, or --citation-key <key>.",
+            "Provide exactly one of --item-key <key> or --citation-key <key>.",
           );
           return;
         }
         if (selectorCount === 0) {
-          emitError("MISSING_ARGUMENT", "Provide one of --file <path>, --item-key <key>, or --citation-key <key>.");
+          emitError("MISSING_ARGUMENT", "Provide one of --item-key <key> or --citation-key <key>.");
           return;
         }
         try {
-          const data = fullTextDocuments(
+          const data = fullTextDocument(
             {
-              ...(file ? { file } : {}),
               ...(itemKey ? { itemKey } : {}),
               ...(citationKey ? { citationKey } : {}),
               clean: getBooleanFlag(parsed.flags, "clean"),
@@ -737,14 +733,17 @@ async function main(): Promise<void> {
       }
 
       case "expand": {
-        const file = getStringFlag(parsed.flags, "file");
+        if ("file" in parsed.flags) {
+          emitError("UNEXPECTED_ARGUMENT", "`--file` has been removed. Use --item-key <key> or --citation-key <key>.");
+          return;
+        }
         const itemKey = getStringFlag(parsed.flags, "item-key");
         const citationKey = getStringFlag(parsed.flags, "citation-key");
-        const selectorCount = Number(Boolean(file)) + Number(Boolean(itemKey)) + Number(Boolean(citationKey));
+        const selectorCount = Number(Boolean(itemKey)) + Number(Boolean(citationKey));
         if (selectorCount > 1) {
           emitError(
             "UNEXPECTED_ARGUMENT",
-            "Provide exactly one of --file <path>, --item-key <key>, or --citation-key <key>.",
+            "Provide exactly one of --item-key <key> or --citation-key <key>.",
           );
           return;
         }
@@ -781,7 +780,7 @@ async function main(): Promise<void> {
         if (selectorCount === 0 || blockStartInput.value === undefined) {
           emitError(
             "MISSING_ARGUMENT",
-            "Provide one of --file <path>, --item-key <key>, or --citation-key <key>, and --block-start <n> for expand.",
+            "Provide one of --item-key <key> or --citation-key <key>, and --block-start <n> for expand.",
           );
           return;
         }
@@ -794,7 +793,6 @@ async function main(): Promise<void> {
         try {
           const data = expandDocument(
             {
-              ...(file ? { file } : {}),
               ...(itemKey ? { itemKey } : {}),
               ...(citationKey ? { citationKey } : {}),
               blockStart: blockStartValue,

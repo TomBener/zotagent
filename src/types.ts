@@ -143,7 +143,6 @@ export interface SearchResultRow {
   title: string;
   authors: string[];
   year?: string;
-  file: string;
   passage: string;
   blockStart: number;
   blockEnd: number;

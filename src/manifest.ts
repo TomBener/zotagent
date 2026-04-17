@@ -1,3 +1,5 @@
+import { basename as pathBasename } from "node:path";
+
 import type { AttachmentCatalogEntry, AttachmentManifest, ManifestBlock } from "./types.js";
 import { isReferenceLikeBlock } from "./heuristics.js";
 import { cleanText } from "./utils.js";
@@ -229,6 +231,100 @@ export function buildMarkdownManifest(
       normalizedPath,
       blocks: annotated.blocks,
     },
+  };
+}
+
+interface MergeCursor {
+  char: number;
+  line: number;
+  blockIndex: number;
+  firstBlock: boolean;
+}
+
+function appendMergedBlock(
+  source: ManifestBlock,
+  cursor: MergeCursor,
+  out: ManifestBlock[],
+): void {
+  if (!cursor.firstBlock) {
+    cursor.char += 2;
+    cursor.line += 2;
+  }
+  cursor.firstBlock = false;
+
+  const width = source.charEnd - source.charStart;
+  const heightInLines = source.lineEnd - source.lineStart;
+  const merged: ManifestBlock = {
+    blockIndex: cursor.blockIndex,
+    sectionPath: [...source.sectionPath],
+    blockType: source.blockType,
+    text: source.text,
+    ...(source.pageStart !== undefined ? { pageStart: source.pageStart } : {}),
+    ...(source.pageEnd !== undefined ? { pageEnd: source.pageEnd } : {}),
+    ...(source.bbox ? { bbox: [...source.bbox] } : {}),
+    charStart: cursor.char,
+    charEnd: cursor.char + width,
+    lineStart: cursor.line,
+    lineEnd: cursor.line + heightInLines,
+    isReferenceLike: source.isReferenceLike,
+  };
+
+  out.push(merged);
+  cursor.char += width;
+  cursor.line += heightInLines;
+  cursor.blockIndex += 1;
+}
+
+function makeSeparatorBlock(filePath: string): ManifestBlock {
+  const basename = pathBasename(filePath) || "attachment";
+  const text = `Attachment: ${basename}`;
+  const snippet = `# ${text}`;
+  return {
+    blockIndex: 0,
+    sectionPath: [text],
+    blockType: "heading",
+    text,
+    charStart: 0,
+    charEnd: snippet.length,
+    lineStart: 1,
+    lineEnd: 1,
+    isReferenceLike: false,
+  };
+}
+
+export function mergeManifestsForItem(manifests: AttachmentManifest[]): AttachmentManifest {
+  if (manifests.length === 0) {
+    throw new Error("mergeManifestsForItem requires at least one manifest");
+  }
+  if (manifests.length === 1) {
+    return manifests[0]!;
+  }
+
+  const primary = manifests[0]!;
+  const blocks: ManifestBlock[] = [];
+  const cursor: MergeCursor = { char: 0, line: 1, blockIndex: 0, firstBlock: true };
+
+  for (let i = 0; i < manifests.length; i += 1) {
+    const source = manifests[i]!;
+    if (i > 0) {
+      appendMergedBlock(makeSeparatorBlock(source.filePath), cursor, blocks);
+    }
+    for (const block of source.blocks) {
+      appendMergedBlock(block, cursor, blocks);
+    }
+  }
+
+  return {
+    docKey: `item:${primary.itemKey}`,
+    itemKey: primary.itemKey,
+    ...(primary.citationKey ? { citationKey: primary.citationKey } : {}),
+    title: primary.title,
+    authors: primary.authors,
+    ...(primary.year ? { year: primary.year } : {}),
+    ...(primary.abstract ? { abstract: primary.abstract } : {}),
+    filePath: "",
+    normalizedPath: "",
+    blocks,
   };
 }
 

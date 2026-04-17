@@ -1,8 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildPdfManifest } from "../../src/manifest.js";
+import { buildPdfManifest, mergeManifestsForItem } from "../../src/manifest.js";
 import { mapChunkToBlockRange } from "../../src/engine.js";
+import type { AttachmentManifest } from "../../src/types.js";
 
 test("buildPdfManifest creates positioned blocks from ODL json", () => {
   const built = buildPdfManifest(
@@ -64,4 +65,84 @@ test("mapChunkToBlockRange maps qmd chunk offsets back to manifest blocks", () =
   );
 
   assert.deepEqual(mapped, { blockStart: 1, blockEnd: 2 });
+});
+
+function makeManifest(
+  docKey: string,
+  filePath: string,
+  texts: string[],
+): AttachmentManifest {
+  let char = 0;
+  let line = 1;
+  const blocks = texts.map((text, index) => {
+    if (index > 0) {
+      char += 2;
+      line += 2;
+    }
+    const start = char;
+    const lineStart = line;
+    char += text.length;
+    return {
+      blockIndex: index,
+      sectionPath: [],
+      blockType: "paragraph" as const,
+      text,
+      charStart: start,
+      charEnd: char,
+      lineStart,
+      lineEnd: line,
+      isReferenceLike: false,
+    };
+  });
+  return {
+    docKey,
+    itemKey: "ITEM1",
+    title: "Merged paper",
+    authors: ["A"],
+    filePath,
+    normalizedPath: `/tmp/${docKey}.md`,
+    blocks,
+  };
+}
+
+test("mergeManifestsForItem returns a single manifest unchanged", () => {
+  const manifest = makeManifest("a".repeat(40), "/tmp/main.pdf", ["Only block."]);
+  const merged = mergeManifestsForItem([manifest]);
+  assert.equal(merged, manifest);
+});
+
+test("mergeManifestsForItem concatenates blocks with a separator and monotonic indices", () => {
+  const manifestA = makeManifest("a".repeat(40), "/tmp/main.pdf", ["First A.", "Second A."]);
+  const manifestB = makeManifest("b".repeat(40), "/tmp/appendix.pdf", ["First B."]);
+
+  const merged = mergeManifestsForItem([manifestA, manifestB]);
+
+  // 2 blocks from A + 1 separator + 1 block from B = 4 blocks total, indices 0..3.
+  assert.equal(merged.blocks.length, 4);
+  assert.deepEqual(merged.blocks.map((b) => b.blockIndex), [0, 1, 2, 3]);
+
+  // Separator block sits between the two attachments and references the second file.
+  assert.equal(merged.blocks[2]!.blockType, "heading");
+  assert.match(merged.blocks[2]!.text, /Attachment: appendix\.pdf/);
+
+  // char/line cursors advance strictly and don't overlap.
+  for (let i = 1; i < merged.blocks.length; i += 1) {
+    assert.ok(
+      merged.blocks[i]!.charStart >= merged.blocks[i - 1]!.charEnd,
+      `block ${i} charStart should be >= previous charEnd`,
+    );
+    assert.ok(
+      merged.blocks[i]!.lineStart >= merged.blocks[i - 1]!.lineEnd,
+      `block ${i} lineStart should be >= previous lineEnd`,
+    );
+  }
+
+  // itemKey is preserved, filePath/normalizedPath are cleared in the virtual merge.
+  assert.equal(merged.itemKey, "ITEM1");
+  assert.equal(merged.docKey, "item:ITEM1");
+  assert.equal(merged.filePath, "");
+  assert.equal(merged.normalizedPath, "");
+
+  // Blocks from B still carry their original text.
+  assert.equal(merged.blocks[3]!.text, "First B.");
 });
