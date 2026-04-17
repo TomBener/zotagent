@@ -749,11 +749,13 @@ async function extractBatch(
     primaryError = err;
   }
 
+  const fallbackFailures: Array<{ tier: string; error: unknown }> = [];
+
   if (isOdlStructuralBug(primaryError)) {
     try {
       return await extractBatchTextOnly(batch, tempRoot, manifestsDir, normalizedDir, options);
-    } catch {
-      // fall through to pdftotext
+    } catch (err) {
+      fallbackFailures.push({ tier: "odl-text", error: err });
     }
   }
 
@@ -764,12 +766,27 @@ async function extractBatch(
   ) {
     try {
       return await extractBatchPdftotext(batch, tempRoot, manifestsDir, normalizedDir, options);
-    } catch {
-      throw primaryError;
+    } catch (err) {
+      fallbackFailures.push({ tier: "pdftotext", error: err });
     }
   }
 
-  throw primaryError;
+  throw annotateWithFallbackFailures(primaryError, fallbackFailures);
+}
+
+export function annotateWithFallbackFailures(
+  primaryError: unknown,
+  failures: Array<{ tier: string; error: unknown }>,
+): unknown {
+  if (failures.length === 0 || !(primaryError instanceof Error)) return primaryError;
+  const suffix = failures
+    .map(({ tier, error }) => {
+      const message = error instanceof Error ? error.message : String(error);
+      return `${tier}: ${message.split("\n")[0]?.trim() ?? message}`;
+    })
+    .join("; ");
+  primaryError.message = `${primaryError.message} (fallbacks also failed: ${suffix})`;
+  return primaryError;
 }
 
 async function extractBatchStructured(

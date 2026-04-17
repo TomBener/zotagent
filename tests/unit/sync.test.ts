@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  annotateWithFallbackFailures,
   buildContext,
   buildJavaToolOptions,
   runProcessWithTimeout,
@@ -83,6 +84,26 @@ test("withJavaToolOptions injects -Xss everywhere and adds dock-hide only on mac
   );
   assert.equal(seenDuringTask, "-Xmx1g -Xss32m");
   assert.equal(env.JAVA_TOOL_OPTIONS, "-Xmx1g");
+});
+
+test("annotateWithFallbackFailures appends tier-specific messages to the primary error", () => {
+  const primary = new Error("java.lang.StackOverflowError");
+  const result = annotateWithFallbackFailures(primary, [
+    { tier: "odl-text", error: new Error("OpenDataLoader timed out after 600000ms.\n  at …") },
+    { tier: "pdftotext", error: new Error("spawn pdftotext ENOENT") },
+  ]);
+  assert.equal(result, primary);
+  assert.match(
+    primary.message,
+    /StackOverflowError \(fallbacks also failed: odl-text: OpenDataLoader timed out after 600000ms\.; pdftotext: spawn pdftotext ENOENT\)/,
+  );
+});
+
+test("annotateWithFallbackFailures leaves the primary error untouched when nothing failed", () => {
+  const primary = new Error("original");
+  const result = annotateWithFallbackFailures(primary, []);
+  assert.equal(result, primary);
+  assert.equal(primary.message, "original");
 });
 
 test("runProcessWithTimeout terminates a hung child process", async () => {
