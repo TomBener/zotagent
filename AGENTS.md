@@ -12,7 +12,7 @@
 
 ## Local Environment
 
-- When testing locally, Java (OpenJDK) is installed via Homebrew but not on the default PATH. Prepend before running `sync`: `export PATH="/opt/homebrew/opt/openjdk/bin:$PATH"`
+- Java is only needed for `sync` (PDF extraction via OpenDataLoader). OpenJDK is installed via Homebrew but not on the default PATH. Prepend before running `sync`: `export PATH="/opt/homebrew/opt/openjdk/bin:$PATH"`
 
 ## Development Principles
 
