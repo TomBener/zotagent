@@ -1,12 +1,41 @@
 import type { AttachmentManifest } from "./types.js";
 
+const SINGLE_CJK_TOKEN = /^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]$/u;
+
+function collapseSegmentedCjkRuns(normalized: string): string {
+  if (normalized.length === 0) return normalized;
+
+  const tokens = normalized.split(" ");
+  const out: string[] = [];
+  let singleCharRun: string[] = [];
+
+  const flushSingleCharRun = (): void => {
+    if (singleCharRun.length === 0) return;
+    out.push(singleCharRun.join(""));
+    singleCharRun = [];
+  };
+
+  for (const token of tokens) {
+    if (SINGLE_CJK_TOKEN.test(token)) {
+      singleCharRun.push(token);
+      continue;
+    }
+    flushSingleCharRun();
+    out.push(token);
+  }
+
+  flushSingleCharRun();
+  return out.join(" ");
+}
+
 export function normalizeExactText(input: string): string {
-  return input
+  const normalized = input
     .normalize("NFKC")
     .toLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, " ")
     .replace(/\s+/gu, " ")
     .trim();
+  return collapseSegmentedCjkRuns(normalized);
 }
 
 export function buildExactIndexText(parts: string[]): string {

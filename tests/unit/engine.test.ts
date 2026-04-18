@@ -478,6 +478,165 @@ test("searchLiterature keyword mode uses the title when the title is the only ma
   assert.equal(result.results[0]!.passage, "Party Secretary Governance");
 });
 
+test("searchLiterature keyword mode drops CJK candidates without a verifiable block or title match", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-cjk-false-positive-"));
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docKey = "e".repeat(40);
+  const manifestPath = join(manifestsDir, docKey + MANIFEST_EXT);
+
+  writeManifest(manifestPath, {
+    docKey,
+    itemKey: "ITEME",
+    title: "党委书记研究",
+    authors: ["A"],
+    filePath: "/tmp/cjk-false-positive.pdf",
+    normalizedPath: join(dataDir, "normalized", docKey + ".md"),
+    blocks: [
+      {
+        blockIndex: 0,
+        blockType: "paragraph",
+        sectionPath: ["Body"],
+        text: "党委书记是干部体系中的关键岗位。",
+        charStart: 0,
+        charEnd: 17,
+        lineStart: 1,
+        lineEnd: 1,
+        isReferenceLike: false,
+      },
+    ],
+  });
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [
+      {
+        docKey,
+        itemKey: "ITEME",
+        title: "党委书记研究",
+        authors: ["A"],
+        filePath: "/tmp/cjk-false-positive.pdf",
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: 1,
+        mtimeMs: 1,
+        sourceHash: "hash-cjk-false-positive",
+        lastIndexedAt: new Date().toISOString(),
+        normalizedPath: join(dataDir, "normalized", docKey + ".md"),
+        manifestPath,
+      },
+    ],
+  });
+
+  const fakeKeywordFactory = async () => ({
+    rebuildIndex: async () => {},
+    search: async (_query: string) => [{ docKey, score: 1.5 }],
+    close: async () => {},
+  });
+  const unusedQmdFactory = async () => {
+    throw new Error("qmd search should not run in keyword mode");
+  };
+
+  const result = await searchLiterature(
+    "书记党委",
+    10,
+    { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir },
+    unusedQmdFactory,
+    {},
+    fakeKeywordFactory,
+  );
+
+  assert.equal(result.results.length, 0);
+});
+
+test("searchLiterature keyword mode verifies spaced CJK text before keeping a candidate", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-cjk-spacing-"));
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docKey = "f".repeat(40);
+  const manifestPath = join(manifestsDir, docKey + MANIFEST_EXT);
+
+  writeManifest(manifestPath, {
+    docKey,
+    itemKey: "ITEMF",
+    title: "干部岗位研究",
+    authors: ["A"],
+    filePath: "/tmp/cjk-spacing.pdf",
+    normalizedPath: join(dataDir, "normalized", docKey + ".md"),
+    blocks: [
+      {
+        blockIndex: 0,
+        blockType: "paragraph",
+        sectionPath: ["Body"],
+        text: "党 委 书 记 是 干 部 体 系 中 的 关 键 岗 位。",
+        charStart: 0,
+        charEnd: 24,
+        lineStart: 1,
+        lineEnd: 1,
+        isReferenceLike: false,
+      },
+    ],
+  });
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [
+      {
+        docKey,
+        itemKey: "ITEMF",
+        title: "干部岗位研究",
+        authors: ["A"],
+        filePath: "/tmp/cjk-spacing.pdf",
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: 1,
+        mtimeMs: 1,
+        sourceHash: "hash-cjk-spacing",
+        lastIndexedAt: new Date().toISOString(),
+        normalizedPath: join(dataDir, "normalized", docKey + ".md"),
+        manifestPath,
+      },
+    ],
+  });
+
+  const fakeKeywordFactory = async () => ({
+    rebuildIndex: async () => {},
+    search: async (_query: string) => [{ docKey, score: 1.5 }],
+    close: async () => {},
+  });
+  const unusedQmdFactory = async () => {
+    throw new Error("qmd search should not run in keyword mode");
+  };
+
+  const result = await searchLiterature(
+    "党委书记",
+    10,
+    { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir },
+    unusedQmdFactory,
+    {},
+    fakeKeywordFactory,
+  );
+
+  assert.equal(result.results.length, 1);
+  assert.equal(result.results[0]!.itemKey, "ITEMF");
+  assert.equal(result.results[0]!.blockStart, 0);
+  assert.match(result.results[0]!.passage, /党 委 书 记/u);
+});
+
 test("searchWithinDocuments returns passages from the selected attachment", () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-search-in-"));
   const dataDir = join(root, "data");

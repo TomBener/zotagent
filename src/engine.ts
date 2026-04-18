@@ -22,6 +22,8 @@ interface KeywordQueryProfile {
   terms: string[];
 }
 
+type VerifiedSearchRow = SearchResultRow & { referenceOnly: boolean };
+
 function resolveReadyEntries(
   selector: { itemKey?: string; citationKey?: string },
   entries: CatalogEntry[],
@@ -166,7 +168,7 @@ function buildSearchRow(
   range: { blockStart: number; blockEnd: number },
   globalOffset: number,
   score: number,
-): SearchResultRow & { referenceOnly: boolean } {
+): VerifiedSearchRow {
   const blocks = manifest.blocks.filter(
     (block) => block.blockIndex >= range.blockStart && block.blockIndex <= range.blockEnd,
   );
@@ -190,7 +192,7 @@ function buildTitleSearchRow(
   entry: CatalogEntry,
   globalOffset: number,
   score: number,
-): SearchResultRow & { referenceOnly: boolean } {
+): VerifiedSearchRow {
   return {
     itemKey: entry.itemKey,
     ...(entry.citationKey ? { citationKey: entry.citationKey } : {}),
@@ -479,7 +481,7 @@ function buildKeywordSearchRow(
   query: KeywordQueryProfile,
   globalOffset: number,
   score: number,
-): SearchResultRow & { referenceOnly: boolean } {
+): VerifiedSearchRow | null {
   const exactRange = query.normalizedQuery ? findExactPhraseBlockRange(manifest, query.normalizedQuery) : null;
   if (exactRange) {
     return buildSearchRow(entry, manifest, exactRange, globalOffset, score);
@@ -499,7 +501,7 @@ function buildKeywordSearchRow(
       score,
     );
   }
-  return buildSearchRow(entry, manifest, { blockStart: 0, blockEnd: 0 }, globalOffset, score);
+  return null;
 }
 
 function buildHybridSearchRow(
@@ -507,7 +509,7 @@ function buildHybridSearchRow(
   manifest: AttachmentManifest,
   result: { bestChunkPos: number; bestChunk: string; score: number },
   globalOffset: number,
-): SearchResultRow & { referenceOnly: boolean } {
+): VerifiedSearchRow {
   const range = mapChunkToBlockRange(manifest, result.bestChunkPos, result.bestChunk);
   return buildSearchRow(entry, manifest, range, globalOffset, result.score);
 }
@@ -595,7 +597,7 @@ export async function searchLiterature(
   const itemGroups = groupReadyEntriesByItemKey(readyEntries);
   const manifestCache = new Map<string, AttachmentManifest>();
 
-  let mapped: Array<SearchResultRow & { referenceOnly: boolean }>;
+  let mapped: VerifiedSearchRow[];
 
   if (behavior.semantic) {
     const qmd = await qmdFactory(config);
@@ -649,7 +651,7 @@ export async function searchLiterature(
           const manifest = readManifestCached(entry, manifestCache);
           return buildKeywordSearchRow(entry, manifest, keywordQuery, globalOffset, result.score);
         })
-        .filter((value): value is ReturnType<typeof buildKeywordSearchRow> => value !== null)
+        .filter((value): value is VerifiedSearchRow => value !== null)
         .sort((a, b) => b.score - a.score);
     } finally {
       await keywordIndex.close();

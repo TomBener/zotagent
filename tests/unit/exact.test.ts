@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { findExactPhraseBlockRange } from "../../src/exact.js";
+import { findExactPhraseBlockRange, normalizeExactText } from "../../src/exact.js";
 import type { AttachmentManifest, ManifestBlock } from "../../src/types.js";
 
 function block(blockIndex: number, text: string): ManifestBlock {
@@ -30,6 +30,14 @@ function manifest(blocks: ManifestBlock[]): AttachmentManifest {
   };
 }
 
+test("normalizeExactText collapses whitespace between adjacent CJK characters", () => {
+  assert.equal(normalizeExactText("党 委 书 记"), "党委书记");
+  assert.equal(normalizeExactText("独 山 子 油 矿"), "独山子油矿");
+  assert.equal(normalizeExactText("副书记 党委"), "副书记 党委");
+  assert.equal(normalizeExactText("party secretary"), "party secretary");
+  assert.equal(normalizeExactText("Agent 通 信"), "agent 通信");
+});
+
 test("findExactPhraseBlockRange finds phrases across block boundaries", () => {
   const result = findExactPhraseBlockRange(
     manifest([
@@ -53,6 +61,17 @@ test("findExactPhraseBlockRange returns the narrowest matching block span", () =
   );
 
   assert.deepEqual(result, { blockStart: 30, blockEnd: 30 });
+});
+
+test("findExactPhraseBlockRange matches CJK phrases despite OCR-style spacing", () => {
+  const result = findExactPhraseBlockRange(
+    manifest([
+      block(10, "党 委 书 记 是 关 键 岗 位"),
+    ]),
+    "党委书记",
+  );
+
+  assert.deepEqual(result, { blockStart: 10, blockEnd: 10 });
 });
 
 test("findExactPhraseBlockRange handles long manifests with no match quickly", () => {
