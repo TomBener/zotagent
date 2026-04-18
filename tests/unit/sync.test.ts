@@ -431,6 +431,129 @@ test("runSync skips unchanged ready pdfs and refreshes qmd contexts", async () =
   assert.match(logBody, /paper\.pdf: reused existing indexed output/);
 });
 
+test("runSync short-circuits both index rebuilds when the catalog is identical to a completed sync", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-shortcircuit-"));
+  const attachmentsRoot = join(root, "attachments");
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  const normalizedDir = join(dataDir, "normalized");
+  mkdirSync(join(attachmentsRoot, "papers"), { recursive: true });
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+  mkdirSync(normalizedDir, { recursive: true });
+
+  const pdfPath = join(attachmentsRoot, "papers", "paper.pdf");
+  writeFileSync(pdfPath, "pdf");
+  const pdfStat = statSync(pdfPath);
+  const docKey = sha1("papers/paper.pdf");
+  const normalizedPath = join(normalizedDir, `${docKey}.md`);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
+  writeFileSync(normalizedPath, "Body");
+  writeManifestFile(manifestPath, {
+    docKey,
+    itemKey: "ITEM1",
+    title: "Paper",
+    authors: ["Author One"],
+    filePath: pdfPath,
+    normalizedPath,
+    blocks: [trivialBlock()],
+  });
+
+  const bibliographyPath = join(root, "bibliography.json");
+  writeFileSync(
+    bibliographyPath,
+    JSON.stringify([
+      {
+        id: "cite",
+        title: "Paper",
+        author: [{ family: "One", given: "Author" }],
+        file: pdfPath,
+        "zotero-item-key": "ITEM1",
+      },
+    ]),
+    "utf-8",
+  );
+
+  const previousEntry = {
+    docKey,
+    itemKey: "ITEM1",
+    citationKey: "cite",
+    title: "Paper",
+    authors: ["One Author"],
+    filePath: pdfPath,
+    fileExt: "pdf" as const,
+    exists: true,
+    supported: true,
+    extractStatus: "ready" as const,
+    size: pdfStat.size,
+    mtimeMs: Math.trunc(pdfStat.mtimeMs),
+    sourceHash: "existinghash",
+    lastIndexedAt: new Date().toISOString(),
+    normalizedPath,
+    manifestPath,
+  };
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    indexesCompletedAt: new Date().toISOString(),
+    entries: [previousEntry],
+  });
+
+  const qmdCalls = { opened: 0, update: 0, listContexts: 0 };
+  const qmdFactory = async () => {
+    qmdCalls.opened += 1;
+    return {
+      search: async () => [],
+      searchLex: async () => [],
+      update: async () => {
+        qmdCalls.update += 1;
+        return {};
+      },
+      embed: async () => ({}),
+      getStatus: async () => ({ totalDocuments: 1, needsEmbedding: 0, hasVectorIndex: true, collections: [] }),
+      listContexts: async () => {
+        qmdCalls.listContexts += 1;
+        return [];
+      },
+      addContext: async () => true,
+      removeContext: async () => true,
+      close: async () => {},
+    };
+  };
+
+  const keywordCalls = { opened: 0, rebuild: 0 };
+  const keywordFactory = async () => {
+    keywordCalls.opened += 1;
+    return {
+      rebuildIndex: async () => {
+        keywordCalls.rebuild += 1;
+      },
+      search: async () => [],
+      close: async () => {},
+    };
+  };
+
+  const result = await runSync(
+    { bibliographyJsonPath: bibliographyPath, attachmentsRoot, dataDir },
+    qmdFactory,
+    keywordFactory,
+  );
+
+  assert.equal(result.stats.skippedAttachments, 1);
+  assert.equal(qmdCalls.opened, 0);
+  assert.equal(qmdCalls.update, 0);
+  assert.equal(qmdCalls.listContexts, 0);
+  assert.equal(keywordCalls.opened, 0);
+  assert.equal(keywordCalls.rebuild, 0);
+
+  const logBody = readFileSync(result.logPath, "utf-8");
+  assert.match(logBody, /No catalog changes since last completed sync/);
+
+  const persisted = readCatalogFile(join(indexDir, "catalog.json"));
+  assert.ok(persisted.indexesCompletedAt, "expected completion marker to be persisted");
+});
+
 test("runSync skips qmd context writes when existing contexts already match", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-sync-ctx-noop-"));
   const attachmentsRoot = join(root, "attachments");

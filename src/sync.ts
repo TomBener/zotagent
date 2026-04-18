@@ -466,6 +466,37 @@ export async function runProcessWithTimeout({
   });
 }
 
+function areAuthorsEqual(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+// Fields compared feed directly into the keyword index (title + manifest
+// content, gated by file size/mtime/sourceHash) or into qmd contexts
+// (title/authors/year/abstract). If any differ, we cannot reuse the prior
+// index state.
+export function isEntryContentUnchanged(prev: CatalogEntry, next: CatalogEntry): boolean {
+  return (
+    prev.extractStatus === next.extractStatus &&
+    prev.itemKey === next.itemKey &&
+    prev.citationKey === next.citationKey &&
+    prev.title === next.title &&
+    prev.year === next.year &&
+    prev.abstract === next.abstract &&
+    prev.type === next.type &&
+    prev.filePath === next.filePath &&
+    prev.size === next.size &&
+    prev.mtimeMs === next.mtimeMs &&
+    prev.sourceHash === next.sourceHash &&
+    prev.normalizedPath === next.normalizedPath &&
+    prev.manifestPath === next.manifestPath &&
+    areAuthorsEqual(prev.authors, next.authors)
+  );
+}
+
 function toCatalogEntry(
   attachment: AttachmentCatalogEntry,
   partial: Partial<CatalogEntry> & Pick<CatalogEntry, "extractStatus">,
@@ -1480,25 +1511,54 @@ export async function runSync(
 
     const readyEntries = nextEntries.filter((entry) => entry.extractStatus === "ready");
 
-    const keywordIndex = await keywordFactory(config);
-    try {
-      logger.info("Rebuilding keyword search index...", { console: true });
-      await keywordIndex.rebuildIndex(readyEntries);
-    } finally {
-      await keywordIndex.close();
+    // Short-circuit: when nothing has changed since the last *completed* sync,
+    // both index rebuild passes are provably no-ops. `indexesCompletedAt` is
+    // only present if the previous run reached the end of the qmd block, so a
+    // crash between the progress-catalog write and qmd completion does not
+    // incorrectly trigger this path.
+    const allEntriesUnchanged =
+      previousCatalog.indexesCompletedAt !== undefined &&
+      changedAttachments.length === 0 &&
+      staleDocKeys.size === 0 &&
+      nextEntries.every((entry) => {
+        const prev = previousByDocKey.get(entry.docKey);
+        return prev !== undefined && isEntryContentUnchanged(prev, entry);
+      });
+
+    if (allEntriesUnchanged) {
+      logger.info(
+        "No catalog changes since last completed sync; keyword and semantic indexes are up to date.",
+        { console: true },
+      );
+    } else {
+      const keywordIndex = await keywordFactory(config);
+      try {
+        logger.info("Rebuilding keyword search index...", { console: true });
+        await keywordIndex.rebuildIndex(readyEntries);
+      } finally {
+        await keywordIndex.close();
+      }
+
+      const qmd = await qmdFactory(config);
+      try {
+        logger.info("Updating search index...", { console: true });
+        await qmd.update();
+        await syncQmdContexts(qmd, readyEntries);
+        if (readyEntries.length > 0) {
+          await embedQmdUntilSettled(qmd, logger);
+        }
+      } finally {
+        await qmd.close();
+      }
     }
 
-    const qmd = await qmdFactory(config);
-    try {
-      logger.info("Updating search index...", { console: true });
-      await qmd.update();
-      await syncQmdContexts(qmd, readyEntries);
-      if (readyEntries.length > 0) {
-        await embedQmdUntilSettled(qmd, logger);
-      }
-    } finally {
-      await qmd.close();
-    }
+    // Persist the completion marker so the next run can safely short-circuit.
+    const completionTimestamp = new Date().toISOString();
+    writeCatalogFile(paths.catalogPath, {
+      ...nextCatalog,
+      generatedAt: completionTimestamp,
+      indexesCompletedAt: completionTimestamp,
+    });
 
     const finalCounts = summarizeCatalog(nextCatalog);
     stats.readyAttachments = finalCounts.readyAttachments;

@@ -119,6 +119,9 @@ export interface CatalogFile {
   version: 1;
   generatedAt: string;
   entries: CatalogEntry[];
+  // Set only when keyword + qmd indexes have been rebuilt to match `entries`.
+  // Absent on progress writes, so a crash mid-sync is detectable on restart.
+  indexesCompletedAt?: string;
 }
 
 export interface CatalogCounts {
