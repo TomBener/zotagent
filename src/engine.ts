@@ -10,6 +10,7 @@ import { openQmdClient, type QmdFactory } from "./qmd.js";
 import { getReadyEntries, readCatalogFile, summarizeCatalog } from "./state.js";
 import type { AttachmentManifest, CatalogEntry, ManifestBlock, SearchResultRow } from "./types.js";
 import { cleanText, compactHomePath, exists, overlap, readManifestFile } from "./utils.js";
+import { toSimplified } from "./zh-convert.js";
 
 interface SearchBehaviorOptions {
   semantic?: boolean;
@@ -426,10 +427,13 @@ function stemKeywordToken(token: string): string {
 }
 
 function buildKeywordQueryProfile(query: string): KeywordQueryProfile {
-  const stripped = stripFtsOperators(query);
+  // Fold trad → simp at the profile root so extracted terms match the simplified
+  // index/haystack (the FTS layer and normalizeExactText both already do this).
+  const simplified = toSimplified(query);
+  const stripped = stripFtsOperators(simplified);
   return {
     normalizedQuery: normalizeExactText(stripped),
-    terms: [...new Set(extractQueryTerms(query).map((term) => stemKeywordToken(term)).filter((term) => term.length > 0))],
+    terms: [...new Set(extractQueryTerms(simplified).map((term) => stemKeywordToken(term)).filter((term) => term.length > 0))],
   };
 }
 

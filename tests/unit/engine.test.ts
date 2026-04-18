@@ -640,6 +640,91 @@ test("searchLiterature keyword mode verifies spaced CJK text before keeping a ca
   assert.match(result.results[0]!.passage, /党 委 书 记/u);
 });
 
+test("searchLiterature keyword mode verifies a traditional query against a simplified document", async () => {
+  // Regression: the FTS layer folds trad → simp, but the passage verifier's query profile
+  // used the raw query and produced traditional terms that never matched the simplified
+  // normalized haystack, so cross-script hits were silently dropped.
+  const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-trad-simp-e2e-"));
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docKey = "2".repeat(40);
+  const manifestPath = join(manifestsDir, docKey + MANIFEST_EXT);
+
+  writeManifest(manifestPath, {
+    docKey,
+    itemKey: "ITEMTS",
+    title: "开发新疆研究",
+    authors: ["A"],
+    filePath: "/tmp/cjk-trad-simp.pdf",
+    normalizedPath: join(dataDir, "normalized", docKey + ".md"),
+    blocks: [
+      {
+        blockIndex: 0,
+        blockType: "paragraph",
+        sectionPath: ["Body"],
+        text: "本文讨论开发新疆的人力财力问题。",
+        charStart: 0,
+        charEnd: 20,
+        lineStart: 1,
+        lineEnd: 1,
+        isReferenceLike: false,
+      },
+    ],
+  });
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [
+      {
+        docKey,
+        itemKey: "ITEMTS",
+        title: "开发新疆研究",
+        authors: ["A"],
+        filePath: "/tmp/cjk-trad-simp.pdf",
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: 1,
+        mtimeMs: 1,
+        sourceHash: "hash-cjk-trad-simp",
+        lastIndexedAt: new Date().toISOString(),
+        normalizedPath: join(dataDir, "normalized", docKey + ".md"),
+        manifestPath,
+      },
+    ],
+  });
+
+  const fakeKeywordFactory = async () => ({
+    rebuildIndex: async () => {},
+    search: async (_query: string) => [{ docKey, score: 1.5 }],
+    isEmpty: async () => false,
+    close: async () => {},
+  });
+  const unusedQmdFactory = async () => {
+    throw new Error("qmd search should not run in keyword mode");
+  };
+
+  // OR-query in traditional Chinese — every CJK term changes under trad→simp folding.
+  const result = await searchLiterature(
+    "開發 OR 財力",
+    10,
+    { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir },
+    unusedQmdFactory,
+    {},
+    fakeKeywordFactory,
+  );
+
+  assert.equal(result.results.length, 1);
+  assert.equal(result.results[0]!.itemKey, "ITEMTS");
+  assert.match(result.results[0]!.passage, /开发新疆/u);
+});
+
 test("searchLiterature NEAR/N picks the CJK co-occurrence block, not a distance decoy", async () => {
   // Regression guard for passage scoring: the public proximity syntax must keep only
   // content terms for block selection, and CJK terms must match as substrings.
