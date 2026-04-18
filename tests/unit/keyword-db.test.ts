@@ -203,6 +203,27 @@ test("rewriteInfixNear rewrites infix NEAR to function form", () => {
   assert.equal(rewriteInfixNear("hello world"), "hello world");
 });
 
+test("rewriteInfixNear preserves NEAR that appears inside a quoted literal phrase", () => {
+  // Regression: a literal phrase search that happens to contain the word "near"
+  // must not be rewritten into a NEAR() call, or it will stop matching documents
+  // whose text literally says "foo near bar".
+  assert.equal(rewriteInfixNear('"foo NEAR bar"'), '"foo NEAR bar"');
+  assert.equal(rewriteInfixNear('"close NEAR/5 neighbor"'), '"close NEAR/5 neighbor"');
+  // Real infix outside quotes should still be rewritten when mixed with a quoted literal.
+  assert.equal(
+    rewriteInfixNear('"foo NEAR bar" AND "open up" NEAR closed'),
+    '"foo NEAR bar" AND NEAR("open up" closed)',
+  );
+});
+
+test("buildFtsQuery preserves NEAR as a literal token inside a quoted phrase", () => {
+  // The final FTS5 query should still contain "foo near bar" as a single phrase,
+  // not NEAR(foo bar).
+  const out = buildFtsQuery('"foo NEAR bar"');
+  assert.match(out, /^"foo NEAR bar"$/u);
+  assert.doesNotMatch(out, /NEAR\(/u);
+});
+
 test("buildFtsQuery produces FTS5-compatible output for infix NEAR with CJK phrases", () => {
   // Bug: `"开发新疆" NEAR "人力财力"` was passed through as-is, and FTS5 tokenized
   // `NEAR` as a bareword → zero hits on Chinese corpora. Fix rewrites to function form.
@@ -284,6 +305,36 @@ test("keyword search accepts infix NEAR with CJK phrases against a real FTS5 ind
     const functional = await client.search('NEAR("开发新疆" "人力财力", 50)', 10);
     assert.equal(functional.length, 1);
     assert.equal(functional[0]!.docKey, docKey);
+  } finally {
+    await client.close();
+  }
+});
+
+test("quoted literal containing the word NEAR still matches the original text", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-quoted-near-"));
+  const dataDir = join(root, "data");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docKey = "9".repeat(40);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
+  writeManifestFile(manifestPath, {
+    docKey, itemKey: "NEARLIT", title: "Near Study", authors: ["A"],
+    filePath: "/tmp/near-literal.pdf", normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+    blocks: [
+      { blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"],
+        text: "the store is located foo near bar on main street",
+        charStart: 0, charEnd: 48, lineStart: 1, lineEnd: 1, isReferenceLike: false },
+    ],
+  });
+
+  const entry = readyEntry(dataDir, docKey, "NEARLIT", "Near Study", "/tmp/near-literal.pdf", manifestPath);
+  const client = await openKeywordIndex(createConfig(dataDir));
+  try {
+    await client.rebuildIndex([entry]);
+    const results = await client.search('"foo NEAR bar"', 10);
+    assert.equal(results.length, 1);
+    assert.equal(results[0]!.docKey, docKey);
   } finally {
     await client.close();
   }

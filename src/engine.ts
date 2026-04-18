@@ -4,7 +4,7 @@ import { basename as pathBasename } from "node:path";
 import { getDataPaths, resolveConfig, type ConfigOverrides } from "./config.js";
 import { findExactPhraseBlockRange, normalizeExactText } from "./exact.js";
 import { isBoilerplateLikeText, isTableOfContentsLikeText } from "./heuristics.js";
-import { openKeywordIndex, type KeywordIndexFactory } from "./keyword-db.js";
+import { maskQuotedPhrases, openKeywordIndex, unmaskQuotedPhrases, type KeywordIndexFactory } from "./keyword-db.js";
 import { mergeManifestsForItem } from "./manifest.js";
 import { openQmdClient, type QmdFactory } from "./qmd.js";
 import { getReadyEntries, readCatalogFile, summarizeCatalog } from "./state.js";
@@ -207,15 +207,23 @@ function buildTitleSearchRow(
   };
 }
 
-/** Strip FTS5 operators, distance parameters, and parens so only content words remain. */
+/**
+ * Strip FTS5 operators, distance parameters, and parens so only content words
+ * remain for passage-layer scoring. Quoted phrases pass through untouched so
+ * `"black AND white"` or `"foo NEAR bar"` are treated as the exact phrases the
+ * user asked for. Distance numbers are only stripped inside a `NEAR(...)` call,
+ * so unrelated `(..., 2020)` substrings keep their numeric terms.
+ */
 function stripFtsOperators(query: string): string {
-  return query
-    // Drop the ", N" inside NEAR(... , N)
-    .replace(/,\s*\d+\s*(?=\))/g, " ")
-    // Drop operators
+  const { masked, phrases } = maskQuotedPhrases(query);
+  const stripped = masked
+    // Unwrap `NEAR(a b [, N])` → ` a b `, dropping the call keyword, distance arg, and parens.
+    .replace(/\bNEAR\s*\(\s*([^()]+?)\s*(?:,\s*\d+\s*)?\)/gi, " $1 ")
+    // Drop remaining bare operator words.
     .replace(/\b(?:AND|OR|NOT|NEAR(?:\/\d+)?)\b/gi, " ")
-    // Drop NEAR's parens
+    // Drop any stray parens left over from malformed input.
     .replace(/[()]/g, " ");
+  return unmaskQuotedPhrases(stripped, phrases);
 }
 
 /** Extract content words from an FTS5 query, stripping operators. */

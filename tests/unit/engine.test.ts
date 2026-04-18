@@ -737,6 +737,102 @@ test("searchLiterature NEAR with distance picks the CJK co-occurrence block, not
   assert.doesNotMatch(result.results[0]!.passage, /^\s*50(\s|$)/u);
 });
 
+test("searchLiterature keeps AND/NEAR inside a quoted literal phrase for passage selection", async () => {
+  // Regression: stripFtsOperators used to strip AND/OR/NOT/NEAR unconditionally, including
+  // inside quotes. That made normalizedQuery="black white" for a `"black AND white"` query,
+  // so findExactPhraseBlockRange could not find the real phrase block and passage selection
+  // fell back to term scoring, which could pick any block containing both tokens.
+  const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-quoted-and-"));
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docKey = "3".repeat(40);
+  const manifestPath = join(manifestsDir, docKey + MANIFEST_EXT);
+
+  writeManifest(manifestPath, {
+    docKey,
+    itemKey: "ITEMAND",
+    title: "Contrast Study",
+    authors: ["A"],
+    filePath: "/tmp/quoted-and.pdf",
+    normalizedPath: join(dataDir, "normalized", docKey + ".md"),
+    blocks: [
+      {
+        blockIndex: 0,
+        blockType: "paragraph",
+        sectionPath: ["Decoy"],
+        text: "black or gray and white text appears elsewhere.",
+        charStart: 0,
+        charEnd: 47,
+        lineStart: 1,
+        lineEnd: 1,
+        isReferenceLike: false,
+      },
+      {
+        blockIndex: 1,
+        blockType: "paragraph",
+        sectionPath: ["Body"],
+        text: "photos were printed in black and white in the early edition.",
+        charStart: 49,
+        charEnd: 109,
+        lineStart: 3,
+        lineEnd: 3,
+        isReferenceLike: false,
+      },
+    ],
+  });
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [
+      {
+        docKey,
+        itemKey: "ITEMAND",
+        title: "Contrast Study",
+        authors: ["A"],
+        filePath: "/tmp/quoted-and.pdf",
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: 1,
+        mtimeMs: 1,
+        sourceHash: "hash-quoted-and",
+        lastIndexedAt: new Date().toISOString(),
+        normalizedPath: join(dataDir, "normalized", docKey + ".md"),
+        manifestPath,
+      },
+    ],
+  });
+
+  const fakeKeywordFactory = async () => ({
+    rebuildIndex: async () => {},
+    search: async (_query: string) => [{ docKey, score: 1.5 }],
+    isEmpty: async () => false,
+    close: async () => {},
+  });
+  const unusedQmdFactory = async () => {
+    throw new Error("qmd search should not run in keyword mode");
+  };
+
+  const result = await searchLiterature(
+    '"black AND white"',
+    10,
+    { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir },
+    unusedQmdFactory,
+    {},
+    fakeKeywordFactory,
+  );
+
+  assert.equal(result.results.length, 1);
+  assert.equal(result.results[0]!.blockStart, 1);
+  assert.match(result.results[0]!.passage, /black and white/u);
+});
+
 test("searchLiterature does not rebuild the keyword index when empty results come from a populated index", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-no-rebuild-"));
   const dataDir = join(root, "data");

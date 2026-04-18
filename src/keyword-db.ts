@@ -119,7 +119,32 @@ function rewriteUnquotedCjk(text: string): string {
   });
 }
 
-const INFIX_NEAR_PHRASE = '(?:"[^"]+"|[^\\s()",]+)';
+// After maskQuotedPhrases, each `"..."` literal is replaced by this marker,
+// which contains no whitespace, parens, commas, or quotes — so it naturally
+// acts as an opaque PHRASE token to downstream regexes without needing a
+// dedicated alternative in their patterns.
+const QUOTE_MARK_RE = /^\uE000Q\d+\uE001$/u;
+const QUOTE_UNMASK_RE = /\uE000Q(\d+)\uE001/gu;
+
+/**
+ * Replace every `"..."` substring with an opaque sentinel token so that
+ * regex passes run on the raw query ignore operators embedded inside
+ * quoted phrases (e.g. the word NEAR inside `"foo NEAR bar"`).
+ */
+export function maskQuotedPhrases(query: string): { masked: string; phrases: string[] } {
+  const phrases: string[] = [];
+  const masked = query.replace(/"[^"]*"/gu, (match) => {
+    phrases.push(match);
+    return `\uE000Q${phrases.length - 1}\uE001`;
+  });
+  return { masked, phrases };
+}
+
+export function unmaskQuotedPhrases(text: string, phrases: string[]): string {
+  return text.replace(QUOTE_UNMASK_RE, (_, idx: string) => phrases[Number(idx)]!);
+}
+
+const INFIX_NEAR_PHRASE = '[^\\s()",]+';
 const INFIX_NEAR_RE = new RegExp(
   `(${INFIX_NEAR_PHRASE})\\s+NEAR(?:/(\\d+))?\\s+(${INFIX_NEAR_PHRASE})`,
   "gi",
@@ -128,16 +153,20 @@ const CJK_RUN_RE =
   /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]{2,}/u;
 
 export function rewriteInfixNear(query: string): string {
-  const ensureQuoted = (s: string): string =>
-    s.startsWith('"') ? s : CJK_RUN_RE.test(s) ? `"${s}"` : s;
+  const { masked, phrases } = maskQuotedPhrases(query);
+  const ensureQuoted = (s: string): string => {
+    if (QUOTE_MARK_RE.test(s)) return s;  // already a quoted phrase (masked)
+    return CJK_RUN_RE.test(s) ? `"${s}"` : s;
+  };
+  let result = masked;
   let prev: string;
   do {
-    prev = query;
-    query = query.replace(INFIX_NEAR_RE, (_, a: string, n: string | undefined, b: string) =>
+    prev = result;
+    result = result.replace(INFIX_NEAR_RE, (_, a: string, n: string | undefined, b: string) =>
       `NEAR(${ensureQuoted(a)} ${ensureQuoted(b)}${n ? `, ${n}` : ""})`,
     );
-  } while (query !== prev);
-  return query;
+  } while (result !== prev);
+  return unmaskQuotedPhrases(result, phrases);
 }
 
 export function buildFtsQuery(query: string): string {
