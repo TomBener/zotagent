@@ -959,11 +959,24 @@ export function buildContext(entry: CatalogEntry): string {
   return parts.join("\n");
 }
 
-function writeProgressCatalog(path: string, entries: CatalogEntry[]): void {
+function writeProgressCatalog(
+  path: string,
+  entries: CatalogEntry[],
+  indexerState: { indexedQmdEmbedModel: string; indexerSignature: string },
+): void {
+  // Persist the active embed model and indexer signature on every progress
+  // write. Without them, an interrupted sync leaves the catalog without these
+  // fields, which makes the next run compare `undefined` against the current
+  // model — triggering a force re-embed that wipes the partial work done so
+  // far. `indexesCompletedAt` is deliberately omitted: the short-circuit path
+  // still requires it, so a mid-flight write cannot be mistaken for a
+  // completed sync.
   const snapshot: CatalogFile = {
     version: 1,
     generatedAt: new Date().toISOString(),
     entries: [...entries].sort((a, b) => a.filePath.localeCompare(b.filePath)),
+    indexedQmdEmbedModel: indexerState.indexedQmdEmbedModel,
+    indexerSignature: indexerState.indexerSignature,
   };
   writeCatalogFile(path, snapshot);
 }
@@ -1141,6 +1154,12 @@ export async function runSync(
     );
     const previousCatalog = readCatalogFile(paths.catalogPath);
     const previousByDocKey = mapEntriesByDocKey(previousCatalog);
+    const currentQmdEmbedModel = resolveQmdEmbedModel(config);
+    const currentIndexerSignature = buildIndexerSignature(currentQmdEmbedModel);
+    const indexerState = {
+      indexedQmdEmbedModel: currentQmdEmbedModel,
+      indexerSignature: currentIndexerSignature,
+    };
     const nextEntries: CatalogEntry[] = [];
     const changedAttachments: AttachmentCatalogEntry[] = [];
     const staleDocKeys = new Set(previousCatalog.entries.map((entry) => entry.docKey));
@@ -1297,7 +1316,7 @@ export async function runSync(
       }
     }
     if (nonPdfAttachments.length > 0) {
-      writeProgressCatalog(paths.catalogPath, nextEntries);
+      writeProgressCatalog(paths.catalogPath, nextEntries, indexerState);
     }
 
     async function recordReadyAttachment(
@@ -1466,7 +1485,7 @@ export async function runSync(
             skippedAttachments: stats.skippedAttachments,
             note: "finished individual retries",
           });
-          writeProgressCatalog(paths.catalogPath, nextEntries);
+          writeProgressCatalog(paths.catalogPath, nextEntries, indexerState);
           continue;
         }
 
@@ -1505,7 +1524,7 @@ export async function runSync(
         skippedAttachments: stats.skippedAttachments,
         note: "batch finished",
       });
-      writeProgressCatalog(paths.catalogPath, nextEntries);
+      writeProgressCatalog(paths.catalogPath, nextEntries, indexerState);
     }
 
     const bibliographyReferencedPaths = new Set(
@@ -1539,11 +1558,9 @@ export async function runSync(
       generatedAt: new Date().toISOString(),
       entries: nextEntries,
     };
-    writeProgressCatalog(paths.catalogPath, nextEntries);
+    writeProgressCatalog(paths.catalogPath, nextEntries, indexerState);
 
     const readyEntries = nextEntries.filter((entry) => entry.extractStatus === "ready");
-    const currentQmdEmbedModel = resolveQmdEmbedModel(config);
-    const currentIndexerSignature = buildIndexerSignature(currentQmdEmbedModel);
     const qmdEmbedModelChanged = previousCatalog.indexedQmdEmbedModel !== currentQmdEmbedModel;
     const indexerSignatureChanged = previousCatalog.indexerSignature !== currentIndexerSignature;
 

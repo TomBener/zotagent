@@ -783,6 +783,123 @@ test("runSync rebuilds indexes when the indexer signature changes since last syn
   assert.equal(persisted.indexerSignature, buildIndexerSignature("same-embed-model"));
 });
 
+test("runSync does not force re-embed when resuming an interrupted sync with matching indexer state", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-resume-"));
+  const attachmentsRoot = join(root, "attachments");
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  const normalizedDir = join(dataDir, "normalized");
+  mkdirSync(join(attachmentsRoot, "papers"), { recursive: true });
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+  mkdirSync(normalizedDir, { recursive: true });
+
+  const pdfPath = join(attachmentsRoot, "papers", "paper.pdf");
+  writeFileSync(pdfPath, "pdf");
+  const pdfStat = statSync(pdfPath);
+  const docKey = sha1("papers/paper.pdf");
+  const normalizedPath = join(normalizedDir, `${docKey}.md`);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
+  writeFileSync(normalizedPath, "Body");
+  writeManifestFile(manifestPath, {
+    docKey,
+    itemKey: "ITEM1",
+    title: "Paper",
+    authors: ["Author One"],
+    filePath: pdfPath,
+    normalizedPath,
+    blocks: [trivialBlock()],
+  });
+
+  const bibliographyPath = join(root, "bibliography.json");
+  writeFileSync(
+    bibliographyPath,
+    JSON.stringify([
+      {
+        id: "cite",
+        title: "Paper",
+        author: [{ family: "One", given: "Author" }],
+        file: pdfPath,
+        "zotero-item-key": "ITEM1",
+      },
+    ]),
+    "utf-8",
+  );
+
+  // Simulate the on-disk state after an interrupted sync: progress catalog
+  // has recorded the active embed model and indexer signature, but
+  // `indexesCompletedAt` is absent because the run was killed.
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    indexedQmdEmbedModel: "resumable-embed-model",
+    indexerSignature: buildIndexerSignature("resumable-embed-model"),
+    entries: [
+      {
+        docKey,
+        itemKey: "ITEM1",
+        citationKey: "cite",
+        title: "Paper",
+        authors: ["One Author"],
+        filePath: pdfPath,
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: pdfStat.size,
+        mtimeMs: Math.trunc(pdfStat.mtimeMs),
+        sourceHash: "existinghash",
+        lastIndexedAt: new Date().toISOString(),
+        normalizedPath,
+        manifestPath,
+      },
+    ],
+  });
+
+  const embedOptions: Array<{ force?: boolean } | undefined> = [];
+  let statusCalls = 0;
+  const qmdFactory = async () => ({
+    search: async () => [],
+    searchLex: async () => [],
+    update: async () => ({}),
+    embed: async (options?: { force?: boolean }) => {
+      embedOptions.push(options);
+      return {};
+    },
+    // Simulate one doc still needing embedding (as would be true after an
+    // interrupted sync), then zero after a single incremental pass.
+    getStatus: async () => {
+      statusCalls += 1;
+      return {
+        totalDocuments: 1,
+        needsEmbedding: statusCalls === 1 ? 1 : 0,
+        hasVectorIndex: true,
+        collections: [],
+      };
+    },
+    listContexts: async () => [],
+    addContext: async () => true,
+    removeContext: async () => true,
+    close: async () => {},
+  });
+
+  await runSync(
+    {
+      bibliographyJsonPath: bibliographyPath,
+      attachmentsRoot,
+      dataDir,
+      qmdEmbedModel: "resumable-embed-model",
+    },
+    qmdFactory,
+  );
+
+  // Resume must do an incremental embed, not a force. `force: true` would
+  // trigger `clearAllEmbeddings` inside qmd and discard the partial work.
+  assert.equal(embedOptions.length, 1);
+  assert.equal(embedOptions[0], undefined);
+});
+
 test("runSync skips qmd context writes when existing contexts already match", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-sync-ctx-noop-"));
   const attachmentsRoot = join(root, "attachments");
