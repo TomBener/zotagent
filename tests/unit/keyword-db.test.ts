@@ -172,7 +172,9 @@ test("search throws on empty query", async () => {
 test("segmentCjk inserts spaces between CJK characters", () => {
   assert.equal(segmentCjk("盛世才在新疆"), "盛 世 才 在 新 疆");
   assert.equal(segmentCjk("hello world"), "hello world");
-  assert.equal(segmentCjk("新疆is边疆"), "新 疆is 边 疆");
+  assert.equal(segmentCjk("新疆is边疆"), "新 疆 is 边 疆");
+  assert.equal(segmentCjk("is边疆"), "is 边 疆");
+  assert.equal(segmentCjk("新疆is"), "新 疆 is");
   assert.equal(segmentCjk(""), "");
   assert.equal(segmentCjk("abc"), "abc");
 });
@@ -183,6 +185,9 @@ test("buildFtsQuery converts CJK runs to NEAR queries", () => {
   assert.equal(buildFtsQuery("hello"), "hello");
   assert.equal(buildFtsQuery("新 疆"), "新 疆");
   assert.equal(buildFtsQuery("独山子油矿"), "NEAR(独 山 子 油 矿, 4)");
+  assert.equal(buildFtsQuery("is边疆"), "is NEAR(边 疆, 1)");
+  assert.equal(buildFtsQuery('"盛世才"'), '"盛世才"');
+  assert.equal(buildFtsQuery('hello "盛世才" world'), 'hello "盛世才" world');
 });
 
 test("CJK keyword search matches Chinese content via NEAR", async () => {

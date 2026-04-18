@@ -41,13 +41,23 @@ function ensureSchema(db: Database.Database): void {
 const CJK_RANGE =
   /(\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Hangul})/u;
 
+function isWhitespace(ch: string): boolean {
+  return ch === " " || ch === "\n" || ch === "\t";
+}
+
 export function segmentCjk(text: string): string {
+  const chars = [...text];
   const out: string[] = [];
-  for (const ch of text) {
-    if (out.length > 0 && CJK_RANGE.test(ch)) {
+  for (let i = 0; i < chars.length; i++) {
+    const ch = chars[i]!;
+    const isCjk = CJK_RANGE.test(ch);
+    if (out.length > 0 && !isWhitespace(ch)) {
       const prev = out[out.length - 1]!;
-      if (prev !== " " && prev !== "\n") {
-        out.push(" ");
+      if (!isWhitespace(prev)) {
+        const prevIsCjk = CJK_RANGE.test(prev);
+        if (isCjk || prevIsCjk) {
+          out.push(" ");
+        }
       }
     }
     out.push(ch);
@@ -96,9 +106,39 @@ function cjkRunToNear(run: string): string {
   return `NEAR(${chars.join(" ")}, ${distance})`;
 }
 
-export function buildFtsQuery(query: string): string {
+function rewriteUnquotedCjk(text: string): string {
   const CJK_RUN = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]{2,}/gu;
-  return query.replace(CJK_RUN, (match) => cjkRunToNear(match));
+  return text.replace(CJK_RUN, (m, offset) => {
+    const near = cjkRunToNear(m);
+    const before = offset > 0 && text[offset - 1] !== " " ? " " : "";
+    const afterIdx = offset + m.length;
+    const after = afterIdx < text.length && text[afterIdx] !== " " ? " " : "";
+    return `${before}${near}${after}`;
+  });
+}
+
+export function buildFtsQuery(query: string): string {
+  const parts: string[] = [];
+  let inQuote = false;
+  let current = "";
+  for (const ch of query) {
+    if (ch === '"') {
+      if (inQuote) {
+        parts.push(`"${current}"`);
+        current = "";
+      } else {
+        if (current.trim()) parts.push(rewriteUnquotedCjk(current));
+        current = "";
+      }
+      inQuote = !inQuote;
+      continue;
+    }
+    current += ch;
+  }
+  if (current.trim()) {
+    parts.push(inQuote ? `"${current}"` : rewriteUnquotedCjk(current));
+  }
+  return parts.join(" ").replace(/\s{2,}/g, " ").trim();
 }
 
 export async function openKeywordIndex(config: AppConfig): Promise<KeywordIndexClient> {
