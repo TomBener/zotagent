@@ -20,8 +20,8 @@ import { getDataPaths, resolveConfig, type ConfigOverrides } from "./config.js";
 import { buildMarkdownManifest, buildPdfManifest } from "./manifest.js";
 import { extractEpub } from "./epub.js";
 import { extractHtml } from "./html-extract.js";
-import { openKeywordIndex, type KeywordIndexFactory } from "./keyword-db.js";
-import { openQmdClient, type QmdFactory } from "./qmd.js";
+import { KEYWORD_INDEX_SCHEMA_VERSION, openKeywordIndex, type KeywordIndexFactory } from "./keyword-db.js";
+import { QMD_PACKAGE_VERSION, openQmdClient, resolveQmdEmbedModel, type QmdFactory } from "./qmd.js";
 import { mapEntriesByDocKey, readCatalogFile, summarizeCatalog, writeCatalogFile } from "./state.js";
 import type { AttachmentCatalogEntry, AttachmentManifest, CatalogEntry, CatalogFile, SyncStats } from "./types.js";
 import {
@@ -69,8 +69,26 @@ const ODL_DEFAULT_BATCH_SIZE = 8;
 const ODL_SINGLE_BATCH_SIZE_BYTES = 20 * 1024 * 1024;
 
 const require = createRequire(import.meta.url);
+const PACKAGE_JSON = require("../package.json") as { version?: string };
+const ZOTAGENT_PACKAGE_VERSION =
+  typeof PACKAGE_JSON.version === "string" && PACKAGE_JSON.version.length > 0 ? PACKAGE_JSON.version : "unknown";
 const ODL_PACKAGE_ENTRY = require.resolve("@opendataloader/pdf");
 const ODL_JAR_PATH = resolve(dirname(ODL_PACKAGE_ENTRY), "..", "lib", ODL_JAR_NAME);
+const SYNC_INDEXER_VERSION = "sync-index-v1";
+
+export function buildIndexerSignature(qmdEmbedModel: string): string {
+  return createHash("sha1")
+    .update(
+      [
+        `zotagent=${ZOTAGENT_PACKAGE_VERSION}`,
+        `syncIndexer=${SYNC_INDEXER_VERSION}`,
+        `keywordSchema=${KEYWORD_INDEX_SCHEMA_VERSION}`,
+        `qmdPackage=${QMD_PACKAGE_VERSION}`,
+        `qmdEmbedModel=${qmdEmbedModel}`,
+      ].join("\n"),
+    )
+    .digest("hex");
+}
 
 function writeConsoleSyncLine(message: string): void {
   if (process.stderr.isTTY) {
@@ -1524,17 +1542,22 @@ export async function runSync(
     writeProgressCatalog(paths.catalogPath, nextEntries);
 
     const readyEntries = nextEntries.filter((entry) => entry.extractStatus === "ready");
-    const qmdEmbedModelChanged = previousCatalog.indexedQmdEmbedModel !== config.qmdEmbedModel;
+    const currentQmdEmbedModel = resolveQmdEmbedModel(config);
+    const currentIndexerSignature = buildIndexerSignature(currentQmdEmbedModel);
+    const qmdEmbedModelChanged = previousCatalog.indexedQmdEmbedModel !== currentQmdEmbedModel;
+    const indexerSignatureChanged = previousCatalog.indexerSignature !== currentIndexerSignature;
 
     // Short-circuit: when nothing has changed since the last *completed* sync,
     // both index rebuild passes are provably no-ops. `indexesCompletedAt` is
     // only present if the previous run reached the end of the qmd block, so a
     // crash between the progress-catalog write and qmd completion does not
-    // incorrectly trigger this path. Also require the qmd embedding model to
-    // match — changing models invalidates all stored vectors.
+    // incorrectly trigger this path. Also require indexer state to match:
+    // changing the qmd model, qmd package, keyword schema, or zotagent indexer
+    // version invalidates stored index data.
     const allEntriesUnchanged =
       previousCatalog.indexesCompletedAt !== undefined &&
       !qmdEmbedModelChanged &&
+      !indexerSignatureChanged &&
       changedAttachments.length === 0 &&
       staleDocKeys.size === 0 &&
       nextEntries.every((entry) => {
@@ -1562,7 +1585,9 @@ export async function runSync(
         await qmd.update();
         await syncQmdContexts(qmd, readyEntries);
         if (readyEntries.length > 0) {
-          await embedQmdUntilSettled(qmd, logger, { force: qmdEmbedModelChanged });
+          await embedQmdUntilSettled(qmd, logger, {
+            force: qmdEmbedModelChanged || indexerSignatureChanged,
+          });
         }
       } finally {
         await qmd.close();
@@ -1575,7 +1600,8 @@ export async function runSync(
       ...nextCatalog,
       generatedAt: completionTimestamp,
       indexesCompletedAt: completionTimestamp,
-      ...(config.qmdEmbedModel ? { indexedQmdEmbedModel: config.qmdEmbedModel } : {}),
+      indexedQmdEmbedModel: currentQmdEmbedModel,
+      indexerSignature: currentIndexerSignature,
     });
 
     const finalCounts = summarizeCatalog(nextCatalog);

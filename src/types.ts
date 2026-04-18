@@ -126,6 +126,9 @@ export interface CatalogFile {
   // invalidate the short-circuit when the model changes (different model =
   // different vector space, existing vectors are stale).
   indexedQmdEmbedModel?: string;
+  // Stable signature of the zotagent/qmd/keyword indexer implementation used
+  // to build the indexes. Any mismatch forces a rebuild even if files match.
+  indexerSignature?: string;
 }
 
 export interface CatalogCounts {

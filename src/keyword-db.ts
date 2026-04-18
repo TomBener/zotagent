@@ -16,6 +16,7 @@ export interface KeywordIndexClient {
 }
 
 export type KeywordIndexFactory = (config: AppConfig) => Promise<KeywordIndexClient>;
+export const KEYWORD_INDEX_SCHEMA_VERSION = "keyword-fts5-porter-unicode61-contentless-v1";
 
 function ensureSchema(db: Database.Database): void {
   db.exec(`
