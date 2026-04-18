@@ -10,7 +10,7 @@
 
 - **Add to Zotero** — create items by DOI or basic fields and return the new `itemKey` immediately. `s2` searches Semantic Scholar and pipes a `paperId` into `add`.
 - **Index local attachments** — `sync` extracts and indexes PDF, EPUB, HTML, and TXT files from a Zotero library. PDF extraction uses an OpenDataLoader cascade with `pdftotext` fallback; EPUB and HTML extraction runs in-process.
-- **Search** — `search` runs FTS5 keyword search by default (`"exact phrase"`, `OR`, `NOT`, `NEAR`, prefix*) or semantic search with `--semantic` (qmd vector + LLM query expansion). `search-in` scopes a query to a single document. `metadata` searches bibliography fields.
+- **Search** — `search` runs FTS5 keyword search by default (`"exact phrase"`, `OR`, `NOT`, `NEAR`, prefix*) or semantic search with `--semantic` (qmd vector + LLM query expansion). Keyword search handles CJK (Chinese, Japanese, Korean) via character-level segmentation with `NEAR` proximity matching, and keeps only candidates verified by a phrase, term, or title hit to avoid FTS5 false positives. `search-in` scopes a query to a single document. `metadata` searches bibliography fields.
 - **Read** — `read`, `fulltext`, and `expand` return blocks, full normalized markdown, or context around a hit, addressed by `itemKey` or `citationKey`. When one item has multiple indexed attachments, they are merged into a single logical document with monotonic block indices and `# Attachment: <name>` dividers.
 
 All commands write JSON to stdout and are designed to be chained by AI agents.
