@@ -6,7 +6,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { getDataPaths } from "../../src/config.js";
-import { openKeywordIndex, segmentCjk, buildFtsQuery, rewriteInfixNear } from "../../src/keyword-db.js";
+import {
+  KeywordQuerySyntaxError,
+  openKeywordIndex,
+  segmentCjk,
+  buildFtsQuery,
+  rewriteInfixNear,
+} from "../../src/keyword-db.js";
 import type { AppConfig, CatalogEntry } from "../../src/types.js";
 import { MANIFEST_EXT, writeManifestFile } from "../../src/utils.js";
 
@@ -191,14 +197,10 @@ test("buildFtsQuery converts CJK runs to NEAR queries", () => {
 });
 
 test("rewriteInfixNear rewrites infix NEAR to function form", () => {
-  assert.equal(rewriteInfixNear("A NEAR B"), "NEAR(A B)");
-  assert.equal(rewriteInfixNear('"A" NEAR "B"'), 'NEAR("A" "B")');
   assert.equal(rewriteInfixNear('"A" NEAR/5 "B"'), 'NEAR("A" "B", 5)');
   assert.equal(rewriteInfixNear("A NEAR/10 B"), "NEAR(A B, 10)");
   // CJK bareword infix must be auto-quoted to prevent nested NEAR expansion downstream.
-  assert.equal(rewriteInfixNear("开发新疆 NEAR 人力财力"), 'NEAR("开发新疆" "人力财力")');
-  // Already in function form: untouched.
-  assert.equal(rewriteInfixNear('NEAR("A" "B", 5)'), 'NEAR("A" "B", 5)');
+  assert.equal(rewriteInfixNear("开发新疆 NEAR/50 人力财力"), 'NEAR("开发新疆" "人力财力", 50)');
   // Leave non-NEAR text alone.
   assert.equal(rewriteInfixNear("hello world"), "hello world");
 });
@@ -211,8 +213,8 @@ test("rewriteInfixNear preserves NEAR that appears inside a quoted literal phras
   assert.equal(rewriteInfixNear('"close NEAR/5 neighbor"'), '"close NEAR/5 neighbor"');
   // Real infix outside quotes should still be rewritten when mixed with a quoted literal.
   assert.equal(
-    rewriteInfixNear('"foo NEAR bar" AND "open up" NEAR closed'),
-    '"foo NEAR bar" AND NEAR("open up" closed)',
+    rewriteInfixNear('"foo NEAR bar" AND "open up" NEAR/5 closed'),
+    '"foo NEAR bar" AND NEAR("open up" closed, 5)',
   );
 });
 
@@ -224,16 +226,35 @@ test("buildFtsQuery preserves NEAR as a literal token inside a quoted phrase", (
   assert.doesNotMatch(out, /NEAR\(/u);
 });
 
-test("buildFtsQuery produces FTS5-compatible output for infix NEAR with CJK phrases", () => {
-  // Bug: `"开发新疆" NEAR "人力财力"` was passed through as-is, and FTS5 tokenized
+test("buildFtsQuery rejects FTS5 NEAR function syntax as user input", () => {
+  assert.throws(
+    () => buildFtsQuery('NEAR("A" "B", 5)'),
+    KeywordQuerySyntaxError,
+  );
+  assert.throws(
+    () => buildFtsQuery('NEAR("开发新疆" "人力财力", 50)'),
+    /Use the single proximity form/u,
+  );
+  assert.equal(buildFtsQuery('"NEAR(foo bar)"'), '"NEAR(foo bar)"');
+});
+
+test("buildFtsQuery rejects bare infix NEAR without an explicit distance", () => {
+  assert.throws(
+    () => buildFtsQuery("A NEAR B"),
+    /Bare NEAR is not supported/u,
+  );
+  assert.throws(
+    () => buildFtsQuery('"开发新疆" NEAR "人力财力"'),
+    KeywordQuerySyntaxError,
+  );
+});
+
+test("buildFtsQuery produces FTS5-compatible output for canonical NEAR/N with CJK phrases", () => {
+  // Bug: CJK proximity was previously passed through in a form that FTS5 tokenized
   // `NEAR` as a bareword → zero hits on Chinese corpora. Fix rewrites to function form.
   assert.match(
-    buildFtsQuery('"开发新疆" NEAR "人力财力"'),
-    /^NEAR\(\s*"开 发 新 疆"\s+"人 力 财 力"\s*\)$/u,
-  );
-  assert.match(
-    buildFtsQuery("开发新疆 NEAR 人力财力"),
-    /^NEAR\(\s*"开 发 新 疆"\s+"人 力 财 力"\s*\)$/u,
+    buildFtsQuery("开发新疆 NEAR/50 人力财力"),
+    /^NEAR\(\s*"开 发 新 疆"\s+"人 力 财 力"\s*,\s*50\s*\)$/u,
   );
   assert.match(
     buildFtsQuery('"开发新疆" NEAR/5 "人力财力"'),
@@ -275,7 +296,7 @@ test("CJK keyword search matches Chinese content via NEAR", async () => {
   }
 });
 
-test("keyword search accepts infix NEAR with CJK phrases against a real FTS5 index", async () => {
+test("keyword search accepts canonical NEAR/N with CJK phrases against a real FTS5 index", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-cjk-near-"));
   const dataDir = join(root, "data");
   const manifestsDir = join(dataDir, "manifests");
@@ -297,14 +318,17 @@ test("keyword search accepts infix NEAR with CJK phrases against a real FTS5 ind
   const client = await openKeywordIndex(createConfig(dataDir));
   try {
     await client.rebuildIndex([entry]);
-    // Infix form must now hit (previously returned 0).
-    const infix = await client.search('"开发新疆" NEAR "人力财力"', 10);
-    assert.equal(infix.length, 1);
-    assert.equal(infix[0]!.docKey, docKey);
-    // Function form already worked; regression guard.
-    const functional = await client.search('NEAR("开发新疆" "人力财力", 50)', 10);
-    assert.equal(functional.length, 1);
-    assert.equal(functional[0]!.docKey, docKey);
+    const distance = await client.search('"开发新疆" NEAR/50 "人力财力"', 10);
+    assert.equal(distance.length, 1);
+    assert.equal(distance[0]!.docKey, docKey);
+    await assert.rejects(
+      () => client.search('"开发新疆" NEAR "人力财力"', 10),
+      KeywordQuerySyntaxError,
+    );
+    await assert.rejects(
+      () => client.search('NEAR("开发新疆" "人力财力", 50)', 10),
+      KeywordQuerySyntaxError,
+    );
   } finally {
     await client.close();
   }

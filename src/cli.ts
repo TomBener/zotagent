@@ -6,6 +6,7 @@ import { addS2PaperToZotero, addToZotero } from "./add.js";
 import { getDataPaths, resolveConfig, type ConfigOverrides } from "./config.js";
 import { expandDocument, fullTextDocument, getIndexStatus, readDocument, searchLiterature, searchWithinDocuments } from "./engine.js";
 import { emitError, emitOk } from "./json.js";
+import { KeywordQuerySyntaxError } from "./keyword-db.js";
 import { searchMetadata } from "./metadata.js";
 import { openQmdClient } from "./qmd.js";
 import { searchSemanticScholar } from "./s2.js";
@@ -211,7 +212,8 @@ Add to Zotero
 Search
   search "<text>" [--keyword | --semantic] [--limit <n>] [--min-score <n>]
       Search indexed documents.
-      Default is keyword search (FTS5 with porter stemming): "exact phrase", OR, NOT, NEAR, prefix*.
+      Default is keyword search (FTS5 with porter stemming): "exact phrase", OR, NOT,
+      term NEAR/<n> term, prefix*. Use NEAR/50 for proximity; NEAR(...) is not accepted.
       --semantic uses vector + LLM query expansion (slower, heavier); cannot combine with --keyword.
         --limit <n>                 Return up to n search results. Default: 10 for search, 20 for metadata.
         --min-score <n>             Drop lower-scoring search hits before mapping.
@@ -822,6 +824,15 @@ async function main(): Promise<void> {
         return;
     }
   } catch (error) {
+    if (error instanceof KeywordQuerySyntaxError) {
+      emitError(
+        "INVALID_ARGUMENT",
+        error.message,
+        undefined,
+        { elapsedMs: Date.now() - startedAt },
+      );
+      return;
+    }
     emitError(
       "UNEXPECTED_ERROR",
       error instanceof Error ? error.message : String(error),

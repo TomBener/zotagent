@@ -656,6 +656,31 @@ test("search keyword returns elapsedMs in meta", async () => {
   assert.equal(typeof parsed.meta?.elapsedMs, "number");
 });
 
+test("search rejects non-canonical NEAR syntax with an argument error", async () => {
+  const fixture = await createIndexedFixture();
+
+  const result = runCli([
+    "search",
+    'NEAR("party" "secretary", 10)',
+    "--bibliography",
+    fixture.bibliographyPath,
+    "--attachments-root",
+    fixture.attachmentsRoot,
+    "--data-dir",
+    fixture.dataDir,
+  ]);
+
+  assert.equal(result.status, 1);
+  const parsed = JSON.parse(result.stdout) as {
+    ok: boolean;
+    error: { code: string; message: string };
+  };
+  assert.equal(parsed.ok, false);
+  assert.equal(parsed.error.code, "INVALID_ARGUMENT");
+  assert.match(parsed.error.message, /NEAR\(\.\.\.\) is not supported/u);
+  assert.match(parsed.error.message, /NEAR\/50/u);
+});
+
 test("keyword index searches with FTS5 porter stemming", async () => {
   const fixture = await createIndexedFixture();
   const config = createConfig(fixture.bibliographyPath, fixture.attachmentsRoot, fixture.dataDir);

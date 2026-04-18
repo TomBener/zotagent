@@ -19,6 +19,13 @@ export interface KeywordIndexClient {
 export type KeywordIndexFactory = (config: AppConfig) => Promise<KeywordIndexClient>;
 export const KEYWORD_INDEX_SCHEMA_VERSION = "keyword-fts5-porter-unicode61-contentless-v1";
 
+export class KeywordQuerySyntaxError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "KeywordQuerySyntaxError";
+  }
+}
+
 function ensureSchema(db: Database.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS keyword_docs (
@@ -146,11 +153,29 @@ export function unmaskQuotedPhrases(text: string, phrases: string[]): string {
 
 const INFIX_NEAR_PHRASE = '[^\\s()",]+';
 const INFIX_NEAR_RE = new RegExp(
-  `(${INFIX_NEAR_PHRASE})\\s+NEAR(?:/(\\d+))?\\s+(${INFIX_NEAR_PHRASE})`,
+  `(${INFIX_NEAR_PHRASE})\\s+NEAR/(\\d+)\\s+(${INFIX_NEAR_PHRASE})`,
   "gi",
+);
+const BARE_INFIX_NEAR_RE = new RegExp(
+  `${INFIX_NEAR_PHRASE}\\s+NEAR\\s+${INFIX_NEAR_PHRASE}`,
+  "i",
 );
 const CJK_RUN_RE =
   /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]{2,}/u;
+
+function assertSupportedKeywordQuery(query: string): void {
+  const { masked } = maskQuotedPhrases(query);
+  if (/\bNEAR\s*\(/iu.test(masked)) {
+    throw new KeywordQuerySyntaxError(
+      'NEAR(...) is not supported. Use the single proximity form: "<term A>" NEAR/50 "<term B>".',
+    );
+  }
+  if (BARE_INFIX_NEAR_RE.test(masked)) {
+    throw new KeywordQuerySyntaxError(
+      'Bare NEAR is not supported. Use the single proximity form with an explicit distance: "<term A>" NEAR/50 "<term B>".',
+    );
+  }
+}
 
 export function rewriteInfixNear(query: string): string {
   const { masked, phrases } = maskQuotedPhrases(query);
@@ -162,14 +187,15 @@ export function rewriteInfixNear(query: string): string {
   let prev: string;
   do {
     prev = result;
-    result = result.replace(INFIX_NEAR_RE, (_, a: string, n: string | undefined, b: string) =>
-      `NEAR(${ensureQuoted(a)} ${ensureQuoted(b)}${n ? `, ${n}` : ""})`,
+    result = result.replace(INFIX_NEAR_RE, (_, a: string, n: string, b: string) =>
+      `NEAR(${ensureQuoted(a)} ${ensureQuoted(b)}, ${n})`,
     );
   } while (result !== prev);
   return unmaskQuotedPhrases(result, phrases);
 }
 
 export function buildFtsQuery(query: string): string {
+  assertSupportedKeywordQuery(query);
   query = rewriteInfixNear(query);
   const parts: string[] = [];
   let inQuote = false;
@@ -232,7 +258,10 @@ export async function openKeywordIndex(config: AppConfig): Promise<KeywordIndexC
       try {
         const rows = db.prepare(sql).all(ftsQuery, limit) as Array<{ docKey: string; rank: number }>;
         return rows.map((row) => ({ docKey: row.docKey, score: -row.rank }));
-      } catch {
+      } catch (error) {
+        if (error instanceof KeywordQuerySyntaxError) {
+          throw error;
+        }
         const sanitized = query.replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/gu, " ").trim();
         if (sanitized.length === 0) {
           throw new Error("Search text cannot be empty.");

@@ -640,11 +640,9 @@ test("searchLiterature keyword mode verifies spaced CJK text before keeping a ca
   assert.match(result.results[0]!.passage, /党 委 书 记/u);
 });
 
-test("searchLiterature NEAR with distance picks the CJK co-occurrence block, not a '50' decoy", async () => {
-  // Regression: extractQueryTerms used to pull `50` from `NEAR(..., 50)` and scoreKeywordText
-  // could only match whole-run tokens — so any block containing `50` (page numbers, years)
-  // outranked the real co-occurrence block. Fix strips distance numbers and uses substring
-  // matching for CJK terms.
+test("searchLiterature NEAR/N picks the CJK co-occurrence block, not a distance decoy", async () => {
+  // Regression guard for passage scoring: the public proximity syntax must keep only
+  // content terms for block selection, and CJK terms must match as substrings.
   const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-near-passage-"));
   const dataDir = join(root, "data");
   const indexDir = join(dataDir, "index");
@@ -723,7 +721,7 @@ test("searchLiterature NEAR with distance picks the CJK co-occurrence block, not
   };
 
   const result = await searchLiterature(
-    'NEAR("开发新疆" "人力财力", 50)',
+    '"开发新疆" NEAR/50 "人力财力"',
     10,
     { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir },
     unusedQmdFactory,

@@ -211,8 +211,9 @@ function buildTitleSearchRow(
  * Strip FTS5 operators, distance parameters, and parens so only content words
  * remain for passage-layer scoring. Quoted phrases pass through untouched so
  * `"black AND white"` or `"foo NEAR bar"` are treated as the exact phrases the
- * user asked for. Distance numbers are only stripped inside a `NEAR(...)` call,
- * so unrelated `(..., 2020)` substrings keep their numeric terms.
+ * user asked for. Public proximity syntax is `left NEAR/<n> right`; the NEAR(...)
+ * unwrap is kept for the internal FTS form and does not strip unrelated
+ * `(..., 2020)` substrings.
  */
 function stripFtsOperators(query: string): string {
   const { masked, phrases } = maskQuotedPhrases(query);
