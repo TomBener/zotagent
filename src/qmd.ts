@@ -17,6 +17,10 @@ export interface QmdStatus {
   }>;
 }
 
+export interface QmdEmbedOptions {
+  force?: boolean;
+}
+
 export interface QmdClient {
   search(options: {
     query?: string;
@@ -37,7 +41,7 @@ export interface QmdClient {
     }>
   >;
   update(): Promise<unknown>;
-  embed(): Promise<unknown>;
+  embed(options?: QmdEmbedOptions): Promise<unknown>;
   getStatus(): Promise<QmdStatus>;
   listContexts(): Promise<Array<{ collection: string; path: string; context: string }>>;
   addContext(collectionName: string, pathPrefix: string, contextText: string): Promise<boolean>;
@@ -72,7 +76,7 @@ function wrapStore(store: QMDStore): QmdClient {
       }),
     searchLex: (query, options) => store.searchLex(query, options),
     update: () => store.update(),
-    embed: () => store.embed(),
+    embed: (options) => store.embed(options),
     getStatus: () => store.getStatus(),
     listContexts: () => store.listContexts(),
     addContext: (collectionName, pathPrefix, contextText) =>

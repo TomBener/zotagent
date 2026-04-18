@@ -633,6 +633,7 @@ test("runSync rebuilds indexes when the qmd embedding model changes since last s
   });
 
   let qmdUpdateCalls = 0;
+  const embedOptions: Array<{ force?: boolean } | undefined> = [];
   const qmdFactory = async () => ({
     search: async () => [],
     searchLex: async () => [],
@@ -640,7 +641,10 @@ test("runSync rebuilds indexes when the qmd embedding model changes since last s
       qmdUpdateCalls += 1;
       return {};
     },
-    embed: async () => ({}),
+    embed: async (options?: { force?: boolean }) => {
+      embedOptions.push(options);
+      return {};
+    },
     getStatus: async () => ({ totalDocuments: 1, needsEmbedding: 0, hasVectorIndex: true, collections: [] }),
     listContexts: async () => [],
     addContext: async () => true,
@@ -659,6 +663,7 @@ test("runSync rebuilds indexes when the qmd embedding model changes since last s
   );
 
   assert.equal(qmdUpdateCalls, 1);
+  assert.deepEqual(embedOptions, [{ force: true }]);
   const persisted = readCatalogFile(join(indexDir, "catalog.json"));
   assert.equal(persisted.indexedQmdEmbedModel, "new-embed-model");
 });

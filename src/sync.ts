@@ -978,22 +978,28 @@ async function syncQmdContexts(qmd: Awaited<ReturnType<QmdFactory>>, readyEntrie
 async function embedQmdUntilSettled(
   qmd: Awaited<ReturnType<QmdFactory>>,
   logger: SyncLogger,
+  options: { force?: boolean } = {},
 ): Promise<void> {
   let pass = 0;
+  let forceNextPass = options.force ?? false;
 
   while (true) {
     const before = await qmd.getStatus();
-    if (before.needsEmbedding <= 0) return;
+    if (before.needsEmbedding <= 0 && !forceNextPass) return;
 
     pass += 1;
+    const forceThisPass = forceNextPass;
+    forceNextPass = false;
     logger.info(
-      pass === 1
-        ? `Generating embeddings for ${before.needsEmbedding} document(s).`
-        : `Continuing embeddings (pass ${pass}, ${before.needsEmbedding} document(s) remaining).`,
+      forceThisPass
+        ? "Regenerating embeddings after qmd embedding model change."
+        : pass === 1
+          ? `Generating embeddings for ${before.needsEmbedding} document(s).`
+          : `Continuing embeddings (pass ${pass}, ${before.needsEmbedding} document(s) remaining).`,
       { console: true },
     );
 
-    await qmd.embed();
+    await qmd.embed(forceThisPass ? { force: true } : undefined);
 
     const after = await qmd.getStatus();
     if (after.needsEmbedding <= 0) {
@@ -1001,6 +1007,14 @@ async function embedQmdUntilSettled(
         logger.info(`Embedding complete after ${pass} pass(es).`, { console: true });
       }
       return;
+    }
+
+    if (forceThisPass) {
+      logger.info(
+        `Forced embedding pass finished; ${after.needsEmbedding} document(s) still need embeddings.`,
+        { console: true },
+      );
+      continue;
     }
 
     if (after.needsEmbedding >= before.needsEmbedding) {
@@ -1510,6 +1524,7 @@ export async function runSync(
     writeProgressCatalog(paths.catalogPath, nextEntries);
 
     const readyEntries = nextEntries.filter((entry) => entry.extractStatus === "ready");
+    const qmdEmbedModelChanged = previousCatalog.indexedQmdEmbedModel !== config.qmdEmbedModel;
 
     // Short-circuit: when nothing has changed since the last *completed* sync,
     // both index rebuild passes are provably no-ops. `indexesCompletedAt` is
@@ -1519,7 +1534,7 @@ export async function runSync(
     // match — changing models invalidates all stored vectors.
     const allEntriesUnchanged =
       previousCatalog.indexesCompletedAt !== undefined &&
-      previousCatalog.indexedQmdEmbedModel === config.qmdEmbedModel &&
+      !qmdEmbedModelChanged &&
       changedAttachments.length === 0 &&
       staleDocKeys.size === 0 &&
       nextEntries.every((entry) => {
@@ -1547,7 +1562,7 @@ export async function runSync(
         await qmd.update();
         await syncQmdContexts(qmd, readyEntries);
         if (readyEntries.length > 0) {
-          await embedQmdUntilSettled(qmd, logger);
+          await embedQmdUntilSettled(qmd, logger, { force: qmdEmbedModelChanged });
         }
       } finally {
         await qmd.close();
