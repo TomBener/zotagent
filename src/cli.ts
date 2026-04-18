@@ -342,7 +342,7 @@ async function main(): Promise<void> {
         if (syncConfig.syncEnabled === false) {
           emitError(
             "SYNC_DISABLED",
-            "sync is disabled on this host. Set `syncEnabled` to true in ~/.zotagent/config.json (or ZOTAGENT_SYNC_ENABLED=true) to enable, or run sync on the host that owns the attachment files.",
+            "sync is disabled on this host. Set `syncEnabled` to true in ~/.zotagent/config.json (or ZOTAGENT_SYNC_ENABLED=true) to enable.",
           );
           return;
         }
