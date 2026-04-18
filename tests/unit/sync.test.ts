@@ -497,6 +497,7 @@ test("runSync short-circuits both index rebuilds when the catalog is identical t
     version: 1,
     generatedAt: new Date().toISOString(),
     indexesCompletedAt: new Date().toISOString(),
+    indexedQmdEmbedModel: "fake-embed-model",
     entries: [previousEntry],
   });
 
@@ -535,7 +536,12 @@ test("runSync short-circuits both index rebuilds when the catalog is identical t
   };
 
   const result = await runSync(
-    { bibliographyJsonPath: bibliographyPath, attachmentsRoot, dataDir },
+    {
+      bibliographyJsonPath: bibliographyPath,
+      attachmentsRoot,
+      dataDir,
+      qmdEmbedModel: "fake-embed-model",
+    },
     qmdFactory,
     keywordFactory,
   );
@@ -552,6 +558,109 @@ test("runSync short-circuits both index rebuilds when the catalog is identical t
 
   const persisted = readCatalogFile(join(indexDir, "catalog.json"));
   assert.ok(persisted.indexesCompletedAt, "expected completion marker to be persisted");
+  assert.equal(persisted.indexedQmdEmbedModel, "fake-embed-model");
+});
+
+test("runSync rebuilds indexes when the qmd embedding model changes since last sync", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-embed-change-"));
+  const attachmentsRoot = join(root, "attachments");
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  const normalizedDir = join(dataDir, "normalized");
+  mkdirSync(join(attachmentsRoot, "papers"), { recursive: true });
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+  mkdirSync(normalizedDir, { recursive: true });
+
+  const pdfPath = join(attachmentsRoot, "papers", "paper.pdf");
+  writeFileSync(pdfPath, "pdf");
+  const pdfStat = statSync(pdfPath);
+  const docKey = sha1("papers/paper.pdf");
+  const normalizedPath = join(normalizedDir, `${docKey}.md`);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
+  writeFileSync(normalizedPath, "Body");
+  writeManifestFile(manifestPath, {
+    docKey,
+    itemKey: "ITEM1",
+    title: "Paper",
+    authors: ["Author One"],
+    filePath: pdfPath,
+    normalizedPath,
+    blocks: [trivialBlock()],
+  });
+
+  const bibliographyPath = join(root, "bibliography.json");
+  writeFileSync(
+    bibliographyPath,
+    JSON.stringify([
+      {
+        id: "cite",
+        title: "Paper",
+        author: [{ family: "One", given: "Author" }],
+        file: pdfPath,
+        "zotero-item-key": "ITEM1",
+      },
+    ]),
+    "utf-8",
+  );
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    indexesCompletedAt: new Date().toISOString(),
+    indexedQmdEmbedModel: "old-embed-model",
+    entries: [
+      {
+        docKey,
+        itemKey: "ITEM1",
+        citationKey: "cite",
+        title: "Paper",
+        authors: ["One Author"],
+        filePath: pdfPath,
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: pdfStat.size,
+        mtimeMs: Math.trunc(pdfStat.mtimeMs),
+        sourceHash: "existinghash",
+        lastIndexedAt: new Date().toISOString(),
+        normalizedPath,
+        manifestPath,
+      },
+    ],
+  });
+
+  let qmdUpdateCalls = 0;
+  const qmdFactory = async () => ({
+    search: async () => [],
+    searchLex: async () => [],
+    update: async () => {
+      qmdUpdateCalls += 1;
+      return {};
+    },
+    embed: async () => ({}),
+    getStatus: async () => ({ totalDocuments: 1, needsEmbedding: 0, hasVectorIndex: true, collections: [] }),
+    listContexts: async () => [],
+    addContext: async () => true,
+    removeContext: async () => true,
+    close: async () => {},
+  });
+
+  await runSync(
+    {
+      bibliographyJsonPath: bibliographyPath,
+      attachmentsRoot,
+      dataDir,
+      qmdEmbedModel: "new-embed-model",
+    },
+    qmdFactory,
+  );
+
+  assert.equal(qmdUpdateCalls, 1);
+  const persisted = readCatalogFile(join(indexDir, "catalog.json"));
+  assert.equal(persisted.indexedQmdEmbedModel, "new-embed-model");
 });
 
 test("runSync skips qmd context writes when existing contexts already match", async () => {

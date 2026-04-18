@@ -1515,9 +1515,11 @@ export async function runSync(
     // both index rebuild passes are provably no-ops. `indexesCompletedAt` is
     // only present if the previous run reached the end of the qmd block, so a
     // crash between the progress-catalog write and qmd completion does not
-    // incorrectly trigger this path.
+    // incorrectly trigger this path. Also require the qmd embedding model to
+    // match — changing models invalidates all stored vectors.
     const allEntriesUnchanged =
       previousCatalog.indexesCompletedAt !== undefined &&
+      previousCatalog.indexedQmdEmbedModel === config.qmdEmbedModel &&
       changedAttachments.length === 0 &&
       staleDocKeys.size === 0 &&
       nextEntries.every((entry) => {
@@ -1558,6 +1560,7 @@ export async function runSync(
       ...nextCatalog,
       generatedAt: completionTimestamp,
       indexesCompletedAt: completionTimestamp,
+      ...(config.qmdEmbedModel ? { indexedQmdEmbedModel: config.qmdEmbedModel } : {}),
     });
 
     const finalCounts = summarizeCatalog(nextCatalog);

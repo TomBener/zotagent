@@ -122,6 +122,10 @@ export interface CatalogFile {
   // Set only when keyword + qmd indexes have been rebuilt to match `entries`.
   // Absent on progress writes, so a crash mid-sync is detectable on restart.
   indexesCompletedAt?: string;
+  // Effective qmd embedding model at the time indexes completed. Used to
+  // invalidate the short-circuit when the model changes (different model =
+  // different vector space, existing vectors are stale).
+  indexedQmdEmbedModel?: string;
 }
 
 export interface CatalogCounts {
