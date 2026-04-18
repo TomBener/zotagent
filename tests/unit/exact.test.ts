@@ -74,6 +74,31 @@ test("findExactPhraseBlockRange matches CJK phrases despite OCR-style spacing", 
   assert.deepEqual(result, { blockStart: 10, blockEnd: 10 });
 });
 
+test("normalizeExactText folds traditional Chinese to simplified", () => {
+  assert.equal(normalizeExactText("繁體中文"), "繁体中文");
+  assert.equal(normalizeExactText("開發新疆"), "开发新疆");
+  // Already simplified text stays simplified.
+  assert.equal(normalizeExactText("开发新疆"), "开发新疆");
+  // Mixed scripts keep their non-Han portions untouched.
+  assert.equal(normalizeExactText("Reform 改革開放 Era"), "reform 改革开放 era");
+});
+
+test("findExactPhraseBlockRange matches across traditional/simplified variants", () => {
+  // Traditional query against a simplified document.
+  const tradVsSimp = findExactPhraseBlockRange(
+    manifest([block(5, "本文讨论开发新疆的人力财力问题。")]),
+    "開發新疆",
+  );
+  assert.deepEqual(tradVsSimp, { blockStart: 5, blockEnd: 5 });
+
+  // Simplified query against a traditional document.
+  const simpVsTrad = findExactPhraseBlockRange(
+    manifest([block(7, "本文討論開發新疆的人力財力問題。")]),
+    "开发新疆",
+  );
+  assert.deepEqual(simpVsTrad, { blockStart: 7, blockEnd: 7 });
+});
+
 test("findExactPhraseBlockRange handles long manifests with no match quickly", () => {
   const blocks = Array.from({ length: 5000 }, (_, index) =>
     block(index, `This unrelated block ${index} mentions old material before another rich example.`),

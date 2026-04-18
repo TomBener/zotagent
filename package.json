@@ -28,10 +28,12 @@
     "@types/better-sqlite3": "^7.6.13",
     "better-sqlite3": "^12.9.0",
     "jszip": "^3.10.1",
-    "linkedom": "^0.18.12"
+    "linkedom": "^0.18.12",
+    "opencc-js": "^1.0.5"
   },
   "devDependencies": {
     "@types/node": "^25.2.3",
+    "@types/opencc-js": "^1.0.3",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   }

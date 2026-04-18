@@ -187,13 +187,28 @@ test("segmentCjk inserts spaces between CJK characters", () => {
 
 test("buildFtsQuery converts CJK runs to NEAR queries", () => {
   assert.equal(buildFtsQuery("盛世才"), "NEAR(盛 世 才, 2)");
-  assert.equal(buildFtsQuery("韜奮 抗戰"), "NEAR(韜 奮, 1) NEAR(抗 戰, 1)");
+  // Traditional input is folded to simplified before proximity rewriting.
+  assert.equal(buildFtsQuery("韜奮 抗戰"), "NEAR(韬 奋, 1) NEAR(抗 战, 1)");
   assert.equal(buildFtsQuery("hello"), "hello");
   assert.equal(buildFtsQuery("新 疆"), "新 疆");
   assert.equal(buildFtsQuery("独山子油矿"), "NEAR(独 山 子 油 矿, 4)");
   assert.equal(buildFtsQuery("is边疆"), "is NEAR(边 疆, 1)");
   assert.equal(buildFtsQuery('"盛世才"'), '"盛 世 才"');
   assert.equal(buildFtsQuery('hello "盛世才" world'), 'hello "盛 世 才" world');
+});
+
+test("buildFtsQuery folds traditional Chinese to simplified", () => {
+  // Unquoted traditional run becomes a simplified NEAR() query.
+  assert.equal(buildFtsQuery("繁體"), "NEAR(繁 体, 1)");
+  // Quoted traditional phrase is converted character-by-character.
+  assert.equal(buildFtsQuery('"繁體中文"'), '"繁 体 中 文"');
+  // Mixed traditional + simplified in one query collapses to simplified.
+  assert.equal(buildFtsQuery("韜奋"), "NEAR(韬 奋, 1)");
+  // NEAR/N infix with traditional CJK phrases still produces simplified phrases.
+  assert.match(
+    buildFtsQuery('"開發新疆" NEAR/5 "人力財力"'),
+    /^NEAR\(\s*"开 发 新 疆"\s+"人 力 财 力"\s*,\s*5\s*\)$/u,
+  );
 });
 
 test("rewriteInfixNear rewrites infix NEAR to function form", () => {
@@ -291,6 +306,69 @@ test("CJK keyword search matches Chinese content via NEAR", async () => {
     const quoted = await client.search('"盛世才"', 10);
     assert.equal(quoted.length, 1);
     assert.equal(quoted[0]!.docKey, docKey);
+  } finally {
+    await client.close();
+  }
+});
+
+test("keyword search is agnostic to traditional vs simplified Chinese", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-trad-simp-"));
+  const dataDir = join(root, "data");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(manifestsDir, { recursive: true });
+
+  // Doc A: stored in traditional Chinese.
+  const tradKey = "f".repeat(40);
+  const tradManifest = join(manifestsDir, `${tradKey}${MANIFEST_EXT}`);
+  writeManifestFile(tradManifest, {
+    docKey: tradKey, itemKey: "TRAD1", title: "開發新疆研究", authors: ["A"],
+    filePath: "/tmp/trad.pdf", normalizedPath: join(dataDir, "normalized", `${tradKey}.md`),
+    blocks: [{ blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"],
+      text: "本文討論開發新疆的人力財力問題。", charStart: 0, charEnd: 20, lineStart: 1, lineEnd: 1, isReferenceLike: false }],
+  });
+
+  // Doc B: stored in simplified Chinese.
+  const simpKey = "1".repeat(40);
+  const simpManifest = join(manifestsDir, `${simpKey}${MANIFEST_EXT}`);
+  writeManifestFile(simpManifest, {
+    docKey: simpKey, itemKey: "SIMP1", title: "开发新疆研究", authors: ["A"],
+    filePath: "/tmp/simp.pdf", normalizedPath: join(dataDir, "normalized", `${simpKey}.md`),
+    blocks: [{ blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"],
+      text: "本文讨论开发新疆的人力财力问题。", charStart: 0, charEnd: 20, lineStart: 1, lineEnd: 1, isReferenceLike: false }],
+  });
+
+  const tradEntry = readyEntry(dataDir, tradKey, "TRAD1", "開發新疆研究", "/tmp/trad.pdf", tradManifest);
+  const simpEntry = readyEntry(dataDir, simpKey, "SIMP1", "开发新疆研究", "/tmp/simp.pdf", simpManifest);
+
+  const client = await openKeywordIndex(createConfig(dataDir));
+  try {
+    await client.rebuildIndex([tradEntry, simpEntry]);
+
+    // A simplified query finds both documents.
+    const simpHits = await client.search("开发新疆", 10);
+    assert.equal(simpHits.length, 2);
+    assert.deepEqual(
+      simpHits.map((h) => h.docKey).sort(),
+      [tradKey, simpKey].sort(),
+    );
+
+    // A traditional query finds both documents.
+    const tradHits = await client.search("開發新疆", 10);
+    assert.equal(tradHits.length, 2);
+    assert.deepEqual(
+      tradHits.map((h) => h.docKey).sort(),
+      [tradKey, simpKey].sort(),
+    );
+
+    // Quoted phrase form works across variants.
+    const quotedTrad = await client.search('"開發新疆"', 10);
+    assert.equal(quotedTrad.length, 2);
+    const quotedSimp = await client.search('"开发新疆"', 10);
+    assert.equal(quotedSimp.length, 2);
+
+    // NEAR/N proximity across variants.
+    const nearHits = await client.search('"開發新疆" NEAR/20 "人力財力"', 10);
+    assert.equal(nearHits.length, 2);
   } finally {
     await client.close();
   }

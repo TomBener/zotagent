@@ -1,4 +1,5 @@
 import type { AttachmentManifest } from "./types.js";
+import { toSimplified } from "./zh-convert.js";
 
 const SINGLE_CJK_TOKEN = /^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]$/u;
 
@@ -29,8 +30,7 @@ function collapseSegmentedCjkRuns(normalized: string): string {
 }
 
 export function normalizeExactText(input: string): string {
-  const normalized = input
-    .normalize("NFKC")
+  const normalized = toSimplified(input.normalize("NFKC"))
     .toLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, " ")
     .replace(/\s+/gu, " ")

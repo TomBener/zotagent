@@ -3,6 +3,7 @@ import Database from "better-sqlite3";
 import { getDataPaths } from "./config.js";
 import type { AppConfig, CatalogEntry } from "./types.js";
 import { ensureDir, exists, readManifestFile } from "./utils.js";
+import { toSimplified } from "./zh-convert.js";
 
 export interface KeywordSearchResult {
   docKey: string;
@@ -17,7 +18,7 @@ export interface KeywordIndexClient {
 }
 
 export type KeywordIndexFactory = (config: AppConfig) => Promise<KeywordIndexClient>;
-export const KEYWORD_INDEX_SCHEMA_VERSION = "keyword-fts5-porter-unicode61-contentless-v1";
+export const KEYWORD_INDEX_SCHEMA_VERSION = "keyword-fts5-porter-unicode61-contentless-tradsimp-v2";
 
 export class KeywordQuerySyntaxError extends Error {
   constructor(message: string) {
@@ -80,7 +81,7 @@ function buildBody(entry: CatalogEntry): string | null {
   return manifest.blocks
     .map((block) => block.text)
     .filter((text) => text.length > 0)
-    .map((text) => segmentCjk(text))
+    .map((text) => segmentCjk(toSimplified(text)))
     .join("\n");
 }
 
@@ -103,7 +104,7 @@ function rebuildTable(db: Database.Database, readyEntries: CatalogEntry[]): void
     const body = buildBody(entry);
     if (body === null) continue;
     insertDoc.run(rowid, entry.docKey);
-    insertFts.run(rowid, segmentCjk(entry.title), body);
+    insertFts.run(rowid, segmentCjk(toSimplified(entry.title)), body);
     rowid += 1;
   }
 }
@@ -195,6 +196,7 @@ export function rewriteInfixNear(query: string): string {
 }
 
 export function buildFtsQuery(query: string): string {
+  query = toSimplified(query);
   assertSupportedKeywordQuery(query);
   query = rewriteInfixNear(query);
   const parts: string[] = [];
