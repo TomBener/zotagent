@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { getDataPaths } from "../../src/config.js";
-import { openKeywordIndex } from "../../src/keyword-db.js";
+import { openKeywordIndex, segmentCjk, buildFtsQuery } from "../../src/keyword-db.js";
 import type { AppConfig, CatalogEntry } from "../../src/types.js";
 import { MANIFEST_EXT, writeManifestFile } from "../../src/utils.js";
 
@@ -164,6 +164,52 @@ test("search throws on empty query", async () => {
       () => client.search("", 10),
       { message: "Search text cannot be empty." },
     );
+  } finally {
+    await client.close();
+  }
+});
+
+test("segmentCjk inserts spaces between CJK characters", () => {
+  assert.equal(segmentCjk("盛世才在新疆"), "盛 世 才 在 新 疆");
+  assert.equal(segmentCjk("hello world"), "hello world");
+  assert.equal(segmentCjk("新疆is边疆"), "新 疆is 边 疆");
+  assert.equal(segmentCjk(""), "");
+  assert.equal(segmentCjk("abc"), "abc");
+});
+
+test("buildFtsQuery converts CJK runs to NEAR queries", () => {
+  assert.equal(buildFtsQuery("盛世才"), "NEAR(盛 世 才, 2)");
+  assert.equal(buildFtsQuery("韜奮 抗戰"), "NEAR(韜 奮, 1) NEAR(抗 戰, 1)");
+  assert.equal(buildFtsQuery("hello"), "hello");
+  assert.equal(buildFtsQuery("新 疆"), "新 疆");
+  assert.equal(buildFtsQuery("独山子油矿"), "NEAR(独 山 子 油 矿, 4)");
+});
+
+test("CJK keyword search matches Chinese content via NEAR", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-cjk-"));
+  const dataDir = join(root, "data");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docKey = "e".repeat(40);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
+  writeManifestFile(manifestPath, {
+    docKey, itemKey: "CJK1", title: "盛世才與新新疆", authors: ["杜重遠"],
+    filePath: "/tmp/cjk.pdf", normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+    blocks: [{ blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"],
+      text: "盛世才是新疆近代史上的重要人物", charStart: 0, charEnd: 30, lineStart: 1, lineEnd: 1, isReferenceLike: false }],
+  });
+
+  const entry = readyEntry(dataDir, docKey, "CJK1", "盛世才與新新疆", "/tmp/cjk.pdf", manifestPath);
+  const client = await openKeywordIndex(createConfig(dataDir));
+  try {
+    await client.rebuildIndex([entry]);
+    const results = await client.search("盛世才", 10);
+    assert.equal(results.length, 1);
+    assert.equal(results[0]!.docKey, docKey);
+
+    const results2 = await client.search("新疆", 10);
+    assert.equal(results2.length, 1);
   } finally {
     await client.close();
   }

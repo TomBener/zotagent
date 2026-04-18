@@ -38,12 +38,30 @@ function ensureSchema(db: Database.Database): void {
   }
 }
 
+const CJK_RANGE =
+  /(\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Hangul})/u;
+
+export function segmentCjk(text: string): string {
+  const out: string[] = [];
+  for (const ch of text) {
+    if (out.length > 0 && CJK_RANGE.test(ch)) {
+      const prev = out[out.length - 1]!;
+      if (prev !== " " && prev !== "\n") {
+        out.push(" ");
+      }
+    }
+    out.push(ch);
+  }
+  return out.join("");
+}
+
 function buildBody(entry: CatalogEntry): string | null {
   if (!entry.manifestPath || !exists(entry.manifestPath)) return null;
   const manifest = readManifestFile(entry.manifestPath);
   return manifest.blocks
     .map((block) => block.text)
     .filter((text) => text.length > 0)
+    .map((text) => segmentCjk(text))
     .join("\n");
 }
 
@@ -66,9 +84,21 @@ function rebuildTable(db: Database.Database, readyEntries: CatalogEntry[]): void
     const body = buildBody(entry);
     if (body === null) continue;
     insertDoc.run(rowid, entry.docKey);
-    insertFts.run(rowid, entry.title, body);
+    insertFts.run(rowid, segmentCjk(entry.title), body);
     rowid += 1;
   }
+}
+
+function cjkRunToNear(run: string): string {
+  const chars = [...run];
+  if (chars.length === 1) return chars[0]!;
+  const distance = Math.max(1, chars.length - 1);
+  return `NEAR(${chars.join(" ")}, ${distance})`;
+}
+
+export function buildFtsQuery(query: string): string {
+  const CJK_RUN = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]{2,}/gu;
+  return query.replace(CJK_RUN, (match) => cjkRunToNear(match));
 }
 
 export async function openKeywordIndex(config: AppConfig): Promise<KeywordIndexClient> {
@@ -100,15 +130,17 @@ export async function openKeywordIndex(config: AppConfig): Promise<KeywordIndexC
         LIMIT ?
       `;
 
+      const ftsQuery = buildFtsQuery(query);
       try {
-        const rows = db.prepare(sql).all(query, limit) as Array<{ docKey: string; rank: number }>;
+        const rows = db.prepare(sql).all(ftsQuery, limit) as Array<{ docKey: string; rank: number }>;
         return rows.map((row) => ({ docKey: row.docKey, score: -row.rank }));
       } catch {
         const sanitized = query.replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/gu, " ").trim();
         if (sanitized.length === 0) {
           throw new Error("Search text cannot be empty.");
         }
-        const rows = db.prepare(sql).all(sanitized, limit) as Array<{ docKey: string; rank: number }>;
+        const fallback = buildFtsQuery(sanitized);
+        const rows = db.prepare(sql).all(fallback, limit) as Array<{ docKey: string; rank: number }>;
         return rows.map((row) => ({ docKey: row.docKey, score: -row.rank }));
       }
     },
