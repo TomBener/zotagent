@@ -49,6 +49,10 @@ Configure once at `~/.zotagent/config.json`:
 
 `zoteroLibraryType` accepts `user` or `group`. `zoteroCollectionKey` is optional. The Semantic Scholar key is only needed for `s2` and `add --s2-paper-id`. Any of these can also come from environment variables (`ZOTAGENT_*` or unprefixed fallbacks like `ZOTERO_API_KEY`).
 
+### Read-only hosts
+
+If you share `dataDir` across machines (e.g. via iCloud) but keep the attachment files only on the machine that runs `sync`, set `"syncEnabled": false` in the other hosts' `~/.zotagent/config.json` (or export `ZOTAGENT_SYNC_ENABLED=false`). `sync` on those hosts fails fast with `SYNC_DISABLED` before touching the index — without this guard, a misfired `sync` would see every attachment as missing and wipe the keyword / semantic indexes. All read commands (`search`, `read`, `expand`, `fulltext`, `metadata`) still work.
+
 ## Usage
 
 Run `zotagent help` for the full command reference. A typical session:

@@ -3,7 +3,7 @@
 import { readFileSync } from "node:fs";
 
 import { addS2PaperToZotero, addToZotero } from "./add.js";
-import { getDataPaths, type ConfigOverrides } from "./config.js";
+import { getDataPaths, resolveConfig, type ConfigOverrides } from "./config.js";
 import { expandDocument, fullTextDocument, getIndexStatus, readDocument, searchLiterature, searchWithinDocuments } from "./engine.js";
 import { emitError, emitOk } from "./json.js";
 import { searchMetadata } from "./metadata.js";
@@ -336,6 +336,14 @@ async function main(): Promise<void> {
         const pdfBatchSize = getNumberFlag(parsed.flags, "pdf-batch-size");
         if (pdfBatchSize !== undefined && (!Number.isInteger(pdfBatchSize) || pdfBatchSize <= 0)) {
           emitError("INVALID_ARGUMENT", "`--pdf-batch-size` must be a positive integer.");
+          return;
+        }
+        const syncConfig = resolveConfig(overrides);
+        if (syncConfig.syncEnabled === false) {
+          emitError(
+            "SYNC_DISABLED",
+            "sync is disabled on this host. Set `syncEnabled` to true in ~/.zotagent/config.json (or ZOTAGENT_SYNC_ENABLED=true) to enable, or run sync on the host that owns the attachment files.",
+          );
           return;
         }
         const result = await runSync(overrides, openQmdClient, undefined, undefined, undefined, {

@@ -11,6 +11,7 @@ export interface AppConfig {
   zoteroLibraryType?: ZoteroLibraryType;
   zoteroCollectionKey?: string;
   zoteroApiKey?: string;
+  syncEnabled?: boolean;
   warnings: string[];
 }
 

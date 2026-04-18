@@ -380,6 +380,18 @@ test("sync rejects invalid pdf batch size", () => {
   assert.match(result.stdout, /`--pdf-batch-size` must be a positive integer\./);
 });
 
+test("sync refuses to run when syncEnabled is false", () => {
+  const result = spawnSync(process.execPath, ["--import", "tsx", cliPath, "sync"], {
+    encoding: "utf-8",
+    cwd: repoRoot.pathname,
+    env: { ...process.env, ZOTAGENT_SYNC_ENABLED: "false" },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /"code": "SYNC_DISABLED"/);
+  assert.match(result.stdout, /sync is disabled on this host/);
+});
+
 test("add requires doi or title", () => {
   const result = runCli(["add"]);
 

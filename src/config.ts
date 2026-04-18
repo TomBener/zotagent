@@ -15,6 +15,7 @@ interface RawConfig {
   zoteroLibraryType?: string;
   zoteroCollectionKey?: string;
   zoteroApiKey?: string;
+  syncEnabled?: unknown;
   embeddingProvider?: string;
   embeddingModel?: string;
   googleApiKey?: string;
@@ -44,6 +45,22 @@ const DEFAULTS = {
 
 function firstDefined(...values: Array<string | undefined>): string | undefined {
   return values.find((value) => typeof value === "string" && value.length > 0);
+}
+
+function resolveSyncEnabled(raw: unknown, envValue: string | undefined, warnings: string[]): boolean | undefined {
+  if (envValue !== undefined && envValue !== "") {
+    const normalized = envValue.trim().toLowerCase();
+    if (normalized === "true" || normalized === "1" || normalized === "yes") return true;
+    if (normalized === "false" || normalized === "0" || normalized === "no") return false;
+    warnings.push(
+      `Environment variable 'ZOTAGENT_SYNC_ENABLED' must be a boolean-like string (true/false/1/0/yes/no); got '${envValue}'.`,
+    );
+  }
+  if (typeof raw === "boolean") return raw;
+  if (raw !== undefined) {
+    warnings.push(`Config field 'syncEnabled' must be a boolean; ignoring value of type ${typeof raw}.`);
+  }
+  return undefined;
 }
 
 function resolveLibraryType(raw: string | undefined, warnings: string[]): ZoteroLibraryType | undefined {
@@ -142,6 +159,11 @@ export function resolveConfig(overrides: ConfigOverrides = {}): AppConfig {
       process.env.ZOTAGENT_ZOTERO_API_KEY,
       process.env.ZOTERO_API_KEY,
       fileConfig.zoteroApiKey,
+    ),
+    syncEnabled: resolveSyncEnabled(
+      fileConfig.syncEnabled,
+      process.env.ZOTAGENT_SYNC_ENABLED,
+      warnings,
     ),
     warnings,
   };
