@@ -8,26 +8,23 @@ import type { AppConfig } from "./types.js";
 import { ensureDir } from "./utils.js";
 
 const QMD_PACKAGE_ENTRY = fileURLToPath(import.meta.resolve("@tobilu/qmd"));
-const QMD_PACKAGE_ROOT = resolve(dirname(QMD_PACKAGE_ENTRY), "..");
-const QMD_PACKAGE_JSON_PATH = resolve(QMD_PACKAGE_ROOT, "package.json");
-const QMD_LLM_JS_PATH = resolve(QMD_PACKAGE_ROOT, "dist", "llm.js");
+const QMD_PACKAGE_JSON_PATH = resolve(dirname(QMD_PACKAGE_ENTRY), "..", "package.json");
 
 function readPackageVersion(path: string): string {
   const parsed = JSON.parse(readFileSync(path, "utf-8")) as { version?: unknown };
   return typeof parsed.version === "string" && parsed.version.length > 0 ? parsed.version : "unknown";
 }
 
-function readQmdDefaultEmbedModel(): string {
-  const body = readFileSync(QMD_LLM_JS_PATH, "utf-8");
-  const match = body.match(/const DEFAULT_EMBED_MODEL = "([^"]+)"/u);
-  return match?.[1] ?? `@tobilu/qmd@${QMD_PACKAGE_VERSION}:default`;
-}
-
 export const QMD_PACKAGE_VERSION = readPackageVersion(QMD_PACKAGE_JSON_PATH);
-export const QMD_DEFAULT_EMBED_MODEL = readQmdDefaultEmbedModel();
+
+// Sentinel recorded on the catalog when the user has not pinned a model. The
+// real default lives inside `@tobilu/qmd` and is not part of its public API;
+// relying on `QMD_PACKAGE_VERSION` in `indexerSignature` is sufficient to
+// invalidate indexes when the package (and therefore its default) changes.
+export const QMD_DEFAULT_EMBED_MODEL_SENTINEL = "qmd-default";
 
 export function resolveQmdEmbedModel(config: Pick<AppConfig, "qmdEmbedModel">): string {
-  return config.qmdEmbedModel ?? QMD_DEFAULT_EMBED_MODEL;
+  return config.qmdEmbedModel ?? QMD_DEFAULT_EMBED_MODEL_SENTINEL;
 }
 
 export interface QmdStatus {
