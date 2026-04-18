@@ -533,6 +533,7 @@ test("runSync short-circuits both index rebuilds when the catalog is identical t
         keywordCalls.rebuild += 1;
       },
       search: async () => [],
+      isEmpty: async () => true,
       close: async () => {},
     };
   };

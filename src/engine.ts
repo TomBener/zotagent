@@ -207,12 +207,20 @@ function buildTitleSearchRow(
   };
 }
 
+/** Strip FTS5 operators, distance parameters, and parens so only content words remain. */
+function stripFtsOperators(query: string): string {
+  return query
+    // Drop the ", N" inside NEAR(... , N)
+    .replace(/,\s*\d+\s*(?=\))/g, " ")
+    // Drop operators
+    .replace(/\b(?:AND|OR|NOT|NEAR(?:\/\d+)?)\b/gi, " ")
+    // Drop NEAR's parens
+    .replace(/[()]/g, " ");
+}
+
 /** Extract content words from an FTS5 query, stripping operators. */
 function extractQueryTerms(query: string): string[] {
-  return query
-    .toLowerCase()
-    .replace(/\b(?:AND|OR|NOT|NEAR(?:\/\d+)?)\b/gi, " ")
-    .match(/[\p{L}\p{N}]+/gu) ?? [];
+  return stripFtsOperators(query).toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
 }
 
 function tokenizeKeywordText(text: string): string[] {
@@ -409,11 +417,15 @@ function stemKeywordToken(token: string): string {
 }
 
 function buildKeywordQueryProfile(query: string): KeywordQueryProfile {
+  const stripped = stripFtsOperators(query);
   return {
-    normalizedQuery: normalizeExactText(query),
+    normalizedQuery: normalizeExactText(stripped),
     terms: [...new Set(extractQueryTerms(query).map((term) => stemKeywordToken(term)).filter((term) => term.length > 0))],
   };
 }
+
+const CJK_CHAR_RE =
+  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
 
 function scoreKeywordText(text: string, query: KeywordQueryProfile): number {
   const normalized = normalizeExactText(text);
@@ -427,7 +439,12 @@ function scoreKeywordText(text: string, query: KeywordQueryProfile): number {
   let matchedTerms = 0;
   let totalTermHits = 0;
   for (const term of query.terms) {
-    const hits = tokenCounts.get(term) ?? 0;
+    // CJK tokenizes as one run per `[\p{L}\p{N}]+`, so a user-visible CJK phrase like
+    // "开发新疆" never appears as its own token bucket. Count substring occurrences in the
+    // normalized text instead — collapseSegmentedCjkRuns guarantees spaced CJK is re-joined.
+    const hits = CJK_CHAR_RE.test(term)
+      ? countOccurrences(normalized, term)
+      : (tokenCounts.get(term) ?? 0);
     if (hits > 0) {
       matchedTerms += 1;
       totalTermHits += hits;
@@ -632,13 +649,9 @@ export async function searchLiterature(
     try {
       // Bootstrap the keyword index lazily if it is empty (e.g. first search after upgrade).
       let results = await keywordIndex.search(query, limit);
-      if (results.length === 0 && readyEntries.length > 0) {
-        // Might be truly empty or might need bootstrapping. Rebuild if the index has no rows at all.
-        const probe = await keywordIndex.search("*", 1).catch(() => []);
-        if (probe.length === 0) {
-          await keywordIndex.rebuildIndex(readyEntries);
-          results = await keywordIndex.search(query, limit);
-        }
+      if (results.length === 0 && readyEntries.length > 0 && (await keywordIndex.isEmpty())) {
+        await keywordIndex.rebuildIndex(readyEntries);
+        results = await keywordIndex.search(query, limit);
       }
       const keywordQuery = buildKeywordQueryProfile(query);
       mapped = results

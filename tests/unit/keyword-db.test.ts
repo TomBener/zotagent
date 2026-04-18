@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { getDataPaths } from "../../src/config.js";
-import { openKeywordIndex, segmentCjk, buildFtsQuery } from "../../src/keyword-db.js";
+import { openKeywordIndex, segmentCjk, buildFtsQuery, rewriteInfixNear } from "../../src/keyword-db.js";
 import type { AppConfig, CatalogEntry } from "../../src/types.js";
 import { MANIFEST_EXT, writeManifestFile } from "../../src/utils.js";
 
@@ -190,6 +190,36 @@ test("buildFtsQuery converts CJK runs to NEAR queries", () => {
   assert.equal(buildFtsQuery('hello "盛世才" world'), 'hello "盛 世 才" world');
 });
 
+test("rewriteInfixNear rewrites infix NEAR to function form", () => {
+  assert.equal(rewriteInfixNear("A NEAR B"), "NEAR(A B)");
+  assert.equal(rewriteInfixNear('"A" NEAR "B"'), 'NEAR("A" "B")');
+  assert.equal(rewriteInfixNear('"A" NEAR/5 "B"'), 'NEAR("A" "B", 5)');
+  assert.equal(rewriteInfixNear("A NEAR/10 B"), "NEAR(A B, 10)");
+  // CJK bareword infix must be auto-quoted to prevent nested NEAR expansion downstream.
+  assert.equal(rewriteInfixNear("开发新疆 NEAR 人力财力"), 'NEAR("开发新疆" "人力财力")');
+  // Already in function form: untouched.
+  assert.equal(rewriteInfixNear('NEAR("A" "B", 5)'), 'NEAR("A" "B", 5)');
+  // Leave non-NEAR text alone.
+  assert.equal(rewriteInfixNear("hello world"), "hello world");
+});
+
+test("buildFtsQuery produces FTS5-compatible output for infix NEAR with CJK phrases", () => {
+  // Bug: `"开发新疆" NEAR "人力财力"` was passed through as-is, and FTS5 tokenized
+  // `NEAR` as a bareword → zero hits on Chinese corpora. Fix rewrites to function form.
+  assert.match(
+    buildFtsQuery('"开发新疆" NEAR "人力财力"'),
+    /^NEAR\(\s*"开 发 新 疆"\s+"人 力 财 力"\s*\)$/u,
+  );
+  assert.match(
+    buildFtsQuery("开发新疆 NEAR 人力财力"),
+    /^NEAR\(\s*"开 发 新 疆"\s+"人 力 财 力"\s*\)$/u,
+  );
+  assert.match(
+    buildFtsQuery('"开发新疆" NEAR/5 "人力财力"'),
+    /^NEAR\(\s*"开 发 新 疆"\s+"人 力 财 力"\s*,\s*5\s*\)$/u,
+  );
+});
+
 test("CJK keyword search matches Chinese content via NEAR", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-cjk-"));
   const dataDir = join(root, "data");
@@ -219,6 +249,67 @@ test("CJK keyword search matches Chinese content via NEAR", async () => {
     const quoted = await client.search('"盛世才"', 10);
     assert.equal(quoted.length, 1);
     assert.equal(quoted[0]!.docKey, docKey);
+  } finally {
+    await client.close();
+  }
+});
+
+test("keyword search accepts infix NEAR with CJK phrases against a real FTS5 index", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-cjk-near-"));
+  const dataDir = join(root, "data");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docKey = "7".repeat(40);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
+  writeManifestFile(manifestPath, {
+    docKey, itemKey: "NEAR1", title: "盛世才與新新疆", authors: ["A"],
+    filePath: "/tmp/near.pdf", normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+    blocks: [
+      { blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"],
+        text: "欢迎英美人力财力开发新疆;请中央交涉。",
+        charStart: 0, charEnd: 18, lineStart: 1, lineEnd: 1, isReferenceLike: false },
+    ],
+  });
+
+  const entry = readyEntry(dataDir, docKey, "NEAR1", "盛世才與新新疆", "/tmp/near.pdf", manifestPath);
+  const client = await openKeywordIndex(createConfig(dataDir));
+  try {
+    await client.rebuildIndex([entry]);
+    // Infix form must now hit (previously returned 0).
+    const infix = await client.search('"开发新疆" NEAR "人力财力"', 10);
+    assert.equal(infix.length, 1);
+    assert.equal(infix[0]!.docKey, docKey);
+    // Function form already worked; regression guard.
+    const functional = await client.search('NEAR("开发新疆" "人力财力", 50)', 10);
+    assert.equal(functional.length, 1);
+    assert.equal(functional[0]!.docKey, docKey);
+  } finally {
+    await client.close();
+  }
+});
+
+test("isEmpty reports true for a fresh index and false once populated", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-empty-"));
+  const dataDir = join(root, "data");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docKey = "8".repeat(40);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
+  writeManifestFile(manifestPath, {
+    docKey, itemKey: "EMPTY1", title: "Empty Check", authors: ["A"],
+    filePath: "/tmp/empty.pdf", normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+    blocks: [{ blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"],
+      text: "something", charStart: 0, charEnd: 9, lineStart: 1, lineEnd: 1, isReferenceLike: false }],
+  });
+
+  const entry = readyEntry(dataDir, docKey, "EMPTY1", "Empty Check", "/tmp/empty.pdf", manifestPath);
+  const client = await openKeywordIndex(createConfig(dataDir));
+  try {
+    assert.equal(await client.isEmpty(), true);
+    await client.rebuildIndex([entry]);
+    assert.equal(await client.isEmpty(), false);
   } finally {
     await client.close();
   }

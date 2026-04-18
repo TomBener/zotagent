@@ -243,6 +243,7 @@ test("searchLiterature keyword mode uses the keyword index and skips qmd", async
       keywordSearchCalled = true;
       return [{ docKey, score: 1.5 }];
     },
+    isEmpty: async () => false,
     close: async () => {},
   });
 
@@ -538,6 +539,7 @@ test("searchLiterature keyword mode drops CJK candidates without a verifiable bl
   const fakeKeywordFactory = async () => ({
     rebuildIndex: async () => {},
     search: async (_query: string) => [{ docKey, score: 1.5 }],
+    isEmpty: async () => false,
     close: async () => {},
   });
   const unusedQmdFactory = async () => {
@@ -616,6 +618,7 @@ test("searchLiterature keyword mode verifies spaced CJK text before keeping a ca
   const fakeKeywordFactory = async () => ({
     rebuildIndex: async () => {},
     search: async (_query: string) => [{ docKey, score: 1.5 }],
+    isEmpty: async () => false,
     close: async () => {},
   });
   const unusedQmdFactory = async () => {
@@ -635,6 +638,184 @@ test("searchLiterature keyword mode verifies spaced CJK text before keeping a ca
   assert.equal(result.results[0]!.itemKey, "ITEMF");
   assert.equal(result.results[0]!.blockStart, 0);
   assert.match(result.results[0]!.passage, /党 委 书 记/u);
+});
+
+test("searchLiterature NEAR with distance picks the CJK co-occurrence block, not a '50' decoy", async () => {
+  // Regression: extractQueryTerms used to pull `50` from `NEAR(..., 50)` and scoreKeywordText
+  // could only match whole-run tokens — so any block containing `50` (page numbers, years)
+  // outranked the real co-occurrence block. Fix strips distance numbers and uses substring
+  // matching for CJK terms.
+  const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-near-passage-"));
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docKey = "1".repeat(40);
+  const manifestPath = join(manifestsDir, docKey + MANIFEST_EXT);
+
+  writeManifest(manifestPath, {
+    docKey,
+    itemKey: "ITEMNEAR",
+    title: "抗戰時期新疆建設",
+    authors: ["A"],
+    filePath: "/tmp/near-decoy.pdf",
+    normalizedPath: join(dataDir, "normalized", docKey + ".md"),
+    blocks: [
+      {
+        blockIndex: 0,
+        blockType: "paragraph",
+        sectionPath: ["Front"],
+        text: "50 52 54 54",
+        charStart: 0,
+        charEnd: 11,
+        lineStart: 1,
+        lineEnd: 1,
+        isReferenceLike: false,
+      },
+      {
+        blockIndex: 1,
+        blockType: "paragraph",
+        sectionPath: ["Body"],
+        text: "欢迎英美人力财力开发新疆;请中央交涉。",
+        charStart: 13,
+        charEnd: 31,
+        lineStart: 3,
+        lineEnd: 3,
+        isReferenceLike: false,
+      },
+    ],
+  });
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [
+      {
+        docKey,
+        itemKey: "ITEMNEAR",
+        title: "抗戰時期新疆建設",
+        authors: ["A"],
+        filePath: "/tmp/near-decoy.pdf",
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: 1,
+        mtimeMs: 1,
+        sourceHash: "hash-near",
+        lastIndexedAt: new Date().toISOString(),
+        normalizedPath: join(dataDir, "normalized", docKey + ".md"),
+        manifestPath,
+      },
+    ],
+  });
+
+  const fakeKeywordFactory = async () => ({
+    rebuildIndex: async () => {},
+    search: async (_query: string) => [{ docKey, score: 1.5 }],
+    isEmpty: async () => false,
+    close: async () => {},
+  });
+  const unusedQmdFactory = async () => {
+    throw new Error("qmd search should not run in keyword mode");
+  };
+
+  const result = await searchLiterature(
+    'NEAR("开发新疆" "人力财力", 50)',
+    10,
+    { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir },
+    unusedQmdFactory,
+    {},
+    fakeKeywordFactory,
+  );
+
+  assert.equal(result.results.length, 1);
+  assert.equal(result.results[0]!.blockStart, 1);
+  assert.match(result.results[0]!.passage, /人力财力开发新疆/u);
+  assert.doesNotMatch(result.results[0]!.passage, /^\s*50(\s|$)/u);
+});
+
+test("searchLiterature does not rebuild the keyword index when empty results come from a populated index", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-no-rebuild-"));
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docKey = "2".repeat(40);
+  const manifestPath = join(manifestsDir, docKey + MANIFEST_EXT);
+
+  writeManifest(manifestPath, {
+    docKey,
+    itemKey: "ITEMNR",
+    title: "Populated",
+    authors: ["A"],
+    filePath: "/tmp/no-rebuild.pdf",
+    normalizedPath: join(dataDir, "normalized", docKey + ".md"),
+    blocks: [
+      {
+        blockIndex: 0,
+        blockType: "paragraph",
+        sectionPath: ["Body"],
+        text: "anything here.",
+        charStart: 0,
+        charEnd: 14,
+        lineStart: 1,
+        lineEnd: 1,
+        isReferenceLike: false,
+      },
+    ],
+  });
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [
+      {
+        docKey,
+        itemKey: "ITEMNR",
+        title: "Populated",
+        authors: ["A"],
+        filePath: "/tmp/no-rebuild.pdf",
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: 1,
+        mtimeMs: 1,
+        sourceHash: "hash-no-rebuild",
+        lastIndexedAt: new Date().toISOString(),
+        normalizedPath: join(dataDir, "normalized", docKey + ".md"),
+        manifestPath,
+      },
+    ],
+  });
+
+  let rebuildCalled = false;
+  const fakeKeywordFactory = async () => ({
+    rebuildIndex: async () => { rebuildCalled = true; },
+    search: async (_query: string) => [],
+    isEmpty: async () => false,
+    close: async () => {},
+  });
+  const unusedQmdFactory = async () => {
+    throw new Error("qmd search should not run in keyword mode");
+  };
+
+  const result = await searchLiterature(
+    "nothing matches",
+    10,
+    { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir },
+    unusedQmdFactory,
+    {},
+    fakeKeywordFactory,
+  );
+
+  assert.equal(rebuildCalled, false);
+  assert.equal(result.results.length, 0);
 });
 
 test("searchWithinDocuments returns passages from the selected attachment", () => {

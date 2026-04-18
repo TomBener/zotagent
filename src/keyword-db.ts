@@ -12,6 +12,7 @@ export interface KeywordSearchResult {
 export interface KeywordIndexClient {
   rebuildIndex(readyEntries: CatalogEntry[]): Promise<void>;
   search(query: string, limit: number): Promise<KeywordSearchResult[]>;
+  isEmpty(): Promise<boolean>;
   close(): Promise<void>;
 }
 
@@ -118,7 +119,29 @@ function rewriteUnquotedCjk(text: string): string {
   });
 }
 
+const INFIX_NEAR_PHRASE = '(?:"[^"]+"|[^\\s()",]+)';
+const INFIX_NEAR_RE = new RegExp(
+  `(${INFIX_NEAR_PHRASE})\\s+NEAR(?:/(\\d+))?\\s+(${INFIX_NEAR_PHRASE})`,
+  "gi",
+);
+const CJK_RUN_RE =
+  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]{2,}/u;
+
+export function rewriteInfixNear(query: string): string {
+  const ensureQuoted = (s: string): string =>
+    s.startsWith('"') ? s : CJK_RUN_RE.test(s) ? `"${s}"` : s;
+  let prev: string;
+  do {
+    prev = query;
+    query = query.replace(INFIX_NEAR_RE, (_, a: string, n: string | undefined, b: string) =>
+      `NEAR(${ensureQuoted(a)} ${ensureQuoted(b)}${n ? `, ${n}` : ""})`,
+    );
+  } while (query !== prev);
+  return query;
+}
+
 export function buildFtsQuery(query: string): string {
+  query = rewriteInfixNear(query);
   const parts: string[] = [];
   let inQuote = false;
   let current = "";
@@ -155,6 +178,11 @@ export async function openKeywordIndex(config: AppConfig): Promise<KeywordIndexC
         rebuildTable(db, readyEntries);
       });
       tx();
+    },
+
+    isEmpty: async () => {
+      const row = db.prepare("SELECT 1 FROM keyword_docs LIMIT 1").get();
+      return row === undefined;
     },
 
     search: async (query, limit) => {
