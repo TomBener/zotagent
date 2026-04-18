@@ -186,8 +186,8 @@ test("buildFtsQuery converts CJK runs to NEAR queries", () => {
   assert.equal(buildFtsQuery("新 疆"), "新 疆");
   assert.equal(buildFtsQuery("独山子油矿"), "NEAR(独 山 子 油 矿, 4)");
   assert.equal(buildFtsQuery("is边疆"), "is NEAR(边 疆, 1)");
-  assert.equal(buildFtsQuery('"盛世才"'), '"盛世才"');
-  assert.equal(buildFtsQuery('hello "盛世才" world'), 'hello "盛世才" world');
+  assert.equal(buildFtsQuery('"盛世才"'), '"盛 世 才"');
+  assert.equal(buildFtsQuery('hello "盛世才" world'), 'hello "盛 世 才" world');
 });
 
 test("CJK keyword search matches Chinese content via NEAR", async () => {
@@ -215,6 +215,10 @@ test("CJK keyword search matches Chinese content via NEAR", async () => {
 
     const results2 = await client.search("新疆", 10);
     assert.equal(results2.length, 1);
+
+    const quoted = await client.search('"盛世才"', 10);
+    assert.equal(quoted.length, 1);
+    assert.equal(quoted[0]!.docKey, docKey);
   } finally {
     await client.close();
   }

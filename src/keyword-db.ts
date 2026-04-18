@@ -124,7 +124,7 @@ export function buildFtsQuery(query: string): string {
   for (const ch of query) {
     if (ch === '"') {
       if (inQuote) {
-        parts.push(`"${current}"`);
+        parts.push(`"${segmentCjk(current)}"`);
         current = "";
       } else {
         if (current.trim()) parts.push(rewriteUnquotedCjk(current));
@@ -136,7 +136,7 @@ export function buildFtsQuery(query: string): string {
     current += ch;
   }
   if (current.trim()) {
-    parts.push(inQuote ? `"${current}"` : rewriteUnquotedCjk(current));
+    parts.push(inQuote ? `"${segmentCjk(current)}"` : rewriteUnquotedCjk(current));
   }
   return parts.join(" ").replace(/\s{2,}/g, " ").trim();
 }
