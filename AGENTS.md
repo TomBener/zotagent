@@ -18,6 +18,7 @@
 
 - Avoid unnecessary fallbacks or compatibility layers. When you change CLI or config behavior, switch cleanly and update help text, tests, and docs in the same change.
 - Validate search changes on a real indexed subset, not just unit tests. Check: top result is sensible; no single document dominates the first few slots; reference-only hits do not leak upward; `passage` is not polluted by title-page or front-matter text; `read` and `expand` still behave correctly.
+- To exercise local changes, run `node dist/cli.js <cmd>` after `npm run build` (or `npm run dev -- <cmd>`). Never test against the globally-installed `zotagent` — it executes the previously-installed build and will silently run stale code.
 
 ## Release Process
 
