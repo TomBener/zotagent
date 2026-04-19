@@ -1027,28 +1027,22 @@ async function syncQmdContexts(qmd: Awaited<ReturnType<QmdFactory>>, readyEntrie
 async function embedQmdUntilSettled(
   qmd: Awaited<ReturnType<QmdFactory>>,
   logger: SyncLogger,
-  options: { force?: boolean } = {},
 ): Promise<void> {
   let pass = 0;
-  let forceNextPass = options.force ?? false;
 
   while (true) {
     const before = await qmd.getStatus();
-    if (before.needsEmbedding <= 0 && !forceNextPass) return;
+    if (before.needsEmbedding <= 0) return;
 
     pass += 1;
-    const forceThisPass = forceNextPass;
-    forceNextPass = false;
     logger.info(
-      forceThisPass
-        ? "Regenerating embeddings after qmd embedding model change."
-        : pass === 1
-          ? `Generating embeddings for ${before.needsEmbedding} document(s).`
-          : `Continuing embeddings (pass ${pass}, ${before.needsEmbedding} document(s) remaining).`,
+      pass === 1
+        ? `Generating embeddings for ${before.needsEmbedding} document(s).`
+        : `Continuing embeddings (pass ${pass}, ${before.needsEmbedding} document(s) remaining).`,
       { console: true },
     );
 
-    await qmd.embed(forceThisPass ? { force: true } : undefined);
+    await qmd.embed();
 
     const after = await qmd.getStatus();
     if (after.needsEmbedding <= 0) {
@@ -1056,14 +1050,6 @@ async function embedQmdUntilSettled(
         logger.info(`Embedding complete after ${pass} pass(es).`, { console: true });
       }
       return;
-    }
-
-    if (forceThisPass) {
-      logger.info(
-        `Forced embedding pass finished; ${after.needsEmbedding} document(s) still need embeddings.`,
-        { console: true },
-      );
-      continue;
     }
 
     if (after.needsEmbedding >= before.needsEmbedding) {
