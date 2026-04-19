@@ -45,7 +45,13 @@ Install the `zotagent` skill:
 npx skills add TomBener/zotagent
 ```
 
-Configure once at `~/.zotagent/config.json`:
+Configure once. The easy way is the interactive wizard:
+
+```bash
+zotagent config
+```
+
+It prompts for each basic field, uses the current value (if any) as default, masks secrets, and writes `~/.zotagent/config.json`. If you prefer to hand-edit, the file looks like:
 
 ```json
 {
@@ -93,10 +99,14 @@ Any of these can also come from environment variables (`ZOTAGENT_*` or unprefixe
 
 `zotagent help` prints the full command reference:
 
-```bash
+```text
 zotagent — Zotero CLI for AI agents.
 
 Usage: zotagent <command> [flags]
+
+All commands emit pretty-printed JSON on stdout. Success payloads are
+{ok: true, data, meta?}; failures are {ok: false, error: {code, message, details?},
+meta?} with exit code 1. Missing credentials fail fast with a JSON error.
 
 Index
   sync [--attachments-root <path>] [--retry-errors] [--pdf-timeout-ms <n>] [--pdf-batch-size <n>]
@@ -122,7 +132,7 @@ Add to Zotero
         --year <text>               Set the Zotero date field.
         --publication <text>        Set journal, website, or container title when supported.
         --url <url>                 Set the item URL.
-        --url-date <date>           Set the access date for the URL.
+        --url-date <date>           Set the access date for the URL. Alias: --access-date.
         --collection-key <key>      Add the new item to a Zotero collection by collection key.
         --item-type <type>          Override the Zotero item type. Default: journalArticle or webpage.
 
@@ -131,18 +141,19 @@ Add to Zotero
 
 Search
   search "<text>" [--keyword | --semantic] [--limit <n>] [--min-score <n>]
-      Search indexed documents.
+      Search indexed documents. Pass at most one of --keyword (default) or --semantic.
       Default is keyword search (FTS5 with porter stemming): "exact phrase", OR, NOT,
       term NEAR/<n> term, prefix*. Use NEAR/50 for proximity; NEAR(...) is not accepted.
-      --semantic uses vector + LLM query expansion (slower, heavier); cannot combine with --keyword.
+      Chinese, Japanese, and Korean text is supported with accurate phrase matching.
+      --semantic uses qmd vector search with LLM query expansion (slower, heavier).
         --limit <n>                 Return up to n search results. Default: 10 for search, 20 for metadata.
         --min-score <n>             Drop lower-scoring search hits before mapping.
 
   search-in "<text>" (--item-key <key> | --citation-key <key>) [--limit <n>]
-      Search within all attachments of one indexed item.
+      Search within one indexed item's attachments (exact phrase and term match).
 
   metadata "<text>" [--limit <n>] [--field <field>] [--has-file] [--abstract]
-      Search Zotero bibliography metadata from bibliography.json.
+      Search Zotero bibliography metadata read from bibliographyJsonPath.
         --field <field>             Limit metadata search to title, author, year, abstract, journal,
                                     or publisher. Repeatable.
         --has-file                  Keep only metadata results with a supported indexed attachment.
@@ -176,26 +187,19 @@ Document selectors (used by search-in, read, fulltext, expand)
 
 Other
   version, --version            Print the current zotagent version.
-  help, --help                  Show this help.
+  help, --help                  Show this help. Also shown when no command is given.
 
 Config
+  config
+      Interactively set ~/.zotagent/config.json. Prompts for each basic field using
+      the current value (if any) as default; Enter keeps, `-` clears an optional
+      field. Requires an interactive terminal.
+
   Paths and credentials are read from ~/.zotagent/config.json.
-  The add command also needs zoteroLibraryId, zoteroLibraryType, and zoteroApiKey.
   zoteroLibraryType supports both user and group.
   zoteroCollectionKey sets the default collection for new items created by add.
-  The s2 command and --s2-paper-id also need semanticScholarApiKey.
-
-Examples
-  zotagent sync
-  zotagent add --doi "10.1016/j.econmod.2026.107590"
-  zotagent s2 "state-owned enterprise governance" --limit 5
-  zotagent search '"aging in China" NOT famine'
-  zotagent search "party secretary governance" --semantic
-  zotagent search-in "dangwei shuji" --item-key KG326EEI
-  zotagent metadata "American Journal of Political Science" --field journal
-  zotagent read --item-key KG326EEI
-  zotagent fulltext --citation-key lee2024aging --clean
-  zotagent expand --item-key KG326EEI --block-start 10 --radius 2
+  Any field can also come from a ZOTAGENT_* env var (ZOTERO_* /
+  SEMANTIC_SCHOLAR_* are accepted as unprefixed fallbacks).
 ```
 
 A few behaviors worth knowing:
