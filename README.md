@@ -15,7 +15,7 @@ Search and Read are the core features. Both read from a local index that `sync` 
 - `search` — FTS5 keyword search (default) with porter stemming. Supports `"exact phrase"`, `OR`, `NOT`, `term NEAR/<n> term`, and `prefix*`. Chinese, Japanese, and Korean (CJK) text is supported with accurate phrase matching and built-in false-positive filtering.
 - `search --semantic` — vector search over [qmd](https://github.com/tobi/qmd) embeddings with LLM query expansion; slower and heavier than keyword search.
 - `search-in` — scope a text query to a single indexed item's attachments, addressed by `itemKey` or `citationKey`.
-- `metadata` — search the Zotero bibliography (CSL JSON) across `title`, `author`, `year`, `abstract`, `journal`, and `publisher`. `--field` narrows the fields searched; `--has-file` keeps only items with an indexed attachment.
+- `metadata` — search the Zotero bibliography (Better CSL JSON) across `title`, `author`, `year`, `abstract`, `journal`, and `publisher`. `--field` narrows the fields searched; `--has-file` keeps only items with an indexed attachment.
 
 ### Read
 
@@ -45,38 +45,30 @@ Install the `zotagent` skill:
 npx skills add TomBener/zotagent
 ```
 
-Configure once. The easy way is the interactive wizard:
+Configure once — run the interactive wizard, or hand-edit `~/.zotagent/config.json`:
 
 ```bash
 zotagent config
 ```
 
-It prompts for each basic field, uses the current value (if any) as default, masks secrets, and writes `~/.zotagent/config.json`. If you prefer to hand-edit, the file looks like:
+The wizard prompts for each basic field, uses the current value (if any) as default, masks secrets, and writes the file. If you'd rather edit it directly, the shape is:
 
 ```json
 {
   "bibliographyJsonPath": "~/Library/CloudStorage/Dropbox/bibliography/bibliography.json",
   "attachmentsRoot": "~/Library/Mobile Documents/com~apple~CloudDocs/Zotero",
   "dataDir": "~/Library/Mobile Documents/com~apple~CloudDocs/Zotagent",
-  "semanticScholarApiKey": "<api-key>",
+  "semanticScholarApiKey": "<semantic-scholar-key>",
   "zoteroLibraryId": "<library-id>",
   "zoteroLibraryType": "user",
   "zoteroCollectionKey": "<optional-collection-key>",
-  "zoteroApiKey": "<api-key>"
+  "zoteroApiKey": "<zotero-api-key>"
 }
 ```
 
 Where each field comes from:
 
-- **`bibliographyJsonPath`** — a **Better CSL JSON** export produced by the [Better BibTeX for Zotero](https://retorque.re/zotero-better-bibtex) plugin. The translator already emits the citation key (`id`) and attachment paths (`file`), but the Zotero item key (`zotero-item-key`) is **not** included by default — and zotagent silently skips any item without it. Add this one-line postscript in Better BibTeX preferences (Edit → Preferences → Better BibTeX → Export → Postscript):
-
-  ```javascript
-  if (Translator.BetterCSLJSON) {
-    csl["zotero-item-key"] = zotero.key;
-  }
-  ```
-
-  Then set Better BibTeX's auto-export trigger to `On Change` so `bibliography.json` stays in sync with the library without manual re-exports.
+- **`bibliographyJsonPath`** — a **Better CSL JSON** export produced by the [Better BibTeX for Zotero](https://retorque.re/zotero-better-bibtex) plugin. See the `zotero-item-key` note below before your first export.
 
 - **`attachmentsRoot`** — the root folder where Zotero keeps attachment files. For linked attachments, use the path configured at Zotero → Settings → Files and Folders → "Linked Attachment Base Directory". For stored attachments, this is typically `~/Zotero/storage`.
 
@@ -91,6 +83,15 @@ Where each field comes from:
 - **`semanticScholarApiKey`** — required by `s2` and `add --s2-paper-id`; other commands ignore it. Request one from the "API Key Form" on [semanticscholar.org/product/api](https://www.semanticscholar.org/product/api#api-key) (approval typically takes a few business days).
 
 Any of these can also come from environment variables (`ZOTAGENT_*` or unprefixed fallbacks like `ZOTERO_API_KEY`).
+
+> [!IMPORTANT]
+> **Better CSL JSON omits `zotero-item-key` by default, and zotagent silently skips any item without it.** Add this one-line postscript at Edit → Preferences → Better BibTeX → Export → Postscript, then set the auto-export trigger to `On Change` so `bibliography.json` stays in sync with the library without manual re-exports:
+>
+> ```javascript
+> if (Translator.BetterCSLJSON) {
+>   csl["zotero-item-key"] = zotero.key;
+> }
+> ```
 
 > [!TIP]
 > **Read-only hosts:** If you share `dataDir` across machines (e.g. via iCloud) but keep the attachment files only on the machine that runs `sync`, set `"syncEnabled": false` in the other hosts' `~/.zotagent/config.json` (or export `ZOTAGENT_SYNC_ENABLED=false`). `sync` on those hosts fails fast with `SYNC_DISABLED` before touching the index — without this guard, a misfired `sync` would see every attachment as missing and wipe the keyword / semantic indexes. All read commands (`search`, `read`, `expand`, `fulltext`, `metadata`) still work.
@@ -206,15 +207,14 @@ A few behaviors worth knowing:
 - `sync` detects attachments renamed or moved inside `attachmentsRoot` by matching `(itemKey, size, mtimeMs)` and migrates the cached `normalized/<docKey>.md` + `manifests/<docKey>.json.gz` to the new `docKey` — no re-extract, no re-embed.
 - `sync` is crash-safe across indexer-state changes: the progress catalog keeps the previous embed model and indexer signature until stored vectors have actually been cleared, so interrupting `sync` never leaves the index in a "claims fresh / is stale" state.
 - `search`, `read`, `fulltext`, and `expand` work entirely on the local index — run `sync` first when the library has changed.
-- Every command emits JSON, including errors. Missing credentials fail fast.
 
 ## Development
 
 ```bash
 npm install
-npm run check
-npm run build
-npm run dev -- sync
+npm run check       # tsc --noEmit + node --test
+npm run build       # tsc → dist/
+npm run dev -- sync # run the CLI from source via tsx
 ```
 
 ## License
