@@ -121,24 +121,11 @@ Index
   status
       Show attachment counts, local index paths, and qmd status.
 
-Add to Zotero
-  add [--doi <doi> | --s2-paper-id <id>] [--title <text>] [--author <name>] [--year <text>]
-      [--publication <text>] [--url <url>] [--url-date <date>] [--collection-key <key>] [--item-type <type>]
-      Create a Zotero item and return its itemKey. Prefer --doi when available.
-      --s2-paper-id imports from Semantic Scholar (and still prefers DOI when present).
-        --doi <doi>                 Import from DOI metadata when possible.
-        --s2-paper-id <id>          Import a Semantic Scholar paper by paperId.
-        --title <text>              Set title for manual add or DOI fallback.
-        --author <name>             Add an author. Repeat for multiple authors.
-        --year <text>               Set the Zotero date field.
-        --publication <text>        Set journal, website, or container title when supported.
-        --url <url>                 Set the item URL.
-        --url-date <date>           Set the access date for the URL. Alias: --access-date.
-        --collection-key <key>      Add the new item to a Zotero collection by collection key.
-        --item-type <type>          Override the Zotero item type. Default: journalArticle or webpage.
+  version, --version            Print the current zotagent version.
+  help, --help                  Show this help. Also shown when no command is given.
 
-  s2 "<text>" [--limit <n>]
-      Search Semantic Scholar; pass a returned paperId to `add --s2-paper-id`.
+  config
+      Interactively set ~/.zotagent/config.json.
 
 Search
   search "<text>" [--keyword | --semantic] [--limit <n>] [--min-score <n>]
@@ -188,17 +175,24 @@ Document selector (used by search-in, blocks, fulltext, expand)
                                 itemKey, anything else is citationKey. Both forms are emitted
                                 in output alongside the stable itemKey.
 
-Other
-  version, --version            Print the current zotagent version.
-  help, --help                  Show this help. Also shown when no command is given.
+Add to Zotero
+  add [--doi <doi> | --s2-paper-id <id>] [--title <text>] [--author <name>] [--year <text>]
+      [--publication <text>] [--url <url>] [--url-date <date>] [--collection-key <key>] [--item-type <type>]
+      Create a Zotero item and return its itemKey. Prefer --doi when available.
+      --s2-paper-id imports from Semantic Scholar (and still prefers DOI when present).
+        --doi <doi>                 Import from DOI metadata when possible.
+        --s2-paper-id <id>          Import a Semantic Scholar paper by paperId.
+        --title <text>              Set title for manual add or DOI fallback.
+        --author <name>             Add an author. Repeat for multiple authors.
+        --year <text>               Set the Zotero date field.
+        --publication <text>        Set journal, website, or container title when supported.
+        --url <url>                 Set the item URL.
+        --url-date <date>           Set the access date for the URL. Alias: --access-date.
+        --collection-key <key>      Add the new item to a Zotero collection by collection key.
+        --item-type <type>          Override the Zotero item type. Default: journalArticle or webpage.
 
-Config
-  config
-      Interactively set ~/.zotagent/config.json.
-
-  Paths and credentials are read from ~/.zotagent/config.json.
-  Any field can also come from a ZOTAGENT_* env var (ZOTERO_* /
-  SEMANTIC_SCHOLAR_* are accepted as unprefixed fallbacks).
+  s2 "<text>" [--limit <n>]
+      Search Semantic Scholar; pass a returned paperId to `add --s2-paper-id`.
 ```
 
 A few behaviors worth knowing:

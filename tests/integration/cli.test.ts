@@ -334,12 +334,11 @@ test("help summarizes current commands and keeps config-only overrides out of th
   assert.doesNotMatch(result.stdout, /--item-key <key>\s/);
   assert.doesNotMatch(result.stdout, /--citation-key <key>/);
 
-  // Other / config sections are present.
+  // Version, help, and config entries are present.
   assert.match(result.stdout, /version, --version\s+Print the current zotagent version\./);
   assert.match(result.stdout, /help, --help\s+Show this help\./);
   assert.match(result.stdout, /^\s+config$/m);
   assert.match(result.stdout, /Interactively set \~\/\.zotagent\/config\.json\./);
-  assert.match(result.stdout, /Paths and credentials are read from \~\/\.zotagent\/config\.json\./);
 
   // Examples block was removed; workflows live in the zotagent skill, not here.
   assert.doesNotMatch(result.stdout, /^Examples$/m);
