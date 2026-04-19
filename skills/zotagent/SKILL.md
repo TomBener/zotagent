@@ -14,7 +14,7 @@ Do not invent citation keys, item keys, or passage text. If a command returns no
 | Command | Searches over | Good for |
 |---|---|---|
 | `zotagent search "<q>" [--semantic] [--limit n] [--min-score n]` | Indexed full text (FTS5 keyword by default; vector + LLM query expansion with `--semantic`) | Finding passages that discuss a topic across the library |
-| `zotagent search-in "<q>" (--item-key <k> \| --citation-key <k>) [--limit n]` | Full text of one item's attachments | Drilling into a single paper for a term |
+| `zotagent search-in "<q>" --key <k> [--limit n]` | Full text of one item's attachments | Drilling into a single paper for a term |
 | `zotagent metadata "<q>" [--field f] [--abstract] [--has-file] [--limit n]` | Bibliography fields: title / author / year / journal / publisher / abstract | Finding papers by metadata, verifying existence, resolving an `itemKey` |
 
 Keyword syntax (default `search`): `"exact phrase"`, `OR`, `NOT`, `term NEAR/50 term`, `prefix*`. `NEAR(...)` syntax is **not** accepted; use `NEAR/<n>`.
@@ -29,15 +29,16 @@ Chinese trad/simp folding: `search`, `search-in`, and `metadata` fold traditiona
 # 1. Broad keyword search
 zotagent search "party secretary governance" --limit 10
 
-# 2. A row comes back with itemKey, blockStart, blockEnd, passage (see "Output gotchas" below).
-#    Pull surrounding context (radius = 2 blocks before/after):
-zotagent expand --item-key KG326EEI --block-start 134 --radius 2
+# 2. A row comes back with itemKey (and citationKey if available), blockStart, blockEnd, passage
+#    (see "Output gotchas" below). Pull surrounding context (radius = 2 blocks before/after):
+zotagent expand --key KG326EEI --block-start 134 --radius 2
 
-# 3. Or retrieve the whole document:
-zotagent fulltext --item-key KG326EEI --clean
+# 3. Or retrieve the whole document — --key accepts itemKey or citationKey:
+zotagent fulltext --key KG326EEI --clean
+zotagent fulltext --key lee2024party --clean
 
 # 4. Or paginate blocks:
-zotagent blocks --item-key KG326EEI --offset-block 120 --limit-blocks 30
+zotagent blocks --key KG326EEI --offset-block 120 --limit-blocks 30
 ```
 
 ### Add a paper to Zotero
@@ -68,9 +69,9 @@ zotagent metadata "aging in China" --abstract
 # Only items that have an indexed attachment
 zotagent metadata "dangwei shuji" --has-file
 
-# Pipe the returned itemKey into blocks / fulltext for the paper body
-zotagent blocks --item-key KG326EEI --offset-block 0 --limit-blocks 40
-zotagent fulltext --citation-key lee2024aging --clean
+# Pipe the returned key into blocks / fulltext for the paper body
+zotagent blocks --key KG326EEI --offset-block 0 --limit-blocks 40
+zotagent fulltext --item-key KG326EEI --clean
 ```
 
 ## Output-shape gotchas
@@ -82,7 +83,7 @@ These are the most common surprises when consuming `zotagent` output. Read them 
   - For surrounding context: add `--radius <n>` (default 2); the response grows linearly in block count, not characters.
   - Do NOT try to extract the full quotation from `passage` alone; always `expand` if you need guaranteed-complete text.
 - **`metadata` omits `abstract` by default.** To keep bulk responses compact, the `abstract` field is stripped. Pass `--abstract` to include it. If a script expects `abstract` to always be present, add the flag or handle the missing case.
-- **`itemKey` is the stable primary id; `citationKey` is a mutable display field.** Prefer `itemKey` for anything that persists across time. Both commands that take a selector accept either via `--item-key` or `--citation-key`, but don't rely on `citationKey` matching any previous run.
+- **`--key` accepts both `itemKey` and `citationKey`.** Format dispatch is regex-based: `[A-Z0-9]{8}` → Zotero itemKey; anything else → Better BibTeX citationKey. You can feed either `@knuth1984` or `@ABCD1234` straight into `search-in` / `blocks` / `fulltext` / `expand`. Every response emits both keys. Prefer `itemKey` when persisting references across time (it never mutates); `citationKey` is fine for one-shot lookups that mirror what you see in a draft.
 - **Block indices are item-global.** When an item has multiple indexed attachments (e.g. PDF + EPUB), block indices are monotonic across them with `# Attachment: <name>` dividers. Pass block indices straight from `search` into `blocks` / `expand` — don't translate them.
 - **Every command — including errors — emits a JSON envelope.** On failure: `{"ok": false, "error": {"code": "...", "message": "..."}}` and a non-zero exit code. Missing credentials fail fast.
 

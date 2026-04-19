@@ -27,40 +27,32 @@ interface KeywordQueryProfile {
 
 type VerifiedSearchRow = SearchResultRow & { referenceOnly: boolean };
 
-function resolveReadyEntries(
-  selector: { itemKey?: string; citationKey?: string },
-  entries: CatalogEntry[],
-): CatalogEntry[] {
-  const selectors = [
-    selector.itemKey ? "--item-key <key>" : null,
-    selector.citationKey ? "--citation-key <key>" : null,
-  ].filter((value): value is string => value !== null);
+const ITEM_KEY_RE = /^[A-Z0-9]{8}$/;
 
-  if (selectors.length > 1) {
-    throw new Error("Provide exactly one of --item-key <key> or --citation-key <key>.");
+function resolveReadyEntries(key: string, entries: CatalogEntry[]): CatalogEntry[] {
+  if (!key) {
+    throw new Error("Provide --key <key>.");
   }
-
-  if (selector.itemKey) {
-    const matched = entries
-      .filter((entry) => entry.itemKey === selector.itemKey)
-      .sort((a, b) => a.filePath.localeCompare(b.filePath));
-    if (matched.length === 0) {
-      throw new Error(`No indexed attachment found for itemKey: ${selector.itemKey}`);
+  const looksLikeItemKey = ITEM_KEY_RE.test(key);
+  const matched = entries
+    .filter((entry) => (looksLikeItemKey ? entry.itemKey === key : entry.citationKey === key))
+    .sort((a, b) => a.filePath.localeCompare(b.filePath));
+  if (matched.length === 0) {
+    throw new Error(
+      looksLikeItemKey
+        ? `No indexed attachment found for itemKey: ${key}`
+        : `No indexed attachment found for citationKey: ${key}`,
+    );
+  }
+  if (!looksLikeItemKey) {
+    const itemKeys = new Set(matched.map((entry) => entry.itemKey));
+    if (itemKeys.size > 1) {
+      throw new Error(
+        `Multiple items share citationKey "${key}": itemKeys = ${[...itemKeys].sort().join(", ")}`,
+      );
     }
-    return matched;
   }
-
-  if (selector.citationKey) {
-    const matched = entries
-      .filter((entry) => entry.citationKey === selector.citationKey)
-      .sort((a, b) => a.filePath.localeCompare(b.filePath));
-    if (matched.length === 0) {
-      throw new Error(`No indexed attachment found for citationKey: ${selector.citationKey}`);
-    }
-    return matched;
-  }
-
-  throw new Error("Provide one of --item-key <key> or --citation-key <key>.");
+  return matched;
 }
 
 function groupReadyEntriesByItemKey(entries: CatalogEntry[]): Map<string, CatalogEntry[]> {
@@ -717,7 +709,7 @@ export async function searchLiterature(
 
 export function searchWithinDocuments(
   query: string,
-  input: { itemKey?: string; citationKey?: string },
+  input: { key: string },
   limit: number,
   overrides: ConfigOverrides = {},
 ): {
@@ -726,13 +718,13 @@ export function searchWithinDocuments(
 } {
   const normalizedQuery = normalizeExactText(query);
   if (!normalizedQuery) {
-    throw new Error("Missing search text. Use: zotagent search-in \"<text>\" (--item-key <key> | --citation-key <key>)");
+    throw new Error("Missing search text. Use: zotagent search-in \"<text>\" --key <key>");
   }
 
   const queryTerms = [...new Set(normalizedQuery.split(" ").filter((term) => term.length > 0))];
   const config = resolveConfig(overrides);
   const catalog = readCatalogFile(getDataPaths(config.dataDir).catalogPath);
-  const entries = resolveReadyEntries(input, getReadyEntries(catalog));
+  const entries = resolveReadyEntries(input.key, getReadyEntries(catalog));
   const manifestCache = new Map<string, AttachmentManifest>();
   const mapped: Array<SearchResultRow & { referenceOnly: boolean }> = [];
 
@@ -801,7 +793,7 @@ export function searchWithinDocuments(
 }
 
 export function getDocumentBlocks(
-  input: { itemKey?: string; citationKey?: string; offsetBlock: number; limitBlocks: number },
+  input: { key: string; offsetBlock: number; limitBlocks: number },
   overrides: ConfigOverrides = {},
 ): {
   itemKey: string;
@@ -823,7 +815,7 @@ export function getDocumentBlocks(
 } {
   const config = resolveConfig(overrides);
   const catalog = readCatalogFile(getDataPaths(config.dataDir).catalogPath);
-  const entries = resolveReadyEntries(input, getReadyEntries(catalog));
+  const entries = resolveReadyEntries(input.key, getReadyEntries(catalog));
   const manifestCache = new Map<string, AttachmentManifest>();
   const manifest = loadMergedManifestForGroup(entries, manifestCache);
   const primary = entries[0]!;
@@ -956,19 +948,19 @@ function buildFullTextRow(
 }
 
 export function fullTextDocument(
-  input: { itemKey?: string; citationKey?: string; clean?: boolean },
+  input: { key: string; clean?: boolean },
   overrides: ConfigOverrides = {},
 ): FullTextRow & { warnings: string[] } {
   const config = resolveConfig(overrides);
   const catalog = readCatalogFile(getDataPaths(config.dataDir).catalogPath);
-  const entries = resolveReadyEntries(input, getReadyEntries(catalog));
+  const entries = resolveReadyEntries(input.key, getReadyEntries(catalog));
   const manifestCache = new Map<string, AttachmentManifest>();
   const row = buildFullTextRow(entries, manifestCache, { clean: input.clean });
   return { ...row, warnings: config.warnings };
 }
 
 export function expandDocument(
-  input: { itemKey?: string; citationKey?: string; blockStart: number; blockEnd: number; radius: number },
+  input: { key: string; blockStart: number; blockEnd: number; radius: number },
   overrides: ConfigOverrides = {},
 ): {
   itemKey: string;
@@ -994,7 +986,7 @@ export function expandDocument(
 } {
   const config = resolveConfig(overrides);
   const catalog = readCatalogFile(getDataPaths(config.dataDir).catalogPath);
-  const entries = resolveReadyEntries(input, getReadyEntries(catalog));
+  const entries = resolveReadyEntries(input.key, getReadyEntries(catalog));
   const manifestCache = new Map<string, AttachmentManifest>();
   const manifest = loadMergedManifestForGroup(entries, manifestCache);
   const primary = entries[0]!;

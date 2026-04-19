@@ -118,7 +118,7 @@ async function createIndexedFixture(): Promise<{
 
   writeManifest(manifestPath, {
     docKey,
-    itemKey: "ITEM9",
+    itemKey: "ITEM9000",
     citationKey,
     title: "Exact match",
     authors: ["A"],
@@ -186,7 +186,7 @@ async function createIndexedFixture(): Promise<{
   const catalog: CatalogFile = {
     version: 1,
     generatedAt: new Date().toISOString(),
-    entries: [readyEntry(dataDir, docKey, "ITEM9", citationKey, "Exact match", filePath, manifestPath)],
+    entries: [readyEntry(dataDir, docKey, "ITEM9000", citationKey, "Exact match", filePath, manifestPath)],
   };
   writeCatalogFile(join(indexDir, "catalog.json"), catalog);
 
@@ -226,7 +226,7 @@ async function createMultiIndexedFixture(): Promise<{
     const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
     writeManifest(manifestPath, {
       docKey,
-      itemKey: "ITEMM",
+      itemKey: "ITEMM000",
       citationKey,
       title: `Multi ${index + 1}`,
       authors: ["A"],
@@ -255,7 +255,7 @@ async function createMultiIndexedFixture(): Promise<{
       readyEntry(
         dataDir,
         docKey,
-        "ITEMM",
+        "ITEMM000",
         citationKey,
         `Multi ${index + 1}`,
         filePaths[index]!,
@@ -288,21 +288,21 @@ test("help summarizes current commands and keeps config-only overrides out of th
   assert.match(result.stdout, /search "<text>" \[--keyword \| --semantic\] \[--limit <n>\] \[--min-score <n>\]/);
   assert.match(
     result.stdout,
-    /search-in "<text>" \(--item-key <key> \| --citation-key <key>\) \[--limit <n>\]/,
+    /search-in "<text>" --key <key> \[--limit <n>\]/,
   );
   assert.match(result.stdout, /metadata "<text>" \[--limit <n>\] \[--field <field>\] \[--has-file\]/);
   assert.match(result.stdout, /^Retrieval$/m);
   assert.match(
     result.stdout,
-    /blocks \(--item-key <key> \| --citation-key <key>\) \[--offset-block <n>\] \[--limit-blocks <n>\]/,
+    /blocks --key <key> \[--offset-block <n>\] \[--limit-blocks <n>\]/,
   );
   assert.match(
     result.stdout,
-    /fulltext \(--item-key <key> \| --citation-key <key>\) \[--clean\]/,
+    /fulltext --key <key> \[--clean\]/,
   );
   assert.match(
     result.stdout,
-    /expand \(--item-key <key> \| --citation-key <key>\) --block-start <n> \[--block-end <n>\] \[--radius <n>\]/,
+    /expand --key <key> --block-start <n> \[--block-end <n>\] \[--radius <n>\]/,
   );
 
   // Per-command flag descriptions live near their command, not in a global Options block.
@@ -324,10 +324,14 @@ test("help summarizes current commands and keeps config-only overrides out of th
   assert.match(result.stdout, /--abstract\s+Include the abstract in each result/);
   assert.match(result.stdout, /--clean\s+Apply heuristic cleanup/);
 
-  // Document selectors are described once in their own block.
-  assert.match(result.stdout, /^Document selectors \(used by search-in, blocks, fulltext, expand\)$/m);
-  assert.match(result.stdout, /--item-key <key>\s+Resolve an indexed item by Zotero item key\./);
-  assert.match(result.stdout, /--citation-key <key>\s+Resolve an indexed item by citation key\./);
+  // Document selector is described once in its own block.
+  assert.match(
+    result.stdout,
+    /^Document selector \(used by search-in, blocks, fulltext, expand\)$/m,
+  );
+  assert.match(result.stdout, /--key <key>\s+Resolve an item by itemKey or citationKey\./);
+  assert.doesNotMatch(result.stdout, /--item-key <key>\s/);
+  assert.doesNotMatch(result.stdout, /--citation-key <key>/);
 
   // Other / config sections are present.
   assert.match(result.stdout, /version, --version\s+Print the current zotagent version\./);
@@ -427,30 +431,12 @@ test("add rejects combining doi and s2-paper-id", () => {
   assert.match(result.stdout, /Use either --doi <doi> or --s2-paper-id <id>, not both\./);
 });
 
-test("search rejects removed query flag and points to positional usage", () => {
-  const result = runCli(["search", "--query", "aging in China"]);
-
-  assert.equal(result.status, 1);
-  assert.match(result.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
-  assert.match(result.stdout, /`--query` has been removed/);
-  assert.match(result.stdout, /zotagent search .*<text>.*/);
-});
-
 test("search rejects combining keyword mode with semantic", () => {
   const result = runCli(["search", "--keyword", "--semantic", "dangwei shuji"]);
 
   assert.equal(result.status, 1);
   assert.match(result.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
   assert.match(result.stdout, /`--keyword` cannot be combined with `--semantic`/);
-});
-
-test("metadata rejects removed query flag and points to positional usage", () => {
-  const result = runCli(["metadata", "--query", "aging in China"]);
-
-  assert.equal(result.status, 1);
-  assert.match(result.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
-  assert.match(result.stdout, /`--query` is not supported/);
-  assert.match(result.stdout, /zotagent metadata .*<text>.*/);
 });
 
 test("metadata rejects search-only flags", () => {
@@ -491,26 +477,13 @@ test("search rejects invalid limit and min-score values", () => {
   assert.match(invalidScore.stdout, /`--min-score` must be a finite number\./);
 });
 
-test("search-in rejects conflicting selectors and invalid limit values", () => {
-  const conflict = runCli([
-    "search-in",
-    "party",
-    "--item-key",
-    "ITEM1",
-    "--citation-key",
-    "cite1",
-  ]);
+test("search-in requires --key and rejects invalid limit values", () => {
+  const missing = runCli(["search-in", "party"]);
+  assert.equal(missing.status, 1);
+  assert.match(missing.stdout, /"code": "MISSING_ARGUMENT"/);
+  assert.match(missing.stdout, /Provide --key <key>\./);
 
-  assert.equal(conflict.status, 1);
-  assert.match(conflict.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
-  assert.match(conflict.stdout, /Provide exactly one of --item-key <key> or --citation-key <key>\./);
-
-  const legacyFile = runCli(["search-in", "party", "--file", "/tmp/paper.pdf"]);
-  assert.equal(legacyFile.status, 1);
-  assert.match(legacyFile.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
-  assert.match(legacyFile.stdout, /`--file` has been removed/);
-
-  const invalidLimit = runCli(["search-in", "party", "--item-key", "ITEM1", "--limit", "0"]);
+  const invalidLimit = runCli(["search-in", "party", "--key", "ITEM1000", "--limit", "0"]);
 
   assert.equal(invalidLimit.status, 1);
   assert.match(invalidLimit.stdout, /"code": "INVALID_ARGUMENT"/);
@@ -525,71 +498,37 @@ test("metadata rejects invalid limit values", () => {
   assert.match(result.stdout, /`--limit` requires a positive integer\./);
 });
 
-test("blocks rejects conflicting selectors and invalid numeric values", () => {
-  const conflict = runCli(["blocks", "--item-key", "ITEM1", "--citation-key", "cite1"]);
+test("blocks requires --key and rejects invalid numeric values", () => {
+  const missing = runCli(["blocks"]);
+  assert.equal(missing.status, 1);
+  assert.match(missing.stdout, /"code": "MISSING_ARGUMENT"/);
+  assert.match(missing.stdout, /Provide --key <key>\./);
 
-  assert.equal(conflict.status, 1);
-  assert.match(conflict.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
-  assert.match(conflict.stdout, /Provide exactly one of --item-key <key> or --citation-key <key>\./);
-
-  const legacyFile = runCli(["blocks", "--file", "/tmp/paper.pdf"]);
-  assert.equal(legacyFile.status, 1);
-  assert.match(legacyFile.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
-  assert.match(legacyFile.stdout, /`--file` has been removed/);
-
-  const invalidOffset = runCli(["blocks", "--item-key", "ITEM1", "--offset-block", "-1"]);
+  const invalidOffset = runCli(["blocks", "--key", "ITEM1000", "--offset-block", "-1"]);
 
   assert.equal(invalidOffset.status, 1);
   assert.match(invalidOffset.stdout, /"code": "INVALID_ARGUMENT"/);
   assert.match(invalidOffset.stdout, /`--offset-block` must be a non-negative integer\./);
 });
 
-test("read command is removed", () => {
-  const result = runCli(["read", "--item-key", "ITEM1"]);
+test("expand requires --key and rejects invalid numeric values", () => {
+  const missing = runCli(["expand", "--block-start", "1"]);
+  assert.equal(missing.status, 1);
+  assert.match(missing.stdout, /"code": "MISSING_ARGUMENT"/);
+  assert.match(missing.stdout, /Provide --key <key> and --block-start <n> for expand\./);
 
-  assert.equal(result.status, 1);
-  assert.match(result.stdout, /"code": "UNKNOWN_COMMAND"/);
-  assert.match(result.stdout, /Unknown command: read/);
-});
-
-test("expand rejects conflicting selectors and invalid numeric values", () => {
-  const conflict = runCli([
-    "expand",
-    "--item-key",
-    "ITEM1",
-    "--citation-key",
-    "cite1",
-    "--block-start",
-    "1",
-  ]);
-
-  assert.equal(conflict.status, 1);
-  assert.match(conflict.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
-  assert.match(conflict.stdout, /Provide exactly one of --item-key <key> or --citation-key <key>\./);
-
-  const legacyFile = runCli(["expand", "--file", "/tmp/paper.pdf", "--block-start", "1"]);
-  assert.equal(legacyFile.status, 1);
-  assert.match(legacyFile.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
-  assert.match(legacyFile.stdout, /`--file` has been removed/);
-
-  const invalidRange = runCli(["expand", "--item-key", "ITEM1", "--block-start", "2", "--block-end", "1"]);
+  const invalidRange = runCli(["expand", "--key", "ITEM1000", "--block-start", "2", "--block-end", "1"]);
 
   assert.equal(invalidRange.status, 1);
   assert.match(invalidRange.stdout, /"code": "INVALID_ARGUMENT"/);
   assert.match(invalidRange.stdout, /`--block-end` must be greater than or equal to `--block-start`\./);
 });
 
-test("fulltext rejects conflicting selectors", () => {
-  const conflict = runCli(["fulltext", "--item-key", "ITEM1", "--citation-key", "cite1"]);
-
-  assert.equal(conflict.status, 1);
-  assert.match(conflict.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
-  assert.match(conflict.stdout, /Provide exactly one of --item-key <key> or --citation-key <key>\./);
-
-  const legacyFile = runCli(["fulltext", "--file", "/tmp/paper.pdf"]);
-  assert.equal(legacyFile.status, 1);
-  assert.match(legacyFile.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
-  assert.match(legacyFile.stdout, /`--file` has been removed/);
+test("fulltext requires --key", () => {
+  const missing = runCli(["fulltext"]);
+  assert.equal(missing.status, 1);
+  assert.match(missing.stdout, /"code": "MISSING_ARGUMENT"/);
+  assert.match(missing.stdout, /Provide --key <key>\./);
 });
 
 test("metadata accumulates repeated field filters", () => {
@@ -605,7 +544,7 @@ test("metadata accumulates repeated field filters", () => {
         author: [{ family: "Smith", given: "Jane" }],
         issued: { "date-parts": [[2024]] },
         type: "book",
-        "zotero-item-key": "ITEM1",
+        "zotero-item-key": "ITEM1000",
       },
       {
         title: "Other title",
@@ -613,7 +552,7 @@ test("metadata accumulates repeated field filters", () => {
         author: [{ family: "Doe", given: "John" }],
         issued: { "date-parts": [[2023]] },
         type: "book",
-        "zotero-item-key": "ITEM2",
+        "zotero-item-key": "ITEM2000",
       },
     ]),
     "utf-8",
@@ -644,7 +583,7 @@ test("metadata accumulates repeated field filters", () => {
   assert.equal(parsed.ok, true);
   assert.deepEqual(
     parsed.data.results.map((row) => row.itemKey),
-    ["ITEM1", "ITEM2"],
+    ["ITEM1000", "ITEM2000"],
   );
 });
 
@@ -662,7 +601,7 @@ test("metadata omits abstract by default and includes it with --abstract", () =>
         author: [{ family: "Smith", given: "Jane" }],
         issued: { "date-parts": [[2024]] },
         type: "article-journal",
-        "zotero-item-key": "ITEM1",
+        "zotero-item-key": "ITEM1000",
       },
     ]),
     "utf-8",
@@ -685,7 +624,7 @@ test("metadata omits abstract by default and includes it with --abstract", () =>
   const defaultParsed = JSON.parse(defaultRun.stdout) as {
     data: { results: Array<{ itemKey: string; abstract?: string }> };
   };
-  assert.equal(defaultParsed.data.results[0]?.itemKey, "ITEM1");
+  assert.equal(defaultParsed.data.results[0]?.itemKey, "ITEM1000");
   assert.equal("abstract" in defaultParsed.data.results[0]!, false);
 
   const withAbstract = runCli([...commonArgs, "--abstract"]);
@@ -722,7 +661,7 @@ test("search keyword returns elapsedMs in meta", async () => {
     meta?: { elapsedMs?: number };
   };
   assert.equal(parsed.ok, true);
-  assert.deepEqual(parsed.data.results.map((row) => row.itemKey), ["ITEM9"]);
+  assert.deepEqual(parsed.data.results.map((row) => row.itemKey), ["ITEM9000"]);
   assert.equal(typeof parsed.meta?.elapsedMs, "number");
 });
 
@@ -777,8 +716,8 @@ test("search-in returns passages within a selected document", async () => {
   const result = runCli([
     "search-in",
     "dangwei shuji",
-    "--item-key",
-    "ITEM9",
+    "--key",
+    "ITEM9000",
     "--bibliography",
     fixture.bibliographyPath,
     "--attachments-root",
@@ -802,7 +741,7 @@ test("search-in returns passages within a selected document", async () => {
   };
   assert.equal(parsed.ok, true);
   assert.equal(parsed.data.results.length > 0, true);
-  assert.equal(parsed.data.results[0]!.itemKey, "ITEM9");
+  assert.equal(parsed.data.results[0]!.itemKey, "ITEM9000");
   assert.equal("file" in parsed.data.results[0]!, false);
   assert.match(parsed.data.results[0]!.passage, /dangwei shuji/i);
   assert.equal(parsed.data.results[0]!.blockStart, 0);
@@ -816,8 +755,8 @@ test("search-in searches across all attachments when one key maps to multiple PD
   const result = runCli([
     "search-in",
     "unique paragraph",
-    "--item-key",
-    "ITEMM",
+    "--key",
+    "ITEMM000",
     "--bibliography",
     fixture.bibliographyPath,
     "--attachments-root",
@@ -853,8 +792,8 @@ test("expand resolves a unique attachment by itemKey", async () => {
 
   const result = runCli([
     "expand",
-    "--item-key",
-    "ITEM9",
+    "--key",
+    "ITEM9000",
     "--block-start",
     "1",
     "--radius",
@@ -879,20 +818,20 @@ test("expand resolves a unique attachment by itemKey", async () => {
     };
   };
   assert.equal(parsed.ok, true);
-  assert.equal(parsed.data.itemKey, "ITEM9");
+  assert.equal(parsed.data.itemKey, "ITEM9000");
   assert.deepEqual(parsed.data.files, [fixture.filePath]);
   assert.equal(parsed.data.contextStart, 0);
   assert.equal(parsed.data.contextEnd, 2);
   assert.match(parsed.data.passage, /Party organization shapes firm governance\./);
 });
 
-test("blocks resolves a unique attachment by citationKey", async () => {
+test("blocks emits citationKey in the output when the manifest has one", async () => {
   const fixture = await createIndexedFixture();
 
   const result = runCli([
     "blocks",
-    "--citation-key",
-    fixture.citationKey,
+    "--key",
+    "ITEM9000",
     "--limit-blocks",
     "1",
     "--bibliography",
@@ -914,7 +853,7 @@ test("blocks resolves a unique attachment by citationKey", async () => {
     };
   };
   assert.equal(parsed.ok, true);
-  assert.equal(parsed.data.itemKey, "ITEM9");
+  assert.equal(parsed.data.itemKey, "ITEM9000");
   assert.equal(parsed.data.citationKey, fixture.citationKey);
   assert.deepEqual(parsed.data.files, [fixture.filePath]);
   assert.equal(parsed.data.blocks.length, 1);
@@ -926,8 +865,8 @@ test("fulltext returns agent-friendly markdown", async () => {
 
   const result = runCli([
     "fulltext",
-    "--item-key",
-    "ITEM9",
+    "--key",
+    "ITEM9000",
     "--bibliography",
     fixture.bibliographyPath,
     "--attachments-root",
@@ -951,7 +890,7 @@ test("fulltext returns agent-friendly markdown", async () => {
     };
   };
   assert.equal(parsed.ok, true);
-  assert.equal(parsed.data.itemKey, "ITEM9");
+  assert.equal(parsed.data.itemKey, "ITEM9000");
   assert.deepEqual(parsed.data.files, [fixture.filePath]);
   assert.equal(parsed.data.format, "markdown");
   assert.equal(parsed.data.source, "normalized");
@@ -969,8 +908,8 @@ test("fulltext clean strips common boilerplate", async () => {
 
   const result = runCli([
     "fulltext",
-    "--item-key",
-    "ITEM9",
+    "--key",
+    "ITEM9000",
     "--clean",
     "--bibliography",
     fixture.bibliographyPath,
@@ -998,64 +937,13 @@ test("fulltext clean strips common boilerplate", async () => {
   assert.match(parsed.data.content, /Smith, J\./);
 });
 
-test("fulltext merges multiple attachments under one itemKey or citationKey into one document", async () => {
+test("fulltext merges multiple attachments for one itemKey into one document", async () => {
   const fixture = await createMultiIndexedFixture();
 
-  const byItemKey = runCli([
-    "fulltext",
-    "--item-key",
-    "ITEMM",
-    "--bibliography",
-    fixture.bibliographyPath,
-    "--attachments-root",
-    fixture.attachmentsRoot,
-    "--data-dir",
-    fixture.dataDir,
-  ]);
-  const byCitationKey = runCli([
-    "fulltext",
-    "--citation-key",
-    fixture.citationKey,
-    "--bibliography",
-    fixture.bibliographyPath,
-    "--attachments-root",
-    fixture.attachmentsRoot,
-    "--data-dir",
-    fixture.dataDir,
-  ]);
-
-  assert.equal(byItemKey.status, 0);
-  assert.equal(byCitationKey.status, 0);
-
-  const parsedItem = JSON.parse(byItemKey.stdout) as {
-    ok: boolean;
-    data: { itemKey: string; files: string[]; content: string };
-  };
-  const parsedCitation = JSON.parse(byCitationKey.stdout) as {
-    ok: boolean;
-    data: { itemKey: string; files: string[]; content: string };
-  };
-
-  assert.equal(parsedItem.ok, true);
-  assert.equal(parsedCitation.ok, true);
-  assert.deepEqual(parsedItem.data.files, fixture.filePaths);
-  assert.deepEqual(parsedCitation.data.files, fixture.filePaths);
-  assert.match(parsedItem.data.content, /Unique paragraph 1\./);
-  assert.match(parsedItem.data.content, /Unique paragraph 2\./);
-  assert.match(parsedItem.data.content, /# Attachment: /);
-});
-
-test("expand resolves a unique attachment by citationKey", async () => {
-  const fixture = await createIndexedFixture();
-
   const result = runCli([
-    "expand",
-    "--citation-key",
-    fixture.citationKey,
-    "--block-start",
-    "1",
-    "--radius",
-    "1",
+    "fulltext",
+    "--key",
+    "ITEMM000",
     "--bibliography",
     fixture.bibliographyPath,
     "--attachments-root",
@@ -1067,18 +955,73 @@ test("expand resolves a unique attachment by citationKey", async () => {
   assert.equal(result.status, 0);
   const parsed = JSON.parse(result.stdout) as {
     ok: boolean;
-    data: {
-      itemKey: string;
-      citationKey?: string;
-      files: string[];
-      contextStart: number;
-      contextEnd: number;
-    };
+    data: { itemKey: string; citationKey?: string; files: string[]; content: string };
+  };
+
+  assert.equal(parsed.ok, true);
+  assert.deepEqual(parsed.data.files, fixture.filePaths);
+  assert.equal(parsed.data.citationKey, fixture.citationKey);
+  assert.match(parsed.data.content, /Unique paragraph 1\./);
+  assert.match(parsed.data.content, /Unique paragraph 2\./);
+  assert.match(parsed.data.content, /# Attachment: /);
+});
+
+test("fulltext resolves by citationKey when --key is not in itemKey shape", async () => {
+  const fixture = await createIndexedFixture();
+
+  const result = runCli([
+    "fulltext",
+    "--key",
+    fixture.citationKey,
+    "--bibliography",
+    fixture.bibliographyPath,
+    "--attachments-root",
+    fixture.attachmentsRoot,
+    "--data-dir",
+    fixture.dataDir,
+  ]);
+
+  assert.equal(result.status, 0);
+  const parsed = JSON.parse(result.stdout) as {
+    ok: boolean;
+    data: { itemKey: string; citationKey?: string };
   };
   assert.equal(parsed.ok, true);
-  assert.equal(parsed.data.itemKey, "ITEM9");
+  assert.equal(parsed.data.itemKey, "ITEM9000");
   assert.equal(parsed.data.citationKey, fixture.citationKey);
-  assert.deepEqual(parsed.data.files, [fixture.filePath]);
-  assert.equal(parsed.data.contextStart, 0);
-  assert.equal(parsed.data.contextEnd, 2);
 });
+
+test("blocks reports misses with shape-specific error messages", async () => {
+  const fixture = await createIndexedFixture();
+
+  const itemKeyMiss = runCli([
+    "blocks",
+    "--key",
+    "ZZZZZZZZ",
+    "--bibliography",
+    fixture.bibliographyPath,
+    "--attachments-root",
+    fixture.attachmentsRoot,
+    "--data-dir",
+    fixture.dataDir,
+  ]);
+  assert.equal(itemKeyMiss.status, 1);
+  assert.match(itemKeyMiss.stdout, /"code": "BLOCKS_FAILED"/);
+  assert.match(itemKeyMiss.stdout, /No indexed attachment found for itemKey: ZZZZZZZZ/);
+
+  const citationKeyMiss = runCli([
+    "blocks",
+    "--key",
+    "unknown-cite-2099",
+    "--bibliography",
+    fixture.bibliographyPath,
+    "--attachments-root",
+    fixture.attachmentsRoot,
+    "--data-dir",
+    fixture.dataDir,
+  ]);
+  assert.equal(citationKeyMiss.status, 1);
+  assert.match(citationKeyMiss.stdout, /"code": "BLOCKS_FAILED"/);
+  assert.match(citationKeyMiss.stdout, /No indexed attachment found for citationKey: unknown-cite-2099/);
+});
+

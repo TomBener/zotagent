@@ -14,7 +14,7 @@ Search and retrieval are the core features. Both read from a local index that `s
 
 - `search` — FTS5 keyword search (default) with porter stemming. Supports `"exact phrase"`, `OR`, `NOT`, `term NEAR/<n> term`, and `prefix*`. Chinese, Japanese, and Korean (CJK) text is supported with accurate phrase matching and built-in false-positive filtering.
 - `search --semantic` — vector search over [qmd](https://github.com/tobi/qmd) embeddings with LLM query expansion; slower and heavier than keyword search.
-- `search-in` — scope a text query to a single indexed item's attachments, addressed by `itemKey` or `citationKey`.
+- `search-in` — scope a text query to a single indexed item's attachments, addressed by `itemKey` or `citationKey` (auto-detected).
 - `metadata` — search the Zotero bibliography (Better CSL JSON) across `title`, `author`, `year`, `abstract`, `journal`, and `publisher`. `--field` narrows the fields searched; `--has-file` keeps only items with an indexed attachment.
 
 ### Retrieve
@@ -23,7 +23,7 @@ Search and retrieval are the core features. Both read from a local index that `s
 - `fulltext` — return the full normalized markdown for one item. `--clean` drops duplicate blocks and common boilerplate (citation notices, TOC lines).
 - `expand` — pull context around a block range, typically a search hit, with a configurable `--radius`.
 
-All three address an item by `itemKey` or `citationKey`. When one item has multiple indexed attachments, they are merged into one logical document with monotonic block indices and `# Attachment: <name>` dividers.
+All three address an item by `--key`, which accepts either `itemKey` or `citationKey`. Values matching `[A-Z0-9]{8}` are dispatched as `itemKey`; anything else is treated as `citationKey`. When one item has multiple indexed attachments, they are merged into one logical document with monotonic block indices and `# Attachment: <name>` dividers. Both keys are emitted in every response.
 
 ### Add to Zotero
 
@@ -150,7 +150,7 @@ Search
         --limit <n>                 Return up to n search results. Default: 10 for search, 20 for metadata.
         --min-score <n>             Drop lower-scoring search hits before mapping.
 
-  search-in "<text>" (--item-key <key> | --citation-key <key>) [--limit <n>]
+  search-in "<text>" --key <key> [--limit <n>]
       Search within one indexed item's attachments (exact phrase and term match).
 
   metadata "<text>" [--limit <n>] [--field <field>] [--has-file] [--abstract]
@@ -162,29 +162,31 @@ Search
                                     bulk responses compact for agents.
 
 Retrieval
-  blocks (--item-key <key> | --citation-key <key>) [--offset-block <n>] [--limit-blocks <n>]
+  blocks --key <key> [--offset-block <n>] [--limit-blocks <n>]
       Return paginated blocks from one indexed item.
       When one item has multiple indexed attachments, they are merged into one logical
       document with monotonic block indices and "# Attachment: <name>" dividers between them.
         --offset-block <n>          Start at block n. Default: 0.
         --limit-blocks <n>          Return up to n blocks. Default: 20.
 
-  fulltext (--item-key <key> | --citation-key <key>) [--clean]
+  fulltext --key <key> [--clean]
       Output agent-friendly full text for one item. Multi-attachment items return one
       merged markdown document.
         --clean                     Apply heuristic cleanup (drops duplicate blocks and
                                     common boilerplate such as citation notices and TOC lines).
 
-  expand (--item-key <key> | --citation-key <key>) --block-start <n> [--block-end <n>] [--radius <n>]
+  expand --key <key> --block-start <n> [--block-end <n>] [--radius <n>]
       Expand around a search hit or block range from a local manifest.
       Block indices are item-global; feed blockStart from search results directly.
         --block-start <n>           Start block for expand.
         --block-end <n>             End block for expand. Default: block-start.
         --radius <n>                Include n blocks before and after. Default: 2.
 
-Document selectors (used by search-in, blocks, fulltext, expand)
-  --item-key <key>              Resolve an indexed item by Zotero item key.
-  --citation-key <key>          Resolve an indexed item by citation key.
+Document selector (used by search-in, blocks, fulltext, expand)
+  --key <key>                   Resolve an item by itemKey or citationKey. Values matching
+                                [A-Z0-9]{8} are dispatched as itemKey; anything else as
+                                citationKey. Both forms are emitted in output alongside
+                                the stable itemKey.
 
 Other
   version, --version            Print the current zotagent version.

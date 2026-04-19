@@ -225,7 +225,7 @@ Search
         --limit <n>                 Return up to n search results. Default: 10 for search, 20 for metadata.
         --min-score <n>             Drop lower-scoring search hits before mapping.
 
-  search-in "<text>" (--item-key <key> | --citation-key <key>) [--limit <n>]
+  search-in "<text>" --key <key> [--limit <n>]
       Search within one indexed item's attachments (exact phrase and term match).
 
   metadata "<text>" [--limit <n>] [--field <field>] [--has-file] [--abstract]
@@ -237,29 +237,31 @@ Search
                                     bulk responses compact for agents.
 
 Retrieval
-  blocks (--item-key <key> | --citation-key <key>) [--offset-block <n>] [--limit-blocks <n>]
+  blocks --key <key> [--offset-block <n>] [--limit-blocks <n>]
       Return paginated blocks from one indexed item.
       When one item has multiple indexed attachments, they are merged into one logical
       document with monotonic block indices and "# Attachment: <name>" dividers between them.
         --offset-block <n>          Start at block n. Default: 0.
         --limit-blocks <n>          Return up to n blocks. Default: 20.
 
-  fulltext (--item-key <key> | --citation-key <key>) [--clean]
+  fulltext --key <key> [--clean]
       Output agent-friendly full text for one item. Multi-attachment items return one
       merged markdown document.
         --clean                     Apply heuristic cleanup (drops duplicate blocks and
                                     common boilerplate such as citation notices and TOC lines).
 
-  expand (--item-key <key> | --citation-key <key>) --block-start <n> [--block-end <n>] [--radius <n>]
+  expand --key <key> --block-start <n> [--block-end <n>] [--radius <n>]
       Expand around a search hit or block range from a local manifest.
       Block indices are item-global; feed blockStart from search results directly.
         --block-start <n>           Start block for expand.
         --block-end <n>             End block for expand. Default: block-start.
         --radius <n>                Include n blocks before and after. Default: 2.
 
-Document selectors (used by search-in, blocks, fulltext, expand)
-  --item-key <key>              Resolve an indexed item by Zotero item key.
-  --citation-key <key>          Resolve an indexed item by citation key.
+Document selector (used by search-in, blocks, fulltext, expand)
+  --key <key>                   Resolve an item by itemKey or citationKey. Values matching
+                                [A-Z0-9]{8} are dispatched as itemKey; anything else as
+                                citationKey. Both forms are emitted in output alongside
+                                the stable itemKey.
 
 Other
   version, --version            Print the current zotagent version.
@@ -472,11 +474,7 @@ async function main(): Promise<void> {
       }
 
       case "s2": {
-        if ("query" in parsed.flags) {
-          emitError("UNEXPECTED_ARGUMENT", '`--query` is not supported. Use: zotagent s2 "<text>"');
-          return;
-        }
-        const invalidFlags = ["keyword", "semantic", "min-score", "field", "has-file", "has-pdf"].filter(
+        const invalidFlags = ["keyword", "semantic", "min-score", "field", "has-file"].filter(
           (flag) => flag in parsed.flags,
         );
         if (invalidFlags.length > 0) {
@@ -508,10 +506,6 @@ async function main(): Promise<void> {
       }
 
       case "search": {
-        if ("query" in parsed.flags) {
-          emitError("UNEXPECTED_ARGUMENT", '`--query` has been removed. Use: zotagent search "<text>"');
-          return;
-        }
         const query = parsed.positionals.slice(1).join(" ");
         if (!query) {
           emitError("MISSING_ARGUMENT", 'Missing search text. Use: zotagent search "<text>"');
@@ -553,31 +547,14 @@ async function main(): Promise<void> {
       }
 
       case "search-in": {
-        if ("query" in parsed.flags) {
-          emitError("UNEXPECTED_ARGUMENT", '`--query` has been removed. Use: zotagent search-in "<text>" (--item-key <key> | --citation-key <key>)');
-          return;
-        }
         const query = parsed.positionals.slice(1).join(" ");
         if (!query) {
-          emitError("MISSING_ARGUMENT", 'Missing search text. Use: zotagent search-in "<text>" (--item-key <key> | --citation-key <key>)');
+          emitError("MISSING_ARGUMENT", 'Missing search text. Use: zotagent search-in "<text>" --key <key>');
           return;
         }
-        if ("file" in parsed.flags) {
-          emitError("UNEXPECTED_ARGUMENT", "`--file` has been removed. Use --item-key <key> or --citation-key <key>.");
-          return;
-        }
-        const itemKey = getStringFlag(parsed.flags, "item-key");
-        const citationKey = getStringFlag(parsed.flags, "citation-key");
-        const selectorCount = Number(Boolean(itemKey)) + Number(Boolean(citationKey));
-        if (selectorCount > 1) {
-          emitError(
-            "UNEXPECTED_ARGUMENT",
-            "Provide exactly one of --item-key <key> or --citation-key <key>.",
-          );
-          return;
-        }
-        if (selectorCount === 0) {
-          emitError("MISSING_ARGUMENT", "Provide one of --item-key <key> or --citation-key <key>.");
+        const key = getStringFlag(parsed.flags, "key");
+        if (!key) {
+          emitError("MISSING_ARGUMENT", "Provide --key <key>.");
           return;
         }
         const limitInput = parseNumericFlag(parsed.flags, "limit", {
@@ -593,10 +570,7 @@ async function main(): Promise<void> {
         try {
           const data = searchWithinDocuments(
             query,
-            {
-              ...(itemKey ? { itemKey } : {}),
-              ...(citationKey ? { citationKey } : {}),
-            },
+            { key },
             limitInput.value ?? 10,
             overrides,
           );
@@ -609,10 +583,6 @@ async function main(): Promise<void> {
       }
 
       case "metadata": {
-        if ("query" in parsed.flags) {
-          emitError("UNEXPECTED_ARGUMENT", '`--query` is not supported. Use: zotagent metadata "<text>"');
-          return;
-        }
         const invalidFlags = ["keyword", "semantic", "min-score"].filter(
           (flag) => flag in parsed.flags,
         );
@@ -658,10 +628,6 @@ async function main(): Promise<void> {
           emitError("INVALID_ARGUMENT", limitInput.error);
           return;
         }
-        if ("has-pdf" in parsed.flags) {
-          emitError("RENAMED_FLAG", "`--has-pdf` has been renamed to `--has-file`.");
-          return;
-        }
         const limit = limitInput.value ?? 20;
         const data = await searchMetadata(query, limit, overrides, {
           ...(requestedFields.length > 0 ? { fields: requestedFields as MetadataField[] } : {}),
@@ -673,22 +639,9 @@ async function main(): Promise<void> {
       }
 
       case "blocks": {
-        if ("file" in parsed.flags) {
-          emitError("UNEXPECTED_ARGUMENT", "`--file` has been removed. Use --item-key <key> or --citation-key <key>.");
-          return;
-        }
-        const itemKey = getStringFlag(parsed.flags, "item-key");
-        const citationKey = getStringFlag(parsed.flags, "citation-key");
-        const selectorCount = Number(Boolean(itemKey)) + Number(Boolean(citationKey));
-        if (selectorCount > 1) {
-          emitError(
-            "UNEXPECTED_ARGUMENT",
-            "Provide exactly one of --item-key <key> or --citation-key <key>.",
-          );
-          return;
-        }
-        if (selectorCount === 0) {
-          emitError("MISSING_ARGUMENT", "Provide one of --item-key <key> or --citation-key <key>.");
+        const key = getStringFlag(parsed.flags, "key");
+        if (!key) {
+          emitError("MISSING_ARGUMENT", "Provide --key <key>.");
           return;
         }
         const offsetBlockInput = parseNumericFlag(parsed.flags, "offset-block", {
@@ -714,8 +667,7 @@ async function main(): Promise<void> {
         try {
           const data = getDocumentBlocks(
             {
-              ...(itemKey ? { itemKey } : {}),
-              ...(citationKey ? { citationKey } : {}),
+              key,
               offsetBlock: offsetBlockInput.value ?? 0,
               limitBlocks: limitBlocksInput.value ?? 20,
             },
@@ -730,29 +682,15 @@ async function main(): Promise<void> {
       }
 
       case "fulltext": {
-        if ("file" in parsed.flags) {
-          emitError("UNEXPECTED_ARGUMENT", "`--file` has been removed. Use --item-key <key> or --citation-key <key>.");
-          return;
-        }
-        const itemKey = getStringFlag(parsed.flags, "item-key");
-        const citationKey = getStringFlag(parsed.flags, "citation-key");
-        const selectorCount = Number(Boolean(itemKey)) + Number(Boolean(citationKey));
-        if (selectorCount > 1) {
-          emitError(
-            "UNEXPECTED_ARGUMENT",
-            "Provide exactly one of --item-key <key> or --citation-key <key>.",
-          );
-          return;
-        }
-        if (selectorCount === 0) {
-          emitError("MISSING_ARGUMENT", "Provide one of --item-key <key> or --citation-key <key>.");
+        const key = getStringFlag(parsed.flags, "key");
+        if (!key) {
+          emitError("MISSING_ARGUMENT", "Provide --key <key>.");
           return;
         }
         try {
           const data = fullTextDocument(
             {
-              ...(itemKey ? { itemKey } : {}),
-              ...(citationKey ? { citationKey } : {}),
+              key,
               clean: getBooleanFlag(parsed.flags, "clean"),
             },
             overrides,
@@ -766,20 +704,7 @@ async function main(): Promise<void> {
       }
 
       case "expand": {
-        if ("file" in parsed.flags) {
-          emitError("UNEXPECTED_ARGUMENT", "`--file` has been removed. Use --item-key <key> or --citation-key <key>.");
-          return;
-        }
-        const itemKey = getStringFlag(parsed.flags, "item-key");
-        const citationKey = getStringFlag(parsed.flags, "citation-key");
-        const selectorCount = Number(Boolean(itemKey)) + Number(Boolean(citationKey));
-        if (selectorCount > 1) {
-          emitError(
-            "UNEXPECTED_ARGUMENT",
-            "Provide exactly one of --item-key <key> or --citation-key <key>.",
-          );
-          return;
-        }
+        const key = getStringFlag(parsed.flags, "key");
         const blockStartInput = parseNumericFlag(parsed.flags, "block-start", {
           requirement: "a non-negative integer",
           constraint: "a non-negative integer",
@@ -810,10 +735,10 @@ async function main(): Promise<void> {
           emitError("INVALID_ARGUMENT", radiusInput.error);
           return;
         }
-        if (selectorCount === 0 || blockStartInput.value === undefined) {
+        if (!key || blockStartInput.value === undefined) {
           emitError(
             "MISSING_ARGUMENT",
-            "Provide one of --item-key <key> or --citation-key <key>, and --block-start <n> for expand.",
+            "Provide --key <key> and --block-start <n> for expand.",
           );
           return;
         }
@@ -826,8 +751,7 @@ async function main(): Promise<void> {
         try {
           const data = expandDocument(
             {
-              ...(itemKey ? { itemKey } : {}),
-              ...(citationKey ? { citationKey } : {}),
+              key,
               blockStart: blockStartValue,
               blockEnd: blockEndValue,
               radius: radiusInput.value ?? 2,

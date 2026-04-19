@@ -29,7 +29,7 @@ test("searchLiterature prefers substantive hits over reference-only hits", async
 
   writeManifest(substantiveManifestPath, {
     docKey: substantiveDocKey,
-    itemKey: "ITEM1",
+    itemKey: "ITEM1000",
     title: "Substantive",
     authors: ["A"],
     filePath: "/tmp/substantive.pdf",
@@ -50,7 +50,7 @@ test("searchLiterature prefers substantive hits over reference-only hits", async
   });
   writeManifest(referenceManifestPath, {
     docKey: referenceDocKey,
-    itemKey: "ITEM2",
+    itemKey: "ITEM2000",
     title: "Reference",
     authors: ["B"],
     filePath: "/tmp/reference.pdf",
@@ -76,7 +76,7 @@ test("searchLiterature prefers substantive hits over reference-only hits", async
     entries: [
       {
         docKey: substantiveDocKey,
-        itemKey: "ITEM1",
+        itemKey: "ITEM1000",
         title: "Substantive",
         authors: ["A"],
         filePath: "/tmp/substantive.pdf",
@@ -93,7 +93,7 @@ test("searchLiterature prefers substantive hits over reference-only hits", async
       },
       {
         docKey: referenceDocKey,
-        itemKey: "ITEM2",
+        itemKey: "ITEM2000",
         title: "Reference",
         authors: ["B"],
         filePath: "/tmp/reference.pdf",
@@ -162,7 +162,7 @@ test("searchLiterature prefers substantive hits over reference-only hits", async
   );
 
   assert.equal(result.results.length, 1);
-  assert.equal(result.results[0]!.itemKey, "ITEM1");
+  assert.equal(result.results[0]!.itemKey, "ITEM1000");
   assert.equal("warnings" in result, false);
 });
 
@@ -179,7 +179,7 @@ test("searchLiterature keyword mode uses the keyword index and skips qmd", async
 
   writeManifest(manifestPath, {
     docKey,
-    itemKey: "ITEM9",
+    itemKey: "ITEM9000",
     title: "Dangwei Shuji and Governance",
     authors: ["A"],
     filePath: "/tmp/keyword.pdf",
@@ -205,7 +205,7 @@ test("searchLiterature keyword mode uses the keyword index and skips qmd", async
     entries: [
       {
         docKey,
-        itemKey: "ITEM9",
+        itemKey: "ITEM9000",
         title: "Dangwei Shuji and Governance",
         authors: ["A"],
         filePath: "/tmp/keyword.pdf",
@@ -259,7 +259,7 @@ test("searchLiterature keyword mode uses the keyword index and skips qmd", async
   assert.equal(qmdSearchCalled, false);
   assert.equal(keywordSearchCalled, true);
   assert.equal(result.results.length, 1);
-  assert.equal(result.results[0]!.itemKey, "ITEM9");
+  assert.equal(result.results[0]!.itemKey, "ITEM9000");
   assert.match(result.results[0]!.passage, /dangwei shuji/i);
 });
 
@@ -276,7 +276,7 @@ test("searchLiterature keyword mode bootstraps a missing keyword index from exis
 
   writeManifest(manifestPath, {
     docKey,
-    itemKey: "ITEMB",
+    itemKey: "ITEMB000",
     title: "Ageing in China",
     authors: ["A"],
     filePath: "/tmp/bootstrap.pdf",
@@ -302,7 +302,7 @@ test("searchLiterature keyword mode bootstraps a missing keyword index from exis
     entries: [
       {
         docKey,
-        itemKey: "ITEMB",
+        itemKey: "ITEMB000",
         title: "Ageing in China",
         authors: ["A"],
         filePath: "/tmp/bootstrap.pdf",
@@ -327,7 +327,7 @@ test("searchLiterature keyword mode bootstraps a missing keyword index from exis
   );
 
   assert.equal(result.results.length, 1);
-  assert.equal(result.results[0]!.itemKey, "ITEMB");
+  assert.equal(result.results[0]!.itemKey, "ITEMB000");
   assert.match(result.results[0]!.passage, /ageing in china/i);
 });
 
@@ -344,7 +344,7 @@ test("searchLiterature keyword mode maps stemmed hits to the matching block", as
 
   writeManifest(manifestPath, {
     docKey,
-    itemKey: "ITEMC",
+    itemKey: "ITEMC000",
     title: "Governance Study",
     authors: ["A"],
     filePath: "/tmp/stemmed.pdf",
@@ -381,7 +381,7 @@ test("searchLiterature keyword mode maps stemmed hits to the matching block", as
     entries: [
       {
         docKey,
-        itemKey: "ITEMC",
+        itemKey: "ITEMC000",
         title: "Governance Study",
         authors: ["A"],
         filePath: "/tmp/stemmed.pdf",
@@ -406,7 +406,7 @@ test("searchLiterature keyword mode maps stemmed hits to the matching block", as
   );
 
   assert.equal(result.results.length, 1);
-  assert.equal(result.results[0]!.itemKey, "ITEMC");
+  assert.equal(result.results[0]!.itemKey, "ITEMC000");
   assert.equal(result.results[0]!.blockStart, 1);
   assert.match(result.results[0]!.passage, /governs recruitment/i);
 });
@@ -424,7 +424,7 @@ test("searchLiterature keyword mode uses the title when the title is the only ma
 
   writeManifest(manifestPath, {
     docKey,
-    itemKey: "ITEMD",
+    itemKey: "ITEMD000",
     title: "Party Secretary Governance",
     authors: ["A"],
     filePath: "/tmp/title-only.pdf",
@@ -450,7 +450,7 @@ test("searchLiterature keyword mode uses the title when the title is the only ma
     entries: [
       {
         docKey,
-        itemKey: "ITEMD",
+        itemKey: "ITEMD000",
         title: "Party Secretary Governance",
         authors: ["A"],
         filePath: "/tmp/title-only.pdf",
@@ -475,7 +475,7 @@ test("searchLiterature keyword mode uses the title when the title is the only ma
   );
 
   assert.equal(result.results.length, 1);
-  assert.equal(result.results[0]!.itemKey, "ITEMD");
+  assert.equal(result.results[0]!.itemKey, "ITEMD000");
   assert.equal(result.results[0]!.passage, "Party Secretary Governance");
 });
 
@@ -492,7 +492,7 @@ test("searchLiterature keyword mode drops CJK candidates without a verifiable bl
 
   writeManifest(manifestPath, {
     docKey,
-    itemKey: "ITEME",
+    itemKey: "ITEME000",
     title: "党委书记研究",
     authors: ["A"],
     filePath: "/tmp/cjk-false-positive.pdf",
@@ -518,7 +518,7 @@ test("searchLiterature keyword mode drops CJK candidates without a verifiable bl
     entries: [
       {
         docKey,
-        itemKey: "ITEME",
+        itemKey: "ITEME000",
         title: "党委书记研究",
         authors: ["A"],
         filePath: "/tmp/cjk-false-positive.pdf",
@@ -571,7 +571,7 @@ test("searchLiterature keyword mode verifies spaced CJK text before keeping a ca
 
   writeManifest(manifestPath, {
     docKey,
-    itemKey: "ITEMF",
+    itemKey: "ITEMF000",
     title: "干部岗位研究",
     authors: ["A"],
     filePath: "/tmp/cjk-spacing.pdf",
@@ -597,7 +597,7 @@ test("searchLiterature keyword mode verifies spaced CJK text before keeping a ca
     entries: [
       {
         docKey,
-        itemKey: "ITEMF",
+        itemKey: "ITEMF000",
         title: "干部岗位研究",
         authors: ["A"],
         filePath: "/tmp/cjk-spacing.pdf",
@@ -635,7 +635,7 @@ test("searchLiterature keyword mode verifies spaced CJK text before keeping a ca
   );
 
   assert.equal(result.results.length, 1);
-  assert.equal(result.results[0]!.itemKey, "ITEMF");
+  assert.equal(result.results[0]!.itemKey, "ITEMF000");
   assert.equal(result.results[0]!.blockStart, 0);
   assert.match(result.results[0]!.passage, /党 委 书 记/u);
 });
@@ -656,7 +656,7 @@ test("searchLiterature keyword mode verifies a traditional query against a simpl
 
   writeManifest(manifestPath, {
     docKey,
-    itemKey: "ITEMTS",
+    itemKey: "ITEMTS00",
     title: "开发新疆研究",
     authors: ["A"],
     filePath: "/tmp/cjk-trad-simp.pdf",
@@ -682,7 +682,7 @@ test("searchLiterature keyword mode verifies a traditional query against a simpl
     entries: [
       {
         docKey,
-        itemKey: "ITEMTS",
+        itemKey: "ITEMTS00",
         title: "开发新疆研究",
         authors: ["A"],
         filePath: "/tmp/cjk-trad-simp.pdf",
@@ -721,7 +721,7 @@ test("searchLiterature keyword mode verifies a traditional query against a simpl
   );
 
   assert.equal(result.results.length, 1);
-  assert.equal(result.results[0]!.itemKey, "ITEMTS");
+  assert.equal(result.results[0]!.itemKey, "ITEMTS00");
   assert.match(result.results[0]!.passage, /开发新疆/u);
 });
 
@@ -837,7 +837,7 @@ test("searchLiterature keeps AND/NEAR inside a quoted literal phrase for passage
 
   writeManifest(manifestPath, {
     docKey,
-    itemKey: "ITEMAND",
+    itemKey: "ITEMAND0",
     title: "Contrast Study",
     authors: ["A"],
     filePath: "/tmp/quoted-and.pdf",
@@ -874,7 +874,7 @@ test("searchLiterature keeps AND/NEAR inside a quoted literal phrase for passage
     entries: [
       {
         docKey,
-        itemKey: "ITEMAND",
+        itemKey: "ITEMAND0",
         title: "Contrast Study",
         authors: ["A"],
         filePath: "/tmp/quoted-and.pdf",
@@ -929,7 +929,7 @@ test("searchLiterature does not rebuild the keyword index when empty results com
 
   writeManifest(manifestPath, {
     docKey,
-    itemKey: "ITEMNR",
+    itemKey: "ITEMNR00",
     title: "Populated",
     authors: ["A"],
     filePath: "/tmp/no-rebuild.pdf",
@@ -955,7 +955,7 @@ test("searchLiterature does not rebuild the keyword index when empty results com
     entries: [
       {
         docKey,
-        itemKey: "ITEMNR",
+        itemKey: "ITEMNR00",
         title: "Populated",
         authors: ["A"],
         filePath: "/tmp/no-rebuild.pdf",
@@ -1010,7 +1010,7 @@ test("searchWithinDocuments returns passages from the selected attachment", () =
 
   writeManifest(manifestPath, {
     docKey,
-    itemKey: "ITEMS",
+    itemKey: "ITEMS000",
     citationKey: "lee2024searchin",
     title: "Search In",
     authors: ["A"],
@@ -1059,7 +1059,7 @@ test("searchWithinDocuments returns passages from the selected attachment", () =
     entries: [
       {
         docKey,
-        itemKey: "ITEMS",
+        itemKey: "ITEMS000",
         citationKey: "lee2024searchin",
         title: "Search In",
         authors: ["A"],
@@ -1080,7 +1080,7 @@ test("searchWithinDocuments returns passages from the selected attachment", () =
 
   const result = searchWithinDocuments(
     "dangwei shuji",
-    { itemKey: "ITEMS" },
+    { key: "ITEMS000" },
     10,
     {
       bibliographyJsonPath: join(root, "bibliography.json"),
@@ -1090,7 +1090,7 @@ test("searchWithinDocuments returns passages from the selected attachment", () =
   );
 
   assert.equal(result.results.length > 0, true);
-  assert.equal(result.results[0]!.itemKey, "ITEMS");
+  assert.equal(result.results[0]!.itemKey, "ITEMS000");
   assert.match(result.results[0]!.passage, /dangwei shuji/i);
   assert.equal(result.results[0]!.blockStart, 1);
   assert.equal(result.results[0]!.blockEnd, 1);
@@ -1111,7 +1111,7 @@ test("searchWithinDocuments searches across multiple attachments for the same ke
 
   writeManifest(manifestOnePath, {
     docKey: docOne,
-    itemKey: "ITEMS",
+    itemKey: "ITEMS000",
     citationKey: "lee2024multi-search",
     title: "Doc One",
     authors: ["A"],
@@ -1133,7 +1133,7 @@ test("searchWithinDocuments searches across multiple attachments for the same ke
   });
   writeManifest(manifestTwoPath, {
     docKey: docTwo,
-    itemKey: "ITEMS",
+    itemKey: "ITEMS000",
     citationKey: "lee2024multi-search",
     title: "Doc Two",
     authors: ["B"],
@@ -1160,7 +1160,7 @@ test("searchWithinDocuments searches across multiple attachments for the same ke
     entries: [
       {
         docKey: docOne,
-        itemKey: "ITEMS",
+        itemKey: "ITEMS000",
         citationKey: "lee2024multi-search",
         title: "Doc One",
         authors: ["A"],
@@ -1178,7 +1178,7 @@ test("searchWithinDocuments searches across multiple attachments for the same ke
       },
       {
         docKey: docTwo,
-        itemKey: "ITEMS",
+        itemKey: "ITEMS000",
         citationKey: "lee2024multi-search",
         title: "Doc Two",
         authors: ["B"],
@@ -1199,7 +1199,7 @@ test("searchWithinDocuments searches across multiple attachments for the same ke
 
   const result = searchWithinDocuments(
     "unique paragraph",
-    { itemKey: "ITEMS" },
+    { key: "ITEMS000" },
     10,
     {
       bibliographyJsonPath: join(root, "bibliography.json"),
@@ -1233,7 +1233,7 @@ test("getDocumentBlocks merges multi-attachment itemKey and expandDocument uses 
 
   writeManifest(manifestOnePath, {
     docKey: docOne,
-    itemKey: "ITEM1",
+    itemKey: "ITEM1000",
     citationKey: "smith2024one",
     title: "Doc One",
     authors: ["A"],
@@ -1277,7 +1277,7 @@ test("getDocumentBlocks merges multi-attachment itemKey and expandDocument uses 
   });
   writeManifest(manifestTwoPath, {
     docKey: docTwo,
-    itemKey: "ITEM1",
+    itemKey: "ITEM1000",
     citationKey: "smith2024two",
     title: "Doc Two",
     authors: ["A"],
@@ -1292,7 +1292,7 @@ test("getDocumentBlocks merges multi-attachment itemKey and expandDocument uses 
     entries: [
       {
         docKey: docOne,
-        itemKey: "ITEM1",
+        itemKey: "ITEM1000",
         citationKey: "smith2024one",
         title: "Doc One",
         authors: ["A"],
@@ -1310,7 +1310,7 @@ test("getDocumentBlocks merges multi-attachment itemKey and expandDocument uses 
       },
       {
         docKey: docTwo,
-        itemKey: "ITEM1",
+        itemKey: "ITEM1000",
         citationKey: "smith2024two",
         title: "Doc Two",
         authors: ["A"],
@@ -1331,7 +1331,7 @@ test("getDocumentBlocks merges multi-attachment itemKey and expandDocument uses 
 
   const blocks = getDocumentBlocks(
     {
-      itemKey: "ITEM1",
+      key: "ITEM1000",
       offsetBlock: 0,
       limitBlocks: 20,
     },
@@ -1352,7 +1352,7 @@ test("getDocumentBlocks merges multi-attachment itemKey and expandDocument uses 
 
   const expanded = expandDocument(
     {
-      itemKey: "ITEM1",
+      key: "ITEM1000",
       blockStart: 1,
       blockEnd: 1,
       radius: 1,
@@ -1383,7 +1383,7 @@ test("expandDocument resolves a unique attachment by itemKey", () => {
 
   writeManifest(manifestPath, {
     docKey,
-    itemKey: "ITEM5",
+    itemKey: "ITEM5000",
     citationKey: "lee2024aging",
     title: "Doc Five",
     authors: ["A"],
@@ -1421,7 +1421,7 @@ test("expandDocument resolves a unique attachment by itemKey", () => {
     entries: [
       {
         docKey,
-        itemKey: "ITEM5",
+        itemKey: "ITEM5000",
         citationKey: "lee2024aging",
         title: "Doc Five",
         authors: ["A"],
@@ -1442,7 +1442,7 @@ test("expandDocument resolves a unique attachment by itemKey", () => {
 
   const expanded = expandDocument(
     {
-      itemKey: "ITEM5",
+      key: "ITEM5000",
       blockStart: 1,
       blockEnd: 1,
       radius: 1,
@@ -1454,101 +1454,11 @@ test("expandDocument resolves a unique attachment by itemKey", () => {
     },
   );
 
-  assert.equal(expanded.itemKey, "ITEM5");
+  assert.equal(expanded.itemKey, "ITEM5000");
   assert.deepEqual(expanded.files, ["/tmp/doc-five.pdf"]);
   assert.equal(expanded.contextStart, 0);
   assert.equal(expanded.contextEnd, 1);
   assert.equal(expanded.passage, "Second block.");
-});
-
-test("getDocumentBlocks resolves a unique attachment by citationKey", () => {
-  const root = mkdtempSync(join(tmpdir(), "zotagent-blocks-citation-key-"));
-  const dataDir = join(root, "data");
-  const indexDir = join(dataDir, "index");
-  const manifestsDir = join(dataDir, "manifests");
-  mkdirSync(indexDir, { recursive: true });
-  mkdirSync(manifestsDir, { recursive: true });
-
-  const docKey = "6".repeat(40);
-  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
-
-  writeManifest(manifestPath, {
-    docKey,
-    itemKey: "ITEM6",
-    citationKey: "wang2024soe",
-    title: "Doc Six",
-    authors: ["B"],
-    filePath: "/tmp/doc-six.pdf",
-    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
-    blocks: [
-      {
-        blockIndex: 0,
-        blockType: "paragraph",
-        sectionPath: ["Body"],
-        text: "First block.",
-        charStart: 0,
-        charEnd: 12,
-        lineStart: 1,
-        lineEnd: 1,
-        isReferenceLike: false,
-      },
-      {
-        blockIndex: 1,
-        blockType: "paragraph",
-        sectionPath: ["Body"],
-        text: "Second block.",
-        charStart: 14,
-        charEnd: 27,
-        lineStart: 3,
-        lineEnd: 3,
-        isReferenceLike: false,
-      },
-    ],
-  });
-
-  writeCatalogFile(join(indexDir, "catalog.json"), {
-    version: 1,
-    generatedAt: new Date().toISOString(),
-    entries: [
-      {
-        docKey,
-        itemKey: "ITEM6",
-        citationKey: "wang2024soe",
-        title: "Doc Six",
-        authors: ["B"],
-        filePath: "/tmp/doc-six.pdf",
-        fileExt: "pdf",
-        exists: true,
-        supported: true,
-        extractStatus: "ready",
-        size: 1,
-        mtimeMs: 1,
-        sourceHash: "hash6",
-        lastIndexedAt: new Date().toISOString(),
-        normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
-        manifestPath,
-      },
-    ],
-  });
-
-  const blocks = getDocumentBlocks(
-    {
-      citationKey: "wang2024soe",
-      offsetBlock: 1,
-      limitBlocks: 1,
-    },
-    {
-      bibliographyJsonPath: join(root, "bibliography.json"),
-      attachmentsRoot: root,
-      dataDir,
-    },
-  );
-
-  assert.equal(blocks.itemKey, "ITEM6");
-  assert.equal(blocks.citationKey, "wang2024soe");
-  assert.deepEqual(blocks.files, ["/tmp/doc-six.pdf"]);
-  assert.equal(blocks.blocks.length, 1);
-  assert.equal(blocks.blocks[0]!.text, "Second block.");
 });
 
 test("fullTextDocument keeps boilerplate and references by default", () => {
@@ -1585,7 +1495,7 @@ test("fullTextDocument keeps boilerplate and references by default", () => {
 
   writeManifest(manifestPath, {
     docKey,
-    itemKey: "ITEMA",
+    itemKey: "ITEMA000",
     citationKey: "lee2024agent",
     title: "Agent Readable Doc",
     authors: ["C"],
@@ -1667,7 +1577,7 @@ test("fullTextDocument keeps boilerplate and references by default", () => {
     entries: [
       {
         docKey,
-        itemKey: "ITEMA",
+        itemKey: "ITEMA000",
         citationKey: "lee2024agent",
         title: "Agent Readable Doc",
         authors: ["C"],
@@ -1688,7 +1598,7 @@ test("fullTextDocument keeps boilerplate and references by default", () => {
 
   const fullText = fullTextDocument(
     {
-      citationKey: "lee2024agent",
+      key: "ITEMA000",
     },
     {
       bibliographyJsonPath: join(root, "bibliography.json"),
@@ -1697,7 +1607,7 @@ test("fullTextDocument keeps boilerplate and references by default", () => {
     },
   );
 
-  assert.equal(fullText.itemKey, "ITEMA");
+  assert.equal(fullText.itemKey, "ITEMA000");
   assert.equal(fullText.citationKey, "lee2024agent");
   assert.equal(fullText.format, "markdown");
   assert.equal(fullText.source, "normalized");
@@ -1724,7 +1634,7 @@ test("fullTextDocument strips boilerplate when clean is enabled", () => {
 
   writeManifest(manifestPath, {
     docKey,
-    itemKey: "ITEMC",
+    itemKey: "ITEMC000",
     citationKey: "lee2024clean",
     title: "Clean Doc",
     authors: ["C"],
@@ -1762,7 +1672,7 @@ test("fullTextDocument strips boilerplate when clean is enabled", () => {
     entries: [
       {
         docKey,
-        itemKey: "ITEMC",
+        itemKey: "ITEMC000",
         citationKey: "lee2024clean",
         title: "Clean Doc",
         authors: ["C"],
@@ -1783,7 +1693,7 @@ test("fullTextDocument strips boilerplate when clean is enabled", () => {
 
   const fullText = fullTextDocument(
     {
-      citationKey: "lee2024clean",
+      key: "ITEMC000",
       clean: true,
     },
     {
@@ -1799,7 +1709,7 @@ test("fullTextDocument strips boilerplate when clean is enabled", () => {
   assert.doesNotMatch(fullText.content, /To cite this article/i);
 });
 
-test("fullTextDocument merges multiple attachments under one itemKey or citationKey", () => {
+test("fullTextDocument merges multiple attachments for one itemKey", () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-fulltext-multi-"));
   const dataDir = join(root, "data");
   const indexDir = join(dataDir, "index");
@@ -1814,7 +1724,7 @@ test("fullTextDocument merges multiple attachments under one itemKey or citation
 
   writeManifest(manifestOnePath, {
     docKey: docOne,
-    itemKey: "ITEMM",
+    itemKey: "ITEMM000",
     citationKey: "lee2024multi",
     title: "Doc One",
     authors: ["A"],
@@ -1836,7 +1746,7 @@ test("fullTextDocument merges multiple attachments under one itemKey or citation
   });
   writeManifest(manifestTwoPath, {
     docKey: docTwo,
-    itemKey: "ITEMM",
+    itemKey: "ITEMM000",
     citationKey: "lee2024multi",
     title: "Doc Two",
     authors: ["B"],
@@ -1863,7 +1773,7 @@ test("fullTextDocument merges multiple attachments under one itemKey or citation
     entries: [
       {
         docKey: docOne,
-        itemKey: "ITEMM",
+        itemKey: "ITEMM000",
         citationKey: "lee2024multi",
         title: "Doc One",
         authors: ["A"],
@@ -1881,7 +1791,7 @@ test("fullTextDocument merges multiple attachments under one itemKey or citation
       },
       {
         docKey: docTwo,
-        itemKey: "ITEMM",
+        itemKey: "ITEMM000",
         citationKey: "lee2024multi",
         title: "Doc Two",
         authors: ["B"],
@@ -1900,19 +1810,9 @@ test("fullTextDocument merges multiple attachments under one itemKey or citation
     ],
   });
 
-  const mergedByItemKey = fullTextDocument(
+  const merged = fullTextDocument(
     {
-      itemKey: "ITEMM",
-    },
-    {
-      bibliographyJsonPath: join(root, "bibliography.json"),
-      attachmentsRoot: root,
-      dataDir,
-    },
-  );
-  const mergedByCitationKey = fullTextDocument(
-    {
-      citationKey: "lee2024multi",
+      key: "ITEMM000",
     },
     {
       bibliographyJsonPath: join(root, "bibliography.json"),
@@ -1921,26 +1821,112 @@ test("fullTextDocument merges multiple attachments under one itemKey or citation
     },
   );
 
-  assert.deepEqual(mergedByItemKey.files, ["/tmp/multi-one.pdf", "/tmp/multi-two.pdf"]);
-  assert.deepEqual(mergedByCitationKey.files, ["/tmp/multi-one.pdf", "/tmp/multi-two.pdf"]);
-  assert.match(mergedByItemKey.content, /Unique paragraph one\./);
-  assert.match(mergedByItemKey.content, /Unique paragraph two\./);
-  assert.match(mergedByItemKey.content, /# Attachment: multi-two\.pdf/);
+  assert.deepEqual(merged.files, ["/tmp/multi-one.pdf", "/tmp/multi-two.pdf"]);
+  assert.equal(merged.citationKey, "lee2024multi");
+  assert.match(merged.content, /Unique paragraph one\./);
+  assert.match(merged.content, /Unique paragraph two\./);
+  assert.match(merged.content, /# Attachment: multi-two\.pdf/);
+
+  // Same fixture, resolving by citationKey via the --key auto-dispatch.
+  const mergedByCitationKey = fullTextDocument(
+    { key: "lee2024multi" },
+    {
+      bibliographyJsonPath: join(root, "bibliography.json"),
+      attachmentsRoot: root,
+      dataDir,
+    },
+  );
+  assert.equal(mergedByCitationKey.itemKey, "ITEMM000");
+  assert.deepEqual(mergedByCitationKey.files, merged.files);
 });
 
-test("expandDocument rejects passing both itemKey and citationKey", () => {
+test("resolveReadyEntries rejects citationKey collisions across different itemKeys", () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-citationkey-collision-"));
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docOne = "e".repeat(40);
+  const docTwo = "f".repeat(40);
+  const manifestOnePath = join(manifestsDir, `${docOne}${MANIFEST_EXT}`);
+  const manifestTwoPath = join(manifestsDir, `${docTwo}${MANIFEST_EXT}`);
+
+  writeManifest(manifestOnePath, {
+    docKey: docOne,
+    itemKey: "ITEMX000",
+    citationKey: "dup2024",
+    title: "Doc X",
+    authors: ["A"],
+    filePath: "/tmp/dup-x.pdf",
+    normalizedPath: join(dataDir, "normalized", `${docOne}.md`),
+    blocks: [],
+  });
+  writeManifest(manifestTwoPath, {
+    docKey: docTwo,
+    itemKey: "ITEMY000",
+    citationKey: "dup2024",
+    title: "Doc Y",
+    authors: ["B"],
+    filePath: "/tmp/dup-y.pdf",
+    normalizedPath: join(dataDir, "normalized", `${docTwo}.md`),
+    blocks: [],
+  });
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [
+      {
+        docKey: docOne,
+        itemKey: "ITEMX000",
+        citationKey: "dup2024",
+        title: "Doc X",
+        authors: ["A"],
+        filePath: "/tmp/dup-x.pdf",
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: 1,
+        mtimeMs: 1,
+        sourceHash: "hash-dup-x",
+        lastIndexedAt: new Date().toISOString(),
+        normalizedPath: join(dataDir, "normalized", `${docOne}.md`),
+        manifestPath: manifestOnePath,
+      },
+      {
+        docKey: docTwo,
+        itemKey: "ITEMY000",
+        citationKey: "dup2024",
+        title: "Doc Y",
+        authors: ["B"],
+        filePath: "/tmp/dup-y.pdf",
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: 1,
+        mtimeMs: 1,
+        sourceHash: "hash-dup-y",
+        lastIndexedAt: new Date().toISOString(),
+        normalizedPath: join(dataDir, "normalized", `${docTwo}.md`),
+        manifestPath: manifestTwoPath,
+      },
+    ],
+  });
+
   assert.throws(
     () =>
-      expandDocument(
+      fullTextDocument(
+        { key: "dup2024" },
         {
-          itemKey: "ITEM1",
-          citationKey: "smith2024doc",
-          blockStart: 0,
-          blockEnd: 0,
-          radius: 0,
+          bibliographyJsonPath: join(root, "bibliography.json"),
+          attachmentsRoot: root,
+          dataDir,
         },
-        {},
       ),
-    /Provide exactly one of --item-key <key> or --citation-key <key>\./,
+    /Multiple items share citationKey "dup2024": itemKeys = ITEMX000, ITEMY000/,
   );
 });
