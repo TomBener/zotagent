@@ -75,6 +75,7 @@ export interface QmdClient {
   listContexts(): Promise<Array<{ collection: string; path: string; context: string }>>;
   addContext(collectionName: string, pathPrefix: string, contextText: string): Promise<boolean>;
   removeContext(collectionName: string, pathPrefix: string): Promise<boolean>;
+  clearEmbeddings(): Promise<void>;
   // Reclaim rows left behind when documents disappear from the filesystem
   // scan (qmd.update flags them active=0 but never deletes) and the vectors
   // that were attached to those now-dead content hashes. qmd.update calls
@@ -117,6 +118,9 @@ function wrapStore(store: QMDStore): QmdClient {
     addContext: (collectionName, pathPrefix, contextText) =>
       store.addContext(collectionName, pathPrefix, contextText),
     removeContext: (collectionName, pathPrefix) => store.removeContext(collectionName, pathPrefix),
+    clearEmbeddings: async () => {
+      store.internal.clearAllEmbeddings();
+    },
     cleanupOrphans: async () => ({
       deletedInactiveDocuments: store.internal.deleteInactiveDocuments(),
       cleanedOrphanedContent: store.internal.cleanupOrphanedContent(),

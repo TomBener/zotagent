@@ -31,7 +31,6 @@ import {
   ensureDir,
   ensureParentDir,
   exists,
-  readManifestFile,
   stemForFile,
   tryReadManifestFile,
   writeManifestFile,
@@ -566,20 +565,30 @@ function assertNonEmptyExtractedOutput(
   throw new Error(`Extracted output was empty for ${filePath}`);
 }
 
+function readReusableArtifactManifest(
+  identity: Pick<AttachmentCatalogEntry, "docKey" | "itemKey">,
+  normalizedPath: string | undefined,
+  manifestPath: string | undefined,
+): AttachmentManifest | undefined {
+  if (!normalizedPath || !manifestPath) return undefined;
+  if (!exists(normalizedPath) || !exists(manifestPath)) return undefined;
+  if (!hasReusableNormalizedOutput(normalizedPath)) return undefined;
+
+  const manifest = tryReadManifestFile(manifestPath);
+  if (!manifest) return undefined;
+  if (manifest.blocks.length === 0) return undefined;
+
+  return manifest.docKey === identity.docKey && manifest.itemKey === identity.itemKey
+    ? manifest
+    : undefined;
+}
+
 function hasReusableArtifacts(
   attachment: AttachmentCatalogEntry,
   normalizedPath: string | undefined,
   manifestPath: string | undefined,
 ): normalizedPath is string {
-  if (!normalizedPath || !manifestPath) return false;
-  if (!exists(normalizedPath) || !exists(manifestPath)) return false;
-  if (!hasReusableNormalizedOutput(normalizedPath)) return false;
-
-  const manifest = tryReadManifestFile(manifestPath);
-  if (!manifest) return false;
-  if (manifest.blocks.length === 0) return false;
-
-  return manifest.docKey === attachment.docKey && manifest.itemKey === attachment.itemKey;
+  return readReusableArtifactManifest(attachment, normalizedPath, manifestPath) !== undefined;
 }
 
 function isLikelyBookAttachment(attachment: AttachmentCatalogEntry): boolean {
@@ -961,24 +970,31 @@ export function buildContext(entry: CatalogEntry): string {
   return parts.join("\n");
 }
 
+type IndexerState = {
+  indexedQmdEmbedModel: string;
+  indexerSignature: string;
+};
+
 function writeProgressCatalog(
   path: string,
   entries: CatalogEntry[],
-  indexerState: { indexedQmdEmbedModel: string; indexerSignature: string },
+  indexerState?: IndexerState,
 ): void {
-  // Persist the active embed model and indexer signature on every progress
-  // write. Without them, an interrupted sync leaves the catalog without these
-  // fields, which makes the next run compare `undefined` against the current
-  // model — triggering a force re-embed that wipes the partial work done so
-  // far. `indexesCompletedAt` is deliberately omitted: the short-circuit path
-  // still requires it, so a mid-flight write cannot be mistaken for a
-  // completed sync.
+  // Persist the active embed model and indexer signature on progress writes
+  // when they are known to match the qmd DB. During a model/signature change,
+  // callers keep the old state here until old vectors have been cleared.
+  // `indexesCompletedAt` is deliberately omitted: the short-circuit path still
+  // requires it, so a mid-flight write cannot be mistaken for a completed sync.
   const snapshot: CatalogFile = {
     version: 1,
     generatedAt: new Date().toISOString(),
     entries: [...entries].sort((a, b) => a.filePath.localeCompare(b.filePath)),
-    indexedQmdEmbedModel: indexerState.indexedQmdEmbedModel,
-    indexerSignature: indexerState.indexerSignature,
+    ...(indexerState
+      ? {
+          indexedQmdEmbedModel: indexerState.indexedQmdEmbedModel,
+          indexerSignature: indexerState.indexerSignature,
+        }
+      : {}),
   };
   writeCatalogFile(path, snapshot);
 }
@@ -1170,22 +1186,43 @@ export async function runSync(
     // docKey = sha1(relativePath)) without changing size or mtime; matching
     // on that triple lets us migrate the cached artifacts to the new docKey
     // instead of re-extracting and re-embedding identical content.
-    const renameCandidateIndex = new Map<string, CatalogEntry>();
+    const renameCandidateIndex = new Map<string, CatalogEntry | null>();
     for (const prev of previousCatalog.entries) {
       if (prev.extractStatus !== "ready") continue;
       if (prev.size === null || prev.mtimeMs === null) continue;
       if (bibliographyReferencedPaths.has(prev.filePath)) continue;
       const key = `${prev.itemKey}\u0000${prev.size}\u0000${prev.mtimeMs}`;
-      // First-wins. Duplicates (rare) would be ambiguous — fall back to
-      // re-extract for the extras rather than migrate the wrong artifacts.
-      if (!renameCandidateIndex.has(key)) renameCandidateIndex.set(key, prev);
+      if (renameCandidateIndex.has(key)) {
+        renameCandidateIndex.set(key, null);
+      } else {
+        renameCandidateIndex.set(key, prev);
+      }
     }
     const currentQmdEmbedModel = resolveQmdEmbedModel(config);
     const currentIndexerSignature = buildIndexerSignature(currentQmdEmbedModel);
-    const indexerState = {
+    const currentIndexerState: IndexerState = {
       indexedQmdEmbedModel: currentQmdEmbedModel,
       indexerSignature: currentIndexerSignature,
     };
+    const previousIndexerState: IndexerState | undefined =
+      previousCatalog.indexedQmdEmbedModel && previousCatalog.indexerSignature
+        ? {
+            indexedQmdEmbedModel: previousCatalog.indexedQmdEmbedModel,
+            indexerSignature: previousCatalog.indexerSignature,
+          }
+        : undefined;
+    const qmdEmbedModelChanged = previousCatalog.indexedQmdEmbedModel !== currentQmdEmbedModel;
+    const indexerSignatureChanged = previousCatalog.indexerSignature !== currentIndexerSignature;
+    const qmdIndexerStateChanged = qmdEmbedModelChanged || indexerSignatureChanged;
+    const previousHadReadyEntries = previousCatalog.entries.some(
+      (entry) => entry.extractStatus === "ready",
+    );
+    const qmdMayContainExistingEmbeddings =
+      previousHadReadyEntries || previousIndexerState !== undefined;
+    let progressIndexerState: IndexerState | undefined =
+      qmdIndexerStateChanged && qmdMayContainExistingEmbeddings
+        ? previousIndexerState
+        : currentIndexerState;
     const nextEntries: CatalogEntry[] = [];
     const changedAttachments: AttachmentCatalogEntry[] = [];
     const staleDocKeys = new Set(previousCatalog.entries.map((entry) => entry.docKey));
@@ -1304,23 +1341,38 @@ export async function runSync(
       if (previous === undefined && !fallbackArtifactsReusable) {
         const renameKey = `${attachment.itemKey}\u0000${current.size}\u0000${currentMtimeMs}`;
         const renameFromPrev = renameCandidateIndex.get(renameKey);
+        const renameFromNormalizedPath =
+          renameFromPrev !== undefined && renameFromPrev !== null
+            ? renameFromPrev.normalizedPath
+            : undefined;
+        const renameFromManifestPath =
+          renameFromPrev !== undefined && renameFromPrev !== null
+            ? renameFromPrev.manifestPath
+            : undefined;
+        const oldManifest =
+          renameFromPrev === undefined || renameFromPrev === null
+            ? undefined
+            : readReusableArtifactManifest(
+                renameFromPrev,
+                renameFromNormalizedPath,
+                renameFromManifestPath,
+              );
         if (
           renameFromPrev !== undefined &&
-          renameFromPrev.normalizedPath &&
-          renameFromPrev.manifestPath &&
-          exists(renameFromPrev.normalizedPath) &&
-          exists(renameFromPrev.manifestPath)
+          renameFromPrev !== null &&
+          oldManifest &&
+          renameFromNormalizedPath &&
+          renameFromManifestPath
         ) {
           try {
-            const oldManifest = readManifestFile(renameFromPrev.manifestPath);
-            renameSync(renameFromPrev.normalizedPath, fallbackNormalizedPath);
+            renameSync(renameFromNormalizedPath, fallbackNormalizedPath);
             try {
-              renameSync(renameFromPrev.manifestPath, fallbackManifestPath);
+              renameSync(renameFromManifestPath, fallbackManifestPath);
             } catch (manifestErr) {
               // Roll back the normalized rename so we never end up with a
               // half-migrated pair on disk.
               try {
-                renameSync(fallbackNormalizedPath, renameFromPrev.normalizedPath);
+                renameSync(fallbackNormalizedPath, renameFromNormalizedPath);
               } catch {
                 // best effort — original callsite will still throw
               }
@@ -1330,10 +1382,16 @@ export async function runSync(
             // match the new identity. hasReusableArtifacts checks docKey on
             // the next run and would otherwise force a re-extract.
             writeManifestFile(fallbackManifestPath, {
-              ...oldManifest,
               docKey: attachment.docKey,
+              itemKey: attachment.itemKey,
+              ...(attachment.citationKey ? { citationKey: attachment.citationKey } : {}),
+              title: attachment.title,
+              authors: attachment.authors,
+              ...(attachment.year ? { year: attachment.year } : {}),
+              ...(attachment.abstract ? { abstract: attachment.abstract } : {}),
               filePath: attachment.filePath,
               normalizedPath: fallbackNormalizedPath,
+              blocks: oldManifest.blocks,
             });
             nextEntries.push(
               toCatalogEntry(attachment, {
@@ -1411,7 +1469,7 @@ export async function runSync(
       }
     }
     if (nonPdfAttachments.length > 0) {
-      writeProgressCatalog(paths.catalogPath, nextEntries, indexerState);
+      writeProgressCatalog(paths.catalogPath, nextEntries, progressIndexerState);
     }
 
     async function recordReadyAttachment(
@@ -1580,7 +1638,7 @@ export async function runSync(
             skippedAttachments: stats.skippedAttachments,
             note: "finished individual retries",
           });
-          writeProgressCatalog(paths.catalogPath, nextEntries, indexerState);
+          writeProgressCatalog(paths.catalogPath, nextEntries, progressIndexerState);
           continue;
         }
 
@@ -1619,7 +1677,7 @@ export async function runSync(
         skippedAttachments: stats.skippedAttachments,
         note: "batch finished",
       });
-      writeProgressCatalog(paths.catalogPath, nextEntries, indexerState);
+      writeProgressCatalog(paths.catalogPath, nextEntries, progressIndexerState);
     }
 
     for (const docKey of staleDocKeys) {
@@ -1650,11 +1708,10 @@ export async function runSync(
       generatedAt: new Date().toISOString(),
       entries: nextEntries,
     };
-    writeProgressCatalog(paths.catalogPath, nextEntries, indexerState);
+    writeProgressCatalog(paths.catalogPath, nextEntries, progressIndexerState);
 
     const readyEntries = nextEntries.filter((entry) => entry.extractStatus === "ready");
-    const qmdEmbedModelChanged = previousCatalog.indexedQmdEmbedModel !== currentQmdEmbedModel;
-    const indexerSignatureChanged = previousCatalog.indexerSignature !== currentIndexerSignature;
+    const qmdResetNeeded = qmdIndexerStateChanged && qmdMayContainExistingEmbeddings;
 
     // Short-circuit: when nothing has changed since the last *completed* sync,
     // both index rebuild passes are provably no-ops. `indexesCompletedAt` is
@@ -1693,10 +1750,16 @@ export async function runSync(
         logger.info("Updating search index...", { console: true });
         await qmd.update();
         await syncQmdContexts(qmd, readyEntries);
-        if (readyEntries.length > 0) {
-          await embedQmdUntilSettled(qmd, logger, {
-            force: qmdEmbedModelChanged || indexerSignatureChanged,
+        if (qmdResetNeeded) {
+          logger.info("Clearing existing qmd embeddings after indexer state change.", {
+            console: true,
           });
+          await qmd.clearEmbeddings();
+          progressIndexerState = currentIndexerState;
+          writeProgressCatalog(paths.catalogPath, nextEntries, progressIndexerState);
+        }
+        if (readyEntries.length > 0) {
+          await embedQmdUntilSettled(qmd, logger);
         }
         // Reap the tombstones and stray vectors qmd.update leaves behind.
         // Without this every removed or content-changed doc leaks vector

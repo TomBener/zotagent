@@ -202,6 +202,7 @@ test("runSync relays SIGINT instead of swallowing it", () => {
         listContexts: async () => [],
         addContext: async () => true,
         removeContext: async () => true,
+        clearEmbeddings: async () => {},
         cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
         close: async () => {},
       });
@@ -272,6 +273,7 @@ test("runSync does not swallow uncaught exceptions", () => {
         listContexts: async () => [],
         addContext: async () => true,
         removeContext: async () => true,
+        clearEmbeddings: async () => {},
         cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
         close: async () => {},
       });
@@ -408,6 +410,7 @@ test("runSync skips unchanged ready pdfs and refreshes qmd contexts", async () =
       calls.removed += 1;
       return true;
     },
+    clearEmbeddings: async () => {},
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     close: async () => {
       calls.closed += 1;
@@ -524,6 +527,7 @@ test("runSync short-circuits both index rebuilds when the catalog is identical t
       },
       addContext: async () => true,
       removeContext: async () => true,
+      clearEmbeddings: async () => {},
       cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
       close: async () => {},
     };
@@ -538,7 +542,6 @@ test("runSync short-circuits both index rebuilds when the catalog is identical t
       },
       search: async () => [],
       isEmpty: async () => true,
-      cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
       close: async () => {},
     };
   };
@@ -643,6 +646,7 @@ test("runSync rebuilds indexes when the qmd embedding model changes since last s
   });
 
   let qmdUpdateCalls = 0;
+  let clearCalls = 0;
   const embedOptions: Array<{ force?: boolean } | undefined> = [];
   const qmdFactory = async () => ({
     search: async () => [],
@@ -655,10 +659,18 @@ test("runSync rebuilds indexes when the qmd embedding model changes since last s
       embedOptions.push(options);
       return {};
     },
-    getStatus: async () => ({ totalDocuments: 1, needsEmbedding: 0, hasVectorIndex: true, collections: [] }),
+    getStatus: async () => ({
+      totalDocuments: 1,
+      needsEmbedding: clearCalls > 0 && embedOptions.length === 0 ? 1 : 0,
+      hasVectorIndex: embedOptions.length > 0,
+      collections: [],
+    }),
     listContexts: async () => [],
     addContext: async () => true,
     removeContext: async () => true,
+    clearEmbeddings: async () => {
+      clearCalls += 1;
+    },
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     close: async () => {},
   });
@@ -674,7 +686,8 @@ test("runSync rebuilds indexes when the qmd embedding model changes since last s
   );
 
   assert.equal(qmdUpdateCalls, 1);
-  assert.deepEqual(embedOptions, [{ force: true }]);
+  assert.equal(clearCalls, 1);
+  assert.deepEqual(embedOptions, [undefined]);
   const persisted = readCatalogFile(join(indexDir, "catalog.json"));
   assert.equal(persisted.indexedQmdEmbedModel, "new-embed-model");
   assert.equal(persisted.indexerSignature, buildIndexerSignature("new-embed-model"));
@@ -753,6 +766,7 @@ test("runSync rebuilds indexes when the indexer signature changes since last syn
   });
 
   let qmdUpdateCalls = 0;
+  let clearCalls = 0;
   const embedOptions: Array<{ force?: boolean } | undefined> = [];
   const qmdFactory = async () => ({
     search: async () => [],
@@ -765,10 +779,18 @@ test("runSync rebuilds indexes when the indexer signature changes since last syn
       embedOptions.push(options);
       return {};
     },
-    getStatus: async () => ({ totalDocuments: 1, needsEmbedding: 0, hasVectorIndex: true, collections: [] }),
+    getStatus: async () => ({
+      totalDocuments: 1,
+      needsEmbedding: clearCalls > 0 && embedOptions.length === 0 ? 1 : 0,
+      hasVectorIndex: embedOptions.length > 0,
+      collections: [],
+    }),
     listContexts: async () => [],
     addContext: async () => true,
     removeContext: async () => true,
+    clearEmbeddings: async () => {
+      clearCalls += 1;
+    },
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     close: async () => {},
   });
@@ -784,10 +806,122 @@ test("runSync rebuilds indexes when the indexer signature changes since last syn
   );
 
   assert.equal(qmdUpdateCalls, 1);
-  assert.deepEqual(embedOptions, [{ force: true }]);
+  assert.equal(clearCalls, 1);
+  assert.deepEqual(embedOptions, [undefined]);
   const persisted = readCatalogFile(join(indexDir, "catalog.json"));
   assert.equal(persisted.indexedQmdEmbedModel, "same-embed-model");
   assert.equal(persisted.indexerSignature, buildIndexerSignature("same-embed-model"));
+});
+
+test("runSync keeps old indexer state in progress catalog until changed qmd embeddings are cleared", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-indexer-progress-"));
+  const attachmentsRoot = join(root, "attachments");
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  const normalizedDir = join(dataDir, "normalized");
+  mkdirSync(join(attachmentsRoot, "papers"), { recursive: true });
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+  mkdirSync(normalizedDir, { recursive: true });
+
+  const pdfPath = join(attachmentsRoot, "papers", "paper.pdf");
+  writeFileSync(pdfPath, "pdf");
+  const pdfStat = statSync(pdfPath);
+  const docKey = sha1("papers/paper.pdf");
+  const normalizedPath = join(normalizedDir, `${docKey}.md`);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
+  writeFileSync(normalizedPath, "Body");
+  writeManifestFile(manifestPath, {
+    docKey,
+    itemKey: "ITEM1",
+    title: "Paper",
+    authors: ["Author One"],
+    filePath: pdfPath,
+    normalizedPath,
+    blocks: [trivialBlock()],
+  });
+
+  const bibliographyPath = join(root, "bibliography.json");
+  writeFileSync(
+    bibliographyPath,
+    JSON.stringify([
+      {
+        id: "cite",
+        title: "Paper",
+        author: [{ family: "One", given: "Author" }],
+        file: pdfPath,
+        "zotero-item-key": "ITEM1",
+      },
+    ]),
+    "utf-8",
+  );
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    indexesCompletedAt: new Date().toISOString(),
+    indexedQmdEmbedModel: "old-embed-model",
+    indexerSignature: buildIndexerSignature("old-embed-model"),
+    entries: [
+      {
+        docKey,
+        itemKey: "ITEM1",
+        citationKey: "cite",
+        title: "Paper",
+        authors: ["One Author"],
+        filePath: pdfPath,
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: pdfStat.size,
+        mtimeMs: Math.trunc(pdfStat.mtimeMs),
+        sourceHash: "existinghash",
+        lastIndexedAt: new Date().toISOString(),
+        normalizedPath,
+        manifestPath,
+      },
+    ],
+  });
+
+  let clearCalls = 0;
+  const qmdFactory = async () => ({
+    search: async () => [],
+    searchLex: async () => [],
+    update: async () => {
+      throw new Error("qmd update interrupted before clear");
+    },
+    embed: async () => ({}),
+    getStatus: async () => ({ totalDocuments: 1, needsEmbedding: 1, hasVectorIndex: true, collections: [] }),
+    listContexts: async () => [],
+    addContext: async () => true,
+    removeContext: async () => true,
+    clearEmbeddings: async () => {
+      clearCalls += 1;
+    },
+    cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
+    close: async () => {},
+  });
+
+  await assert.rejects(
+    runSync(
+      {
+        bibliographyJsonPath: bibliographyPath,
+        attachmentsRoot,
+        dataDir,
+        qmdEmbedModel: "new-embed-model",
+      },
+      qmdFactory,
+    ),
+    /qmd update interrupted before clear/,
+  );
+
+  assert.equal(clearCalls, 0);
+  const persisted = readCatalogFile(join(indexDir, "catalog.json"));
+  assert.equal(persisted.indexedQmdEmbedModel, "old-embed-model");
+  assert.equal(persisted.indexerSignature, buildIndexerSignature("old-embed-model"));
+  assert.equal(persisted.indexesCompletedAt, undefined);
 });
 
 test("runSync does not force re-embed when resuming an interrupted sync with matching indexer state", async () => {
@@ -888,6 +1022,7 @@ test("runSync does not force re-embed when resuming an interrupted sync with mat
     listContexts: async () => [],
     addContext: async () => true,
     removeContext: async () => true,
+    clearEmbeddings: async () => {},
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     close: async () => {},
   });
@@ -1006,6 +1141,7 @@ test("runSync migrates cached artifacts when an attachment is renamed inside att
     listContexts: async () => [],
     addContext: async () => true,
     removeContext: async () => true,
+    clearEmbeddings: async () => {},
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     close: async () => {},
   });
@@ -1055,6 +1191,258 @@ test("runSync migrates cached artifacts when an attachment is renamed inside att
   assert.match(logBody, /migrated artifacts from renamed attachment/);
 });
 
+test("runSync re-extracts renamed attachments when cached artifacts are not reusable", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-rename-bad-cache-"));
+  const attachmentsRoot = join(root, "attachments");
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  const normalizedDir = join(dataDir, "normalized");
+  mkdirSync(join(attachmentsRoot, "papers"), { recursive: true });
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+  mkdirSync(normalizedDir, { recursive: true });
+
+  const oldRel = "papers/old.pdf";
+  const newRel = "papers/renamed.pdf";
+  const oldDocKey = sha1(oldRel);
+  const newDocKey = sha1(newRel);
+  const newPath = join(attachmentsRoot, newRel);
+  writeFileSync(newPath, "pdf-body");
+  const frozenMtimeMs = Date.UTC(2025, 5, 1);
+  utimesSync(newPath, new Date(frozenMtimeMs), new Date(frozenMtimeMs));
+  const stat = statSync(newPath);
+
+  const oldNormalizedPath = join(normalizedDir, `${oldDocKey}.md`);
+  const oldManifestPath = join(manifestsDir, `${oldDocKey}${MANIFEST_EXT}`);
+  writeFileSync(oldNormalizedPath, "Body from a corrupt cache");
+  writeManifestFile(oldManifestPath, {
+    docKey: oldDocKey,
+    itemKey: "ITEM1",
+    title: "Paper",
+    authors: ["A Author"],
+    filePath: join(attachmentsRoot, oldRel),
+    normalizedPath: oldNormalizedPath,
+    blocks: [],
+  });
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    indexesCompletedAt: new Date().toISOString(),
+    indexedQmdEmbedModel: "qmd-default",
+    indexerSignature: buildIndexerSignature("qmd-default"),
+    entries: [
+      {
+        docKey: oldDocKey,
+        itemKey: "ITEM1",
+        citationKey: "cite",
+        title: "Paper",
+        authors: ["A Author"],
+        filePath: join(attachmentsRoot, oldRel),
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: stat.size,
+        mtimeMs: Math.trunc(stat.mtimeMs),
+        sourceHash: "pre-existing-source-hash",
+        lastIndexedAt: "2025-06-01T00:00:00.000Z",
+        normalizedPath: oldNormalizedPath,
+        manifestPath: oldManifestPath,
+      },
+    ],
+  });
+
+  const bibliographyPath = join(root, "bibliography.json");
+  writeFileSync(
+    bibliographyPath,
+    JSON.stringify([
+      {
+        id: "cite",
+        title: "Paper",
+        author: [{ family: "A", given: "Author" }],
+        file: newPath,
+        "zotero-item-key": "ITEM1",
+      },
+    ]),
+    "utf-8",
+  );
+
+  const qmdFactory = async () => ({
+    search: async () => [],
+    searchLex: async () => [],
+    update: async () => ({}),
+    embed: async () => ({}),
+    getStatus: async () => ({ totalDocuments: 1, needsEmbedding: 0, hasVectorIndex: true, collections: [] }),
+    listContexts: async () => [],
+    addContext: async () => true,
+    removeContext: async () => true,
+    clearEmbeddings: async () => {},
+    cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
+    close: async () => {},
+  });
+  const extractCalls: unknown[] = [];
+  const extractBatchFn = async (batch: Array<{ docKey: string; filePath: string; itemKey: string }>) => {
+    extractCalls.push(batch);
+    const attachment = batch[0]!;
+    const normalizedPath = join(normalizedDir, `${attachment.docKey}.md`);
+    const manifestPath = join(manifestsDir, `${attachment.docKey}${MANIFEST_EXT}`);
+    writeFileSync(normalizedPath, "Fresh extraction");
+    writeManifestFile(manifestPath, {
+      docKey: attachment.docKey,
+      itemKey: attachment.itemKey,
+      title: "Paper",
+      authors: ["A Author"],
+      filePath: attachment.filePath,
+      normalizedPath,
+      blocks: [trivialBlock()],
+    });
+    return new Map([[attachment.docKey, { normalizedPath, manifestPath }]]);
+  };
+
+  await runSync(
+    { bibliographyJsonPath: bibliographyPath, attachmentsRoot, dataDir },
+    qmdFactory,
+    undefined,
+    extractBatchFn as never,
+    () => {},
+  );
+
+  assert.equal(extractCalls.length, 1);
+  assert.ok(existsSync(oldNormalizedPath), "bad old normalized cache should not be moved");
+  assert.ok(existsSync(oldManifestPath), "bad old manifest cache should not be moved");
+  assert.equal(readFileSync(join(normalizedDir, `${newDocKey}.md`), "utf-8"), "Fresh extraction");
+});
+
+test("runSync re-extracts renamed attachments when rename candidates are ambiguous", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-rename-ambiguous-"));
+  const attachmentsRoot = join(root, "attachments");
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  const normalizedDir = join(dataDir, "normalized");
+  mkdirSync(join(attachmentsRoot, "papers"), { recursive: true });
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+  mkdirSync(normalizedDir, { recursive: true });
+
+  const oldRels = ["papers/old-a.pdf", "papers/old-b.pdf"];
+  const newRel = "papers/renamed.pdf";
+  const newDocKey = sha1(newRel);
+  const newPath = join(attachmentsRoot, newRel);
+  writeFileSync(newPath, "pdf-body");
+  const frozenMtimeMs = Date.UTC(2025, 5, 1);
+  utimesSync(newPath, new Date(frozenMtimeMs), new Date(frozenMtimeMs));
+  const stat = statSync(newPath);
+
+  const previousEntries = oldRels.map((oldRel, i) => {
+    const oldDocKey = sha1(oldRel);
+    const normalizedPath = join(normalizedDir, `${oldDocKey}.md`);
+    const manifestPath = join(manifestsDir, `${oldDocKey}${MANIFEST_EXT}`);
+    writeFileSync(normalizedPath, `Old body ${i + 1}`);
+    writeManifestFile(manifestPath, {
+      docKey: oldDocKey,
+      itemKey: "ITEM1",
+      title: "Paper",
+      authors: ["A Author"],
+      filePath: join(attachmentsRoot, oldRel),
+      normalizedPath,
+      blocks: [trivialBlock()],
+    });
+    return {
+      docKey: oldDocKey,
+      itemKey: "ITEM1",
+      citationKey: "cite",
+      title: "Paper",
+      authors: ["A Author"],
+      filePath: join(attachmentsRoot, oldRel),
+      fileExt: "pdf" as const,
+      exists: true,
+      supported: true,
+      extractStatus: "ready" as const,
+      size: stat.size,
+      mtimeMs: Math.trunc(stat.mtimeMs),
+      sourceHash: `pre-existing-source-hash-${i + 1}`,
+      lastIndexedAt: "2025-06-01T00:00:00.000Z",
+      normalizedPath,
+      manifestPath,
+    };
+  });
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    indexesCompletedAt: new Date().toISOString(),
+    indexedQmdEmbedModel: "qmd-default",
+    indexerSignature: buildIndexerSignature("qmd-default"),
+    entries: previousEntries,
+  });
+
+  const bibliographyPath = join(root, "bibliography.json");
+  writeFileSync(
+    bibliographyPath,
+    JSON.stringify([
+      {
+        id: "cite",
+        title: "Paper",
+        author: [{ family: "A", given: "Author" }],
+        file: newPath,
+        "zotero-item-key": "ITEM1",
+      },
+    ]),
+    "utf-8",
+  );
+
+  const qmdFactory = async () => ({
+    search: async () => [],
+    searchLex: async () => [],
+    update: async () => ({}),
+    embed: async () => ({}),
+    getStatus: async () => ({ totalDocuments: 1, needsEmbedding: 0, hasVectorIndex: true, collections: [] }),
+    listContexts: async () => [],
+    addContext: async () => true,
+    removeContext: async () => true,
+    clearEmbeddings: async () => {},
+    cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
+    close: async () => {},
+  });
+  const extractCalls: unknown[] = [];
+  const extractBatchFn = async (batch: Array<{ docKey: string; filePath: string; itemKey: string }>) => {
+    extractCalls.push(batch);
+    const attachment = batch[0]!;
+    const normalizedPath = join(normalizedDir, `${attachment.docKey}.md`);
+    const manifestPath = join(manifestsDir, `${attachment.docKey}${MANIFEST_EXT}`);
+    writeFileSync(normalizedPath, "Fresh extraction for ambiguous rename");
+    writeManifestFile(manifestPath, {
+      docKey: attachment.docKey,
+      itemKey: attachment.itemKey,
+      title: "Paper",
+      authors: ["A Author"],
+      filePath: attachment.filePath,
+      normalizedPath,
+      blocks: [trivialBlock()],
+    });
+    return new Map([[attachment.docKey, { normalizedPath, manifestPath }]]);
+  };
+
+  await runSync(
+    { bibliographyJsonPath: bibliographyPath, attachmentsRoot, dataDir },
+    qmdFactory,
+    undefined,
+    extractBatchFn as never,
+    () => {},
+  );
+
+  assert.equal(extractCalls.length, 1);
+  assert.ok(existsSync(previousEntries[0]!.normalizedPath));
+  assert.ok(existsSync(previousEntries[1]!.normalizedPath));
+  assert.equal(
+    readFileSync(join(normalizedDir, `${newDocKey}.md`), "utf-8"),
+    "Fresh extraction for ambiguous rename",
+  );
+});
+
 test("runSync asks qmd to clean orphaned residue on the happy path", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-sync-cleanup-"));
   const attachmentsRoot = join(root, "attachments");
@@ -1095,6 +1483,7 @@ test("runSync asks qmd to clean orphaned residue on the happy path", async () =>
     listContexts: async () => [],
     addContext: async () => true,
     removeContext: async () => true,
+    clearEmbeddings: async () => {},
     cleanupOrphans: async () => {
       cleanupCalls += 1;
       return {
@@ -1203,6 +1592,7 @@ test("runSync skips qmd context writes when existing contexts already match", as
       calls.removed += 1;
       return true;
     },
+    clearEmbeddings: async () => {},
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     close: async () => {},
   });
@@ -1278,6 +1668,7 @@ test("runSync resumes from existing normalized and manifest outputs when catalog
     listContexts: async () => [],
     addContext: async () => true,
     removeContext: async () => true,
+    clearEmbeddings: async () => {},
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     close: async () => {},
   });
@@ -1373,6 +1764,7 @@ test("runSync re-extracts attachments when fallback normalized output is empty",
     listContexts: async () => [],
     addContext: async () => true,
     removeContext: async () => true,
+    clearEmbeddings: async () => {},
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     close: async () => {},
   });
@@ -1499,6 +1891,7 @@ test("runSync re-extracts ready entries whose cached manifest has zero blocks", 
     listContexts: async () => [],
     addContext: async () => true,
     removeContext: async () => true,
+    clearEmbeddings: async () => {},
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     close: async () => {},
   });
@@ -1645,6 +2038,7 @@ test("runSync keeps embedding until qmd no longer reports pending documents", as
     listContexts: async () => [],
     addContext: async () => true,
     removeContext: async () => true,
+    clearEmbeddings: async () => {},
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     close: async () => {},
   });
@@ -1695,6 +2089,7 @@ test("runSync marks empty txt extraction output as error", async () => {
     listContexts: async () => [],
     addContext: async () => true,
     removeContext: async () => true,
+    clearEmbeddings: async () => {},
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     close: async () => {},
   });
@@ -1753,6 +2148,7 @@ test("runSync indexes txt attachments without Java extraction", async () => {
     listContexts: async () => [],
     addContext: async () => true,
     removeContext: async () => true,
+    clearEmbeddings: async () => {},
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     close: async () => {},
   });
@@ -1894,6 +2290,7 @@ test("runSync reuses a ready index when bibliography paths come from another mac
       calls.removed += 1;
       return true;
     },
+    clearEmbeddings: async () => {},
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     close: async () => {},
   });
@@ -2100,6 +2497,7 @@ test("runSync keeps cached outputs when attachment disappears from the current c
     listContexts: async () => [],
     addContext: async () => true,
     removeContext: async () => true,
+    clearEmbeddings: async () => {},
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     close: async () => {},
   });
@@ -2199,6 +2597,7 @@ test("runSync reuses cached outputs after an attachment temporarily disappears",
     listContexts: async () => [],
     addContext: async () => true,
     removeContext: async () => true,
+    clearEmbeddings: async () => {},
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     close: async () => {},
   });
@@ -2303,6 +2702,7 @@ test("runSync skips unchanged previous extraction errors by default", async () =
     listContexts: async () => [],
     addContext: async () => true,
     removeContext: async () => true,
+    clearEmbeddings: async () => {},
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     close: async () => {},
   });
@@ -2401,6 +2801,7 @@ test("runSync retries unchanged previous errors when requested and passes custom
     listContexts: async () => [],
     addContext: async () => true,
     removeContext: async () => true,
+    clearEmbeddings: async () => {},
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     close: async () => {},
   });
@@ -2510,6 +2911,7 @@ test("runSync extracts book attachments in single-file batches by default", asyn
     listContexts: async () => [],
     addContext: async () => true,
     removeContext: async () => true,
+    clearEmbeddings: async () => {},
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     close: async () => {},
   });
@@ -2604,6 +3006,7 @@ test("runSync honors explicit PDF batch size", async () => {
     listContexts: async () => [],
     addContext: async () => true,
     removeContext: async () => true,
+    clearEmbeddings: async () => {},
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     close: async () => {},
   });
@@ -2697,6 +3100,7 @@ test("runSync records extraction failures per attachment and continues indexing 
     listContexts: async () => [],
     addContext: async () => true,
     removeContext: async () => true,
+    clearEmbeddings: async () => {},
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     close: async () => {},
   });
@@ -2816,6 +3220,7 @@ test("runSync retries a timed out batch one file at a time", async () => {
     listContexts: async () => [],
     addContext: async () => true,
     removeContext: async () => true,
+    clearEmbeddings: async () => {},
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     close: async () => {},
   });
