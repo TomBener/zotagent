@@ -329,18 +329,30 @@ test("help summarizes current commands and keeps config-only overrides out of th
   assert.match(result.stdout, /--item-key <key>\s+Resolve an indexed item by Zotero item key\./);
   assert.match(result.stdout, /--citation-key <key>\s+Resolve an indexed item by citation key\./);
 
-  // Other / config / examples sections are present.
+  // Other / config sections are present.
   assert.match(result.stdout, /version, --version\s+Print the current zotagent version\./);
   assert.match(result.stdout, /help, --help\s+Show this help\./);
+  assert.match(result.stdout, /^\s+config$/m);
+  assert.match(result.stdout, /Interactively set \~\/\.zotagent\/config\.json\./);
   assert.match(result.stdout, /Paths and credentials are read from \~\/\.zotagent\/config\.json\./);
   assert.match(result.stdout, /zoteroLibraryType supports both user and group\./);
   assert.match(result.stdout, /zoteroCollectionKey sets the default collection/);
-  assert.match(result.stdout, /^Examples$/m);
+
+  // Examples block was removed; workflows live in the zotagent skill, not here.
+  assert.doesNotMatch(result.stdout, /^Examples$/m);
 
   // Config-only overrides should not appear in user-facing help.
   assert.doesNotMatch(result.stdout, /--bibliography <path>/);
   assert.doesNotMatch(result.stdout, /--data-dir <path>/);
   assert.doesNotMatch(result.stdout, /--qmd-embed-model <uri>/);
+});
+
+test("config fails fast when stdin is not a TTY", () => {
+  const result = runCli(["config"]);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /"code": "CONFIG_REQUIRES_TTY"/);
+  assert.match(result.stdout, /requires an interactive terminal/);
 });
 
 test("version prints the current package version", () => {

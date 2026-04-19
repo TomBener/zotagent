@@ -65,6 +65,10 @@ zotagent metadata "aging in China" --abstract
 
 # Only items that have an indexed attachment
 zotagent metadata "dangwei shuji" --has-file
+
+# Pipe the returned itemKey into read / fulltext for the paper body
+zotagent read --item-key KG326EEI --offset-block 0 --limit-blocks 40
+zotagent fulltext --citation-key lee2024aging --clean
 ```
 
 ## Output-shape gotchas
@@ -84,7 +88,8 @@ These are the most common surprises when consuming `zotagent` output. Read them 
 
 - `search` / `search-in` / `read` / `expand` / `fulltext` all work on a local index built by `zotagent sync`. If a query returns `NO_INDEX` or "No indexed documents found", run `zotagent sync` first.
 - `add` / `s2` / `metadata` do NOT require the local index and work even before the first sync.
-- Config lives at `~/.zotagent/config.json` (paths, Zotero Web API key, Semantic Scholar API key). Any field can also come from `ZOTAGENT_*` env vars.
+- Config lives at `~/.zotagent/config.json` (paths, Zotero Web API key, Semantic Scholar API key). First-time setup: `zotagent config` runs an interactive wizard that writes this file (required fields: `bibliographyJsonPath`, `attachmentsRoot`, `dataDir`). Any field can also come from `ZOTAGENT_*` env vars.
+- After setup: `zotagent sync` builds the index, then `zotagent status` confirms attachment counts and qmd state.
 - `sync` needs Java (JDK 11+) for PDF extraction via OpenDataLoader. `pdftotext` is an optional fallback.
 
 ## Common errors
