@@ -1,6 +1,6 @@
 {
   "name": "zotagent",
-  "version": "0.18.0",
+  "version": "0.18.1-rc.0",
   "description": "Zotero literature search CLI for AI agents",
   "type": "module",
   "bin": {
@@ -11,7 +11,7 @@
     "README.md"
   ],
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=24.0.0"
   },
   "scripts": {
     "build": "tsc",
