@@ -4,6 +4,7 @@ import {
   copyFileSync,
   mkdtempSync,
   readFileSync,
+  renameSync,
   rmSync,
   statSync,
   unlinkSync,
@@ -30,6 +31,7 @@ import {
   ensureDir,
   ensureParentDir,
   exists,
+  readManifestFile,
   stemForFile,
   tryReadManifestFile,
   writeManifestFile,
@@ -1154,6 +1156,30 @@ export async function runSync(
     );
     const previousCatalog = readCatalogFile(paths.catalogPath);
     const previousByDocKey = mapEntriesByDocKey(previousCatalog);
+    // Paths the current bibliography still references. Used twice below:
+    // (a) building the rename-detection index, so we only treat an entry as
+    //     the "old side" of a rename when its filePath has actually dropped
+    //     out of the bibliography — otherwise it is still live;
+    // (b) deciding whether to prune caches for deduplicated attachments.
+    const bibliographyReferencedPaths = new Set(
+      catalogData.records.flatMap((record) => record.attachmentPaths),
+    );
+    // Rename index: map (itemKey,size,mtimeMs) → previous ready entry whose
+    // filePath is no longer in the bibliography. An attachment that renames a
+    // PDF inside attachmentsRoot changes relativePath (and therefore
+    // docKey = sha1(relativePath)) without changing size or mtime; matching
+    // on that triple lets us migrate the cached artifacts to the new docKey
+    // instead of re-extracting and re-embedding identical content.
+    const renameCandidateIndex = new Map<string, CatalogEntry>();
+    for (const prev of previousCatalog.entries) {
+      if (prev.extractStatus !== "ready") continue;
+      if (prev.size === null || prev.mtimeMs === null) continue;
+      if (bibliographyReferencedPaths.has(prev.filePath)) continue;
+      const key = `${prev.itemKey}\u0000${prev.size}\u0000${prev.mtimeMs}`;
+      // First-wins. Duplicates (rare) would be ambiguous — fall back to
+      // re-extract for the extras rather than migrate the wrong artifacts.
+      if (!renameCandidateIndex.has(key)) renameCandidateIndex.set(key, prev);
+    }
     const currentQmdEmbedModel = resolveQmdEmbedModel(config);
     const currentIndexerSignature = buildIndexerSignature(currentQmdEmbedModel);
     const indexerState = {
@@ -1267,6 +1293,75 @@ export async function runSync(
         stats.errorAttachments += 1;
         stats.skippedAttachments += 1;
         continue;
+      }
+
+      // Rename fast path: an attachment we have never seen under this docKey,
+      // with no fallback artifacts locally, may be the same PDF renamed or
+      // moved inside attachmentsRoot. If (itemKey,size,mtimeMs) matches a
+      // previous ready entry whose filePath has dropped out of the
+      // bibliography, migrate the cached normalized+manifest from the old
+      // docKey to the new one instead of re-extracting and re-embedding.
+      if (previous === undefined && !fallbackArtifactsReusable) {
+        const renameKey = `${attachment.itemKey}\u0000${current.size}\u0000${currentMtimeMs}`;
+        const renameFromPrev = renameCandidateIndex.get(renameKey);
+        if (
+          renameFromPrev !== undefined &&
+          renameFromPrev.normalizedPath &&
+          renameFromPrev.manifestPath &&
+          exists(renameFromPrev.normalizedPath) &&
+          exists(renameFromPrev.manifestPath)
+        ) {
+          try {
+            const oldManifest = readManifestFile(renameFromPrev.manifestPath);
+            renameSync(renameFromPrev.normalizedPath, fallbackNormalizedPath);
+            try {
+              renameSync(renameFromPrev.manifestPath, fallbackManifestPath);
+            } catch (manifestErr) {
+              // Roll back the normalized rename so we never end up with a
+              // half-migrated pair on disk.
+              try {
+                renameSync(fallbackNormalizedPath, renameFromPrev.normalizedPath);
+              } catch {
+                // best effort — original callsite will still throw
+              }
+              throw manifestErr;
+            }
+            // Rewrite manifest so its stored docKey/filePath/normalizedPath
+            // match the new identity. hasReusableArtifacts checks docKey on
+            // the next run and would otherwise force a re-extract.
+            writeManifestFile(fallbackManifestPath, {
+              ...oldManifest,
+              docKey: attachment.docKey,
+              filePath: attachment.filePath,
+              normalizedPath: fallbackNormalizedPath,
+            });
+            nextEntries.push(
+              toCatalogEntry(attachment, {
+                extractStatus: "ready",
+                size: current.size,
+                mtimeMs: currentMtimeMs,
+                sourceHash: renameFromPrev.sourceHash ?? null,
+                lastIndexedAt: renameFromPrev.lastIndexedAt ?? null,
+                normalizedPath: fallbackNormalizedPath,
+                manifestPath: fallbackManifestPath,
+              }),
+            );
+            fileOutcomes.push({
+              kind: "skipped",
+              filePath: attachment.filePath,
+              detail: `migrated artifacts from renamed attachment (was ${compactHomePath(renameFromPrev.filePath)})`,
+            });
+            stats.readyAttachments += 1;
+            stats.skippedAttachments += 1;
+            staleDocKeys.delete(renameFromPrev.docKey);
+            renameCandidateIndex.delete(renameKey);
+            continue;
+          } catch (err) {
+            logger.warn(
+              `Rename migration failed for ${compactHomePath(attachment.filePath)}; falling back to re-extract: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        }
       }
 
       if (!previousIsReadyAndUnchanged && !fallbackArtifactsReusable) {
@@ -1527,9 +1622,6 @@ export async function runSync(
       writeProgressCatalog(paths.catalogPath, nextEntries, indexerState);
     }
 
-    const bibliographyReferencedPaths = new Set(
-      catalogData.records.flatMap((record) => record.attachmentPaths),
-    );
     for (const docKey of staleDocKeys) {
       stats.removedAttachments += 1;
       const previous = previousByDocKey.get(docKey);
@@ -1605,6 +1697,22 @@ export async function runSync(
           await embedQmdUntilSettled(qmd, logger, {
             force: qmdEmbedModelChanged || indexerSignatureChanged,
           });
+        }
+        // Reap the tombstones and stray vectors qmd.update leaves behind.
+        // Without this every removed or content-changed doc leaks vector
+        // rows; `deleteInactiveDocuments` must run before the two cleanup
+        // calls so the content/vector "referenced by active docs" filter
+        // no longer shields rows held by active=0 tombstones.
+        const cleanup = await qmd.cleanupOrphans();
+        const totalCleaned =
+          cleanup.deletedInactiveDocuments +
+          cleanup.cleanedOrphanedContent +
+          cleanup.cleanedOrphanedVectors;
+        if (totalCleaned > 0) {
+          logger.info(
+            `Cleaned qmd residue: ${cleanup.deletedInactiveDocuments} inactive doc(s), ${cleanup.cleanedOrphanedContent} content row(s), ${cleanup.cleanedOrphanedVectors} vector(s).`,
+            { console: true },
+          );
         }
       } finally {
         await qmd.close();
