@@ -17,6 +17,7 @@ const FIELD_WEIGHTS: Record<MetadataField, number> = {
 interface MetadataSearchOptions {
   fields?: MetadataField[];
   hasFile?: boolean;
+  includeAbstract?: boolean;
 }
 
 function includesNormalizedText(text: string | undefined, query: string): boolean {
@@ -48,6 +49,7 @@ function matchesField(record: BibliographyRecord, field: MetadataField, query: s
 function toMetadataSearchResultRow(
   record: BibliographyRecord,
   matchedFields: MetadataField[],
+  includeAbstract: boolean,
 ): MetadataSearchResultRow {
   const score = matchedFields.reduce((total, field) => total + FIELD_WEIGHTS[field], 0);
 
@@ -58,7 +60,7 @@ function toMetadataSearchResultRow(
     title: record.title,
     authors: record.authors,
     ...(record.year ? { year: record.year } : {}),
-    ...(record.abstract ? { abstract: record.abstract } : {}),
+    ...(includeAbstract && record.abstract ? { abstract: record.abstract } : {}),
     hasSupportedFile: record.hasSupportedFile,
     supportedFiles: record.supportedFiles.map((filePath) => compactHomePath(filePath)),
     matchedFields,
@@ -95,6 +97,7 @@ export async function searchMetadata(
   }
 
   const selectedFields = new Set(options.fields ?? FIELD_ORDER);
+  const includeAbstract = options.includeAbstract ?? false;
   const { records } = loadCatalog(config);
   const results = records
     .filter((record) => !options.hasFile || record.hasSupportedFile)
@@ -103,7 +106,7 @@ export async function searchMetadata(
         (field) => selectedFields.has(field) && matchesField(record, field, normalizedQuery),
       );
       if (matchedFields.length === 0) return null;
-      return toMetadataSearchResultRow(record, matchedFields);
+      return toMetadataSearchResultRow(record, matchedFields, includeAbstract);
     })
     .filter((result): result is MetadataSearchResultRow => result !== null)
     .sort(sortMetadataResults)

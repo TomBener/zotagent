@@ -22,6 +22,7 @@ interface ParsedArgs {
 }
 
 const BOOLEAN_FLAGS = new Set([
+  "abstract",
   "clean",
   "has-file",
   "help",
@@ -221,11 +222,13 @@ Search
   search-in "<text>" (--item-key <key> | --citation-key <key>) [--limit <n>]
       Search within all attachments of one indexed item.
 
-  metadata "<text>" [--limit <n>] [--field <field>] [--has-file]
+  metadata "<text>" [--limit <n>] [--field <field>] [--has-file] [--abstract]
       Search Zotero bibliography metadata from bibliography.json.
         --field <field>             Limit metadata search to title, author, year, abstract, journal,
                                     or publisher. Repeatable.
         --has-file                  Keep only metadata results with a supported indexed attachment.
+        --abstract                  Include the abstract in each result. Omitted by default to keep
+                                    bulk responses compact for agents.
 
 Read
   read (--item-key <key> | --citation-key <key>) [--offset-block <n>] [--limit-blocks <n>]
@@ -597,7 +600,7 @@ async function main(): Promise<void> {
         if (invalidFlags.length > 0) {
           emitError(
             "UNEXPECTED_ARGUMENT",
-            `metadata only supports --limit, --field, and --has-file. Remove: ${invalidFlags
+            `metadata only supports --limit, --field, --has-file, and --abstract. Remove: ${invalidFlags
               .map((flag) => `--${flag}`)
               .join(", ")}`,
           );
@@ -644,6 +647,7 @@ async function main(): Promise<void> {
         const data = await searchMetadata(query, limit, overrides, {
           ...(requestedFields.length > 0 ? { fields: requestedFields as MetadataField[] } : {}),
           ...(getBooleanFlag(parsed.flags, "has-file") ? { hasFile: true } : {}),
+          ...(getBooleanFlag(parsed.flags, "abstract") ? { includeAbstract: true } : {}),
         });
         emitOk(data, { elapsedMs: Date.now() - startedAt });
         return;

@@ -78,13 +78,25 @@ test("searchMetadata works without sync and returns metadata-only records", asyn
 
   assert.equal(result.results.length, 1);
   assert.deepEqual(result.results[0]?.matchedFields, ["title", "abstract"]);
-  assert.equal(
-    result.results[0]?.abstract,
-    "Large language models interpret political texts meaningfully and remain scalable for cross-national analysis.",
-  );
+  assert.equal("abstract" in result.results[0]!, false);
   assert.equal(result.results[0]?.journal, "American Journal of Political Science");
   assert.equal(result.results[0]?.hasSupportedFile, true);
   assert.deepEqual(result.results[0]?.supportedFiles, [pdfPath, epubPath]);
+
+  const withAbstract = await searchMetadata(
+    "large language models",
+    10,
+    {
+      bibliographyJsonPath: bibliographyPath,
+      attachmentsRoot,
+      dataDir,
+    },
+    { includeAbstract: true },
+  );
+  assert.equal(
+    withAbstract.results[0]?.abstract,
+    "Large language models interpret political texts meaningfully and remain scalable for cross-national analysis.",
+  );
 
   const metadataOnly = await searchMetadata("China and Political Economy", 10, {
     bibliographyJsonPath: bibliographyPath,

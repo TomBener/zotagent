@@ -321,6 +321,7 @@ test("help summarizes current commands and keeps config-only overrides out of th
   assert.match(result.stdout, /Default is keyword search/);
   assert.match(result.stdout, /--field <field>\s+Limit metadata search/);
   assert.match(result.stdout, /--has-file\s+Keep only metadata results/);
+  assert.match(result.stdout, /--abstract\s+Include the abstract in each result/);
   assert.match(result.stdout, /--clean\s+Apply heuristic cleanup/);
 
   // Document selectors are described once in their own block.
@@ -447,7 +448,7 @@ test("metadata rejects search-only flags", () => {
 
   assert.equal(result.status, 1);
   assert.match(result.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
-  assert.match(result.stdout, /metadata only supports --limit, --field, and --has-file/);
+  assert.match(result.stdout, /metadata only supports --limit, --field, --has-file, and --abstract/);
 });
 
 test("s2 rejects metadata and search-only flags", () => {
@@ -626,6 +627,57 @@ test("metadata accumulates repeated field filters", () => {
   assert.deepEqual(
     parsed.data.results.map((row) => row.itemKey),
     ["ITEM1", "ITEM2"],
+  );
+});
+
+test("metadata omits abstract by default and includes it with --abstract", () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-cli-metadata-abstract-"));
+  const attachmentsRoot = join(root, "attachments");
+  mkdirSync(attachmentsRoot, { recursive: true });
+  const bibliographyPath = join(root, "bibliography.json");
+  writeFileSync(
+    bibliographyPath,
+    JSON.stringify([
+      {
+        title: "Party committees in rural China",
+        abstract: "A lengthy abstract about dangwei shuji in county governance.",
+        author: [{ family: "Smith", given: "Jane" }],
+        issued: { "date-parts": [[2024]] },
+        type: "article-journal",
+        "zotero-item-key": "ITEM1",
+      },
+    ]),
+    "utf-8",
+  );
+  const commonArgs = [
+    "metadata",
+    "dangwei",
+    "--field",
+    "abstract",
+    "--bibliography",
+    bibliographyPath,
+    "--attachments-root",
+    attachmentsRoot,
+    "--data-dir",
+    join(root, "data"),
+  ];
+
+  const defaultRun = runCli(commonArgs);
+  assert.equal(defaultRun.status, 0);
+  const defaultParsed = JSON.parse(defaultRun.stdout) as {
+    data: { results: Array<{ itemKey: string; abstract?: string }> };
+  };
+  assert.equal(defaultParsed.data.results[0]?.itemKey, "ITEM1");
+  assert.equal("abstract" in defaultParsed.data.results[0]!, false);
+
+  const withAbstract = runCli([...commonArgs, "--abstract"]);
+  assert.equal(withAbstract.status, 0);
+  const withAbstractParsed = JSON.parse(withAbstract.stdout) as {
+    data: { results: Array<{ itemKey: string; abstract?: string }> };
+  };
+  assert.equal(
+    withAbstractParsed.data.results[0]?.abstract,
+    "A lengthy abstract about dangwei shuji in county governance.",
   );
 });
 
