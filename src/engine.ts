@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { basename as pathBasename } from "node:path";
 
+import { getEncoding, type Tiktoken } from "js-tiktoken";
+
 import { getDataPaths, resolveConfig, type ConfigOverrides } from "./config.js";
 import { findExactPhraseBlockRange, normalizeExactText } from "./exact.js";
 import { isBoilerplateLikeText, isTableOfContentsLikeText } from "./heuristics.js";
@@ -163,12 +165,23 @@ export function mapChunkToBlockRange(
   return { blockStart: nearest.blockIndex, blockEnd: nearest.blockIndex };
 }
 
-const SEARCH_PASSAGE_MAX_CHARS = 500;
+const SEARCH_PASSAGE_MAX_TOKENS = 500;
 
+let passageEncoder: Tiktoken | undefined;
+function getPassageEncoder(): Tiktoken {
+  if (!passageEncoder) passageEncoder = getEncoding("o200k_base");
+  return passageEncoder;
+}
+
+// Token-based cap keeps the agent-context cost roughly language-neutral:
+// 500 chars of English is ~125 tokens, 500 chars of Chinese is ~500+ tokens.
+// o200k_base (GPT-4o) is used as a close proxy for Claude's tokenizer, since
+// Anthropic does not publish an offline tokenizer for Claude 3+.
 function truncateSearchPassage(text: string): string {
-  const chars = Array.from(text);
-  if (chars.length <= SEARCH_PASSAGE_MAX_CHARS) return text;
-  return chars.slice(0, SEARCH_PASSAGE_MAX_CHARS).join("") + "…";
+  const enc = getPassageEncoder();
+  const tokens = enc.encode(text);
+  if (tokens.length <= SEARCH_PASSAGE_MAX_TOKENS) return text;
+  return enc.decode(tokens.slice(0, SEARCH_PASSAGE_MAX_TOKENS)) + "…";
 }
 
 function buildSearchRow(

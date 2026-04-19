@@ -70,7 +70,7 @@ zotagent expand --item-key KG326EEI --block-start 10 --radius 2
 A few behaviors worth knowing:
 
 - `add` does not deduplicate against your existing Zotero library — it is speed-first and returns `itemKey` immediately. New items are tagged `Added by AI Agent`.
-- `search` truncates each hit's `passage` at 500 characters so bulk results stay compact; use `expand` to pull full context around a block range. `metadata` omits `abstract` by default for the same reason — pass `--abstract` to include it.
+- `search` truncates each hit's `passage` at 500 tokens so bulk results stay compact regardless of language; use `expand` to pull full context around a block range. `metadata` omits `abstract` by default for the same reason — pass `--abstract` to include it.
 - `sync` skips files that fail extraction, records them as `error`, and continues. Re-runs skip unchanged errors; pass `--retry-errors` to retry. When an item has both a PDF and an EPUB, only the EPUB is indexed (both files stay attached in Zotero).
 - `sync` detects attachments renamed or moved inside `attachmentsRoot` by matching `(itemKey, size, mtimeMs)` and migrates the cached `normalized/<docKey>.md` + `manifests/<docKey>.json.gz` to the new `docKey` — no re-extract, no re-embed.
 - `sync` is crash-safe across indexer-state changes: the progress catalog keeps the previous embed model and indexer signature until stored vectors have actually been cleared, so interrupting `sync` never leaves the index in a "claims fresh / is stale" state.

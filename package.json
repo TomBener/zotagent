@@ -27,6 +27,7 @@
     "@tobilu/qmd": "^2.1.0",
     "@types/better-sqlite3": "^7.6.13",
     "better-sqlite3": "^12.9.0",
+    "js-tiktoken": "^1.0.21",
     "jszip": "^3.10.1",
     "linkedom": "^0.18.12",
     "opencc-js": "^1.0.5"
