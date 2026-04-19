@@ -23,6 +23,12 @@ Requirements:
 - JDK `11+` (only used by `sync` for PDF extraction)
 - `pdftotext` (Poppler) is optional but recommended; `sync` uses it as a final fallback when OpenDataLoader fails
 
+With Homebrew:
+
+```bash
+brew install TomBener/tap/zotagent
+```
+
 From source:
 
 ```bash
