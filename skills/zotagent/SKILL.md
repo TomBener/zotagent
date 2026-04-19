@@ -1,11 +1,13 @@
 ---
 name: zotagent
-description: Search, read, or add Zotero literature via the local `zotagent` CLI. Load this skill whenever the user wants to query their Zotero library (keyword / semantic / metadata), pull quotations or context from indexed papers, add new items by DOI or Semantic Scholar paperId, or resolve bibliographic metadata. Do not guess at zotagent's flags — consult this reference first.
+description: Search, read, or add Zotero literature via the local `zotagent` CLI. Load this skill whenever the user wants to query their Zotero library (keyword / semantic / metadata), pull quotations or context from indexed papers, add new items by DOI or Semantic Scholar paperId, or resolve bibliographic metadata. Use it even when the request is indirect — any mention of references, citations, bibliography checks, PDF passages, or literature discovery should trigger this skill. Do not guess at zotagent's flags — consult this reference first.
 ---
 
 # zotagent
 
 `zotagent` is a one-shot CLI over a local index of Zotero attachments (PDF / EPUB / HTML / TXT). Each invocation is independent. All commands emit JSON on stdout with the envelope `{"ok": bool, "data" | "error", "meta"?: {"elapsedMs": n}}`.
+
+Do not invent citation keys, item keys, or passage text. If a command returns no results, say so plainly rather than synthesizing a plausible-looking reference.
 
 ## Three search layers — pick the right one
 
@@ -50,7 +52,7 @@ zotagent add --s2-paper-id <paperId>
 zotagent add --title "..." --author "Last, First" --year 2026 --publication "Journal"
 ```
 
-`add` is speed-first and does NOT dedupe against the existing Zotero library. New items are tagged `Added by AI Agent`. It returns `itemKey` immediately.
+`add` is speed-first and does NOT dedupe against the existing Zotero library. New items are tagged `Added by AI Agent`. It returns `itemKey` immediately — but the new paper is not reachable via `search` / `search-in` / `read` / `expand` / `fulltext` until the next `zotagent sync` completes, so don't promise passage-level retrieval right after `add`.
 
 ### Look up a paper's metadata / itemKey
 
