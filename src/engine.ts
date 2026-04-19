@@ -163,6 +163,14 @@ export function mapChunkToBlockRange(
   return { blockStart: nearest.blockIndex, blockEnd: nearest.blockIndex };
 }
 
+const SEARCH_PASSAGE_MAX_CHARS = 500;
+
+function truncateSearchPassage(text: string): string {
+  const chars = Array.from(text);
+  if (chars.length <= SEARCH_PASSAGE_MAX_CHARS) return text;
+  return chars.slice(0, SEARCH_PASSAGE_MAX_CHARS).join("") + "…";
+}
+
 function buildSearchRow(
   entry: CatalogEntry,
   manifest: AttachmentManifest,
@@ -181,7 +189,7 @@ function buildSearchRow(
     title: entry.title,
     authors: entry.authors,
     ...(entry.year ? { year: entry.year } : {}),
-    passage: blocks.map((block) => block.text).join("\n\n"),
+    passage: truncateSearchPassage(blocks.map((block) => block.text).join("\n\n")),
     blockStart: range.blockStart + globalOffset,
     blockEnd: range.blockEnd + globalOffset,
     score: Math.round((score - (referenceOnly ? 0.05 : 0)) * 10000) / 10000,
