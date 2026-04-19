@@ -178,15 +178,6 @@ export interface MetadataSearchResultRow {
   publisher?: string;
 }
 
-export interface DocumentBlock {
-  blockIndex: number;
-  blockType: string;
-  sectionPath: string[];
-  text: string;
-  pageStart?: number;
-  pageEnd?: number;
-}
-
 export interface DataPaths {
   logsDir: string;
   latestSyncLogPath: string;
