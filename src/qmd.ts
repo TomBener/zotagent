@@ -18,9 +18,10 @@ function readPackageVersion(path: string): string {
 export const QMD_PACKAGE_VERSION = readPackageVersion(QMD_PACKAGE_JSON_PATH);
 
 // Sentinel recorded on the catalog when the user has not pinned a model. The
-// real default lives inside `@tobilu/qmd` and is not part of its public API;
-// relying on `QMD_PACKAGE_VERSION` in `indexerSignature` is sufficient to
-// invalidate indexes when the package (and therefore its default) changes.
+// real default lives inside `@tobilu/qmd` and is not part of its public API.
+// A full re-embed is only triggered when this resolved model string changes;
+// qmd package upgrades no longer auto-clear embeddings, so users who care
+// about default-drift should pin `qmdEmbedModel` explicitly.
 export const QMD_DEFAULT_EMBED_MODEL_SENTINEL = "qmd-default";
 
 export function resolveQmdEmbedModel(config: Pick<AppConfig, "qmdEmbedModel">): string {

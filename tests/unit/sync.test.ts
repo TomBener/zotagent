@@ -693,7 +693,7 @@ test("runSync rebuilds indexes when the qmd embedding model changes since last s
   assert.equal(persisted.indexerSignature, buildIndexerSignature("new-embed-model"));
 });
 
-test("runSync rebuilds indexes when the indexer signature changes since last sync", async () => {
+test("runSync rebuilds indexes but preserves embeddings when only the indexer signature changes", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-sync-indexer-change-"));
   const attachmentsRoot = join(root, "attachments");
   const dataDir = join(root, "data");
@@ -806,8 +806,8 @@ test("runSync rebuilds indexes when the indexer signature changes since last syn
   );
 
   assert.equal(qmdUpdateCalls, 1);
-  assert.equal(clearCalls, 1);
-  assert.deepEqual(embedOptions, [undefined]);
+  assert.equal(clearCalls, 0);
+  assert.deepEqual(embedOptions, []);
   const persisted = readCatalogFile(join(indexDir, "catalog.json"));
   assert.equal(persisted.indexedQmdEmbedModel, "same-embed-model");
   assert.equal(persisted.indexerSignature, buildIndexerSignature("same-embed-model"));

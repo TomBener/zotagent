@@ -1199,7 +1199,14 @@ export async function runSync(
         : undefined;
     const qmdEmbedModelChanged = previousCatalog.indexedQmdEmbedModel !== currentQmdEmbedModel;
     const indexerSignatureChanged = previousCatalog.indexerSignature !== currentIndexerSignature;
-    const qmdIndexerStateChanged = qmdEmbedModelChanged || indexerSignatureChanged;
+    // Clearing all qmd embeddings is an expensive, destructive operation: it
+    // wipes every stored vector and forces the entire library to be re-embedded
+    // from scratch. Only trigger it when the embedding model itself changes,
+    // which is the one situation where existing vectors become semantically
+    // incompatible. Other signature changes (keyword schema bumps, qmd package
+    // upgrades) still break the short-circuit below so indexes are refreshed,
+    // but stored embeddings are preserved.
+    const qmdIndexerStateChanged = qmdEmbedModelChanged;
     const previousHadReadyEntries = previousCatalog.entries.some(
       (entry) => entry.extractStatus === "ready",
     );
