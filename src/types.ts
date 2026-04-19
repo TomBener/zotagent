@@ -178,7 +178,7 @@ export interface MetadataSearchResultRow {
   publisher?: string;
 }
 
-export interface ReadBlock {
+export interface DocumentBlock {
   blockIndex: number;
   blockType: string;
   sectionPath: string[];

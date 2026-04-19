@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { addS2PaperToZotero, addToZotero } from "./add.js";
 import { ConfigCommandError, runConfigCommand } from "./config-command.js";
 import { getDataPaths, resolveConfig, type ConfigOverrides } from "./config.js";
-import { expandDocument, fullTextDocument, getIndexStatus, readDocument, searchLiterature, searchWithinDocuments } from "./engine.js";
+import { expandDocument, fullTextDocument, getDocumentBlocks, getIndexStatus, searchLiterature, searchWithinDocuments } from "./engine.js";
 import { emitError, emitOk } from "./json.js";
 import { KeywordQuerySyntaxError } from "./keyword-db.js";
 import { searchMetadata } from "./metadata.js";
@@ -236,13 +236,13 @@ Search
         --abstract                  Include the abstract in each result. Omitted by default to keep
                                     bulk responses compact for agents.
 
-Read
-  read (--item-key <key> | --citation-key <key>) [--offset-block <n>] [--limit-blocks <n>]
-      Read blocks from a local manifest.
+Retrieval
+  blocks (--item-key <key> | --citation-key <key>) [--offset-block <n>] [--limit-blocks <n>]
+      Return paginated blocks from one indexed item.
       When one item has multiple indexed attachments, they are merged into one logical
       document with monotonic block indices and "# Attachment: <name>" dividers between them.
-        --offset-block <n>          Start reading at block n. Default: 0.
-        --limit-blocks <n>          Read up to n blocks. Default: 20.
+        --offset-block <n>          Start at block n. Default: 0.
+        --limit-blocks <n>          Return up to n blocks. Default: 20.
 
   fulltext (--item-key <key> | --citation-key <key>) [--clean]
       Output agent-friendly full text for one item. Multi-attachment items return one
@@ -257,7 +257,7 @@ Read
         --block-end <n>             End block for expand. Default: block-start.
         --radius <n>                Include n blocks before and after. Default: 2.
 
-Document selectors (used by search-in, read, fulltext, expand)
+Document selectors (used by search-in, blocks, fulltext, expand)
   --item-key <key>              Resolve an indexed item by Zotero item key.
   --citation-key <key>          Resolve an indexed item by citation key.
 
@@ -289,7 +289,7 @@ function compactPathMap(paths: ReturnType<typeof getDataPaths>): ReturnType<type
   };
 }
 
-function emitDocumentLookupError(prefix: "SEARCH_IN" | "READ" | "FULLTEXT" | "EXPAND", error: unknown): void {
+function emitDocumentLookupError(prefix: "SEARCH_IN" | "BLOCKS" | "FULLTEXT" | "EXPAND", error: unknown): void {
   const message = error instanceof Error ? error.message : String(error);
   emitError(`${prefix}_FAILED`, message);
 }
@@ -672,7 +672,7 @@ async function main(): Promise<void> {
         return;
       }
 
-      case "read": {
+      case "blocks": {
         if ("file" in parsed.flags) {
           emitError("UNEXPECTED_ARGUMENT", "`--file` has been removed. Use --item-key <key> or --citation-key <key>.");
           return;
@@ -712,7 +712,7 @@ async function main(): Promise<void> {
           return;
         }
         try {
-          const data = readDocument(
+          const data = getDocumentBlocks(
             {
               ...(itemKey ? { itemKey } : {}),
               ...(citationKey ? { citationKey } : {}),
@@ -724,7 +724,7 @@ async function main(): Promise<void> {
           emitOk(data, { elapsedMs: Date.now() - startedAt });
           return;
         } catch (error) {
-          emitDocumentLookupError("READ", error);
+          emitDocumentLookupError("BLOCKS", error);
           return;
         }
       }

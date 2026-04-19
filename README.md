@@ -8,7 +8,7 @@
 
 ## Features
 
-Search and Read are the core features. Both read from a local index that `sync` builds from PDF, EPUB, HTML, and TXT attachments in a Zotero library — PDFs via an OpenDataLoader cascade with `pdftotext` fallback; EPUB and HTML extracted in-process.
+Search and retrieval are the core features. Both read from a local index that `sync` builds from PDF, EPUB, HTML, and TXT attachments in a Zotero library — PDFs via an OpenDataLoader cascade with `pdftotext` fallback; EPUB and HTML extracted in-process.
 
 ### Search
 
@@ -17,9 +17,9 @@ Search and Read are the core features. Both read from a local index that `sync` 
 - `search-in` — scope a text query to a single indexed item's attachments, addressed by `itemKey` or `citationKey`.
 - `metadata` — search the Zotero bibliography (Better CSL JSON) across `title`, `author`, `year`, `abstract`, `journal`, and `publisher`. `--field` narrows the fields searched; `--has-file` keeps only items with an indexed attachment.
 
-### Read
+### Retrieve
 
-- `read` — paginate blocks from one item's manifest with `--offset-block` / `--limit-blocks`.
+- `blocks` — paginate blocks from one item's manifest with `--offset-block` / `--limit-blocks`.
 - `fulltext` — return the full normalized markdown for one item. `--clean` drops duplicate blocks and common boilerplate (citation notices, TOC lines).
 - `expand` — pull context around a block range, typically a search hit, with a configurable `--radius`.
 
@@ -94,7 +94,7 @@ Any of these can also come from environment variables (`ZOTAGENT_*` or unprefixe
 > ```
 
 > [!TIP]
-> **Read-only hosts:** If you share `dataDir` across machines (e.g. via iCloud) but keep the attachment files only on the machine that runs `sync`, set `"syncEnabled": false` in the other hosts' `~/.zotagent/config.json` (or export `ZOTAGENT_SYNC_ENABLED=false`). `sync` on those hosts fails fast with `SYNC_DISABLED` before touching the index — without this guard, a misfired `sync` would see every attachment as missing and wipe the keyword / semantic indexes. All read commands (`search`, `read`, `expand`, `fulltext`, `metadata`) still work.
+> **Read-only hosts:** If you share `dataDir` across machines (e.g. via iCloud) but keep the attachment files only on the machine that runs `sync`, set `"syncEnabled": false` in the other hosts' `~/.zotagent/config.json` (or export `ZOTAGENT_SYNC_ENABLED=false`). `sync` on those hosts fails fast with `SYNC_DISABLED` before touching the index — without this guard, a misfired `sync` would see every attachment as missing and wipe the keyword / semantic indexes. All local lookup commands (`search`, `blocks`, `expand`, `fulltext`, `metadata`) still work.
 
 ## Usage
 
@@ -161,13 +161,13 @@ Search
         --abstract                  Include the abstract in each result. Omitted by default to keep
                                     bulk responses compact for agents.
 
-Read
-  read (--item-key <key> | --citation-key <key>) [--offset-block <n>] [--limit-blocks <n>]
-      Read blocks from a local manifest.
+Retrieval
+  blocks (--item-key <key> | --citation-key <key>) [--offset-block <n>] [--limit-blocks <n>]
+      Return paginated blocks from one indexed item.
       When one item has multiple indexed attachments, they are merged into one logical
       document with monotonic block indices and "# Attachment: <name>" dividers between them.
-        --offset-block <n>          Start reading at block n. Default: 0.
-        --limit-blocks <n>          Read up to n blocks. Default: 20.
+        --offset-block <n>          Start at block n. Default: 0.
+        --limit-blocks <n>          Return up to n blocks. Default: 20.
 
   fulltext (--item-key <key> | --citation-key <key>) [--clean]
       Output agent-friendly full text for one item. Multi-attachment items return one
@@ -182,7 +182,7 @@ Read
         --block-end <n>             End block for expand. Default: block-start.
         --radius <n>                Include n blocks before and after. Default: 2.
 
-Document selectors (used by search-in, read, fulltext, expand)
+Document selectors (used by search-in, blocks, fulltext, expand)
   --item-key <key>              Resolve an indexed item by Zotero item key.
   --citation-key <key>          Resolve an indexed item by citation key.
 
@@ -206,7 +206,7 @@ A few behaviors worth knowing:
 - `sync` skips files that fail extraction, records them as `error`, and continues. Re-runs skip unchanged errors; pass `--retry-errors` to retry. When an item has both a PDF and an EPUB, only the EPUB is indexed (both files stay attached in Zotero).
 - `sync` detects attachments renamed or moved inside `attachmentsRoot` by matching `(itemKey, size, mtimeMs)` and migrates the cached `normalized/<docKey>.md` + `manifests/<docKey>.json.gz` to the new `docKey` — no re-extract, no re-embed.
 - `sync` is crash-safe across indexer-state changes: the progress catalog keeps the previous embed model and indexer signature until stored vectors have actually been cleared, so interrupting `sync` never leaves the index in a "claims fresh / is stale" state.
-- `search`, `read`, `fulltext`, and `expand` work entirely on the local index — run `sync` first when the library has changed.
+- `search`, `blocks`, `fulltext`, and `expand` work entirely on the local index — run `sync` first when the library has changed.
 
 ## Development
 

@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { expandDocument, fullTextDocument, readDocument, searchLiterature, searchWithinDocuments } from "../../src/engine.js";
+import { expandDocument, fullTextDocument, getDocumentBlocks, searchLiterature, searchWithinDocuments } from "../../src/engine.js";
 import { writeCatalogFile } from "../../src/state.js";
 import type { AttachmentManifest, CatalogFile } from "../../src/types.js";
 import { MANIFEST_EXT, writeManifestFile } from "../../src/utils.js";
@@ -1218,8 +1218,8 @@ test("searchWithinDocuments searches across multiple attachments for the same ke
   );
 });
 
-test("readDocument merges multi-attachment itemKey and expandDocument uses item-global blocks", () => {
-  const root = mkdtempSync(join(tmpdir(), "zotagent-read-"));
+test("getDocumentBlocks merges multi-attachment itemKey and expandDocument uses item-global blocks", () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-blocks-"));
   const dataDir = join(root, "data");
   const indexDir = join(dataDir, "index");
   const manifestsDir = join(dataDir, "manifests");
@@ -1329,7 +1329,7 @@ test("readDocument merges multi-attachment itemKey and expandDocument uses item-
     ],
   });
 
-  const read = readDocument(
+  const blocks = getDocumentBlocks(
     {
       itemKey: "ITEM1",
       offsetBlock: 0,
@@ -1342,13 +1342,13 @@ test("readDocument merges multi-attachment itemKey and expandDocument uses item-
     },
   );
 
-  assert.deepEqual(read.files, ["/tmp/doc-one.pdf", "/tmp/doc-two.pdf"]);
+  assert.deepEqual(blocks.files, ["/tmp/doc-one.pdf", "/tmp/doc-two.pdf"]);
   // Doc One has 3 blocks (0..2). Block 3 is the "Attachment: doc-two.pdf" separator.
   // Doc Two has 0 blocks, so total = 4.
-  assert.equal(read.totalBlocks, 4);
-  assert.equal(read.blocks.length, 4);
-  assert.equal(read.blocks[3]!.blockType, "heading");
-  assert.match(read.blocks[3]!.text, /Attachment: doc-two\.pdf/);
+  assert.equal(blocks.totalBlocks, 4);
+  assert.equal(blocks.blocks.length, 4);
+  assert.equal(blocks.blocks[3]!.blockType, "heading");
+  assert.match(blocks.blocks[3]!.text, /Attachment: doc-two\.pdf/);
 
   const expanded = expandDocument(
     {
@@ -1461,8 +1461,8 @@ test("expandDocument resolves a unique attachment by itemKey", () => {
   assert.equal(expanded.passage, "Second block.");
 });
 
-test("readDocument resolves a unique attachment by citationKey", () => {
-  const root = mkdtempSync(join(tmpdir(), "zotagent-read-citation-key-"));
+test("getDocumentBlocks resolves a unique attachment by citationKey", () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-blocks-citation-key-"));
   const dataDir = join(root, "data");
   const indexDir = join(dataDir, "index");
   const manifestsDir = join(dataDir, "manifests");
@@ -1531,7 +1531,7 @@ test("readDocument resolves a unique attachment by citationKey", () => {
     ],
   });
 
-  const read = readDocument(
+  const blocks = getDocumentBlocks(
     {
       citationKey: "wang2024soe",
       offsetBlock: 1,
@@ -1544,11 +1544,11 @@ test("readDocument resolves a unique attachment by citationKey", () => {
     },
   );
 
-  assert.equal(read.itemKey, "ITEM6");
-  assert.equal(read.citationKey, "wang2024soe");
-  assert.deepEqual(read.files, ["/tmp/doc-six.pdf"]);
-  assert.equal(read.blocks.length, 1);
-  assert.equal(read.blocks[0]!.text, "Second block.");
+  assert.equal(blocks.itemKey, "ITEM6");
+  assert.equal(blocks.citationKey, "wang2024soe");
+  assert.deepEqual(blocks.files, ["/tmp/doc-six.pdf"]);
+  assert.equal(blocks.blocks.length, 1);
+  assert.equal(blocks.blocks[0]!.text, "Second block.");
 });
 
 test("fullTextDocument keeps boilerplate and references by default", () => {

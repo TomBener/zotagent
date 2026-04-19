@@ -291,10 +291,10 @@ test("help summarizes current commands and keeps config-only overrides out of th
     /search-in "<text>" \(--item-key <key> \| --citation-key <key>\) \[--limit <n>\]/,
   );
   assert.match(result.stdout, /metadata "<text>" \[--limit <n>\] \[--field <field>\] \[--has-file\]/);
-  assert.match(result.stdout, /^Read$/m);
+  assert.match(result.stdout, /^Retrieval$/m);
   assert.match(
     result.stdout,
-    /read \(--item-key <key> \| --citation-key <key>\) \[--offset-block <n>\] \[--limit-blocks <n>\]/,
+    /blocks \(--item-key <key> \| --citation-key <key>\) \[--offset-block <n>\] \[--limit-blocks <n>\]/,
   );
   assert.match(
     result.stdout,
@@ -325,7 +325,7 @@ test("help summarizes current commands and keeps config-only overrides out of th
   assert.match(result.stdout, /--clean\s+Apply heuristic cleanup/);
 
   // Document selectors are described once in their own block.
-  assert.match(result.stdout, /^Document selectors \(used by search-in, read, fulltext, expand\)$/m);
+  assert.match(result.stdout, /^Document selectors \(used by search-in, blocks, fulltext, expand\)$/m);
   assert.match(result.stdout, /--item-key <key>\s+Resolve an indexed item by Zotero item key\./);
   assert.match(result.stdout, /--citation-key <key>\s+Resolve an indexed item by citation key\./);
 
@@ -525,23 +525,31 @@ test("metadata rejects invalid limit values", () => {
   assert.match(result.stdout, /`--limit` requires a positive integer\./);
 });
 
-test("read rejects conflicting selectors and invalid numeric values", () => {
-  const conflict = runCli(["read", "--item-key", "ITEM1", "--citation-key", "cite1"]);
+test("blocks rejects conflicting selectors and invalid numeric values", () => {
+  const conflict = runCli(["blocks", "--item-key", "ITEM1", "--citation-key", "cite1"]);
 
   assert.equal(conflict.status, 1);
   assert.match(conflict.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
   assert.match(conflict.stdout, /Provide exactly one of --item-key <key> or --citation-key <key>\./);
 
-  const legacyFile = runCli(["read", "--file", "/tmp/paper.pdf"]);
+  const legacyFile = runCli(["blocks", "--file", "/tmp/paper.pdf"]);
   assert.equal(legacyFile.status, 1);
   assert.match(legacyFile.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
   assert.match(legacyFile.stdout, /`--file` has been removed/);
 
-  const invalidOffset = runCli(["read", "--item-key", "ITEM1", "--offset-block", "-1"]);
+  const invalidOffset = runCli(["blocks", "--item-key", "ITEM1", "--offset-block", "-1"]);
 
   assert.equal(invalidOffset.status, 1);
   assert.match(invalidOffset.stdout, /"code": "INVALID_ARGUMENT"/);
   assert.match(invalidOffset.stdout, /`--offset-block` must be a non-negative integer\./);
+});
+
+test("read command is removed", () => {
+  const result = runCli(["read", "--item-key", "ITEM1"]);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /"code": "UNKNOWN_COMMAND"/);
+  assert.match(result.stdout, /Unknown command: read/);
 });
 
 test("expand rejects conflicting selectors and invalid numeric values", () => {
@@ -878,11 +886,11 @@ test("expand resolves a unique attachment by itemKey", async () => {
   assert.match(parsed.data.passage, /Party organization shapes firm governance\./);
 });
 
-test("read resolves a unique attachment by citationKey", async () => {
+test("blocks resolves a unique attachment by citationKey", async () => {
   const fixture = await createIndexedFixture();
 
   const result = runCli([
-    "read",
+    "blocks",
     "--citation-key",
     fixture.citationKey,
     "--limit-blocks",

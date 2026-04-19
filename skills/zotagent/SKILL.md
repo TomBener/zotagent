@@ -1,6 +1,6 @@
 ---
 name: zotagent
-description: Search, read, or add Zotero literature via the local `zotagent` CLI. Load this skill whenever the user wants to query their Zotero library (keyword / semantic / metadata), pull quotations or context from indexed papers, add new items by DOI or Semantic Scholar paperId, or resolve bibliographic metadata. Use it even when the request is indirect — any mention of references, citations, bibliography checks, PDF passages, or literature discovery should trigger this skill. Do not guess at zotagent's flags — consult this reference first.
+description: Search, retrieve, or add Zotero literature via the local `zotagent` CLI. Load this skill whenever the user wants to query their Zotero library (keyword / semantic / metadata), pull quotations or context from indexed papers, add new items by DOI or Semantic Scholar paperId, or resolve bibliographic metadata. Use it even when the request is indirect — any mention of references, citations, bibliography checks, PDF passages, or literature discovery should trigger this skill. Do not guess at zotagent's flags — consult this reference first.
 ---
 
 # zotagent
@@ -21,7 +21,7 @@ Keyword syntax (default `search`): `"exact phrase"`, `OR`, `NOT`, `term NEAR/50 
 
 ## Typical workflows
 
-### Find passages, then read surrounding context
+### Find passages, then retrieve surrounding context
 
 ```bash
 # 1. Broad keyword search
@@ -31,11 +31,11 @@ zotagent search "party secretary governance" --limit 10
 #    Pull surrounding context (radius = 2 blocks before/after):
 zotagent expand --item-key KG326EEI --block-start 134 --radius 2
 
-# 3. Or read the whole document:
+# 3. Or retrieve the whole document:
 zotagent fulltext --item-key KG326EEI --clean
 
 # 4. Or paginate blocks:
-zotagent read --item-key KG326EEI --offset-block 120 --limit-blocks 30
+zotagent blocks --item-key KG326EEI --offset-block 120 --limit-blocks 30
 ```
 
 ### Add a paper to Zotero
@@ -52,7 +52,7 @@ zotagent add --s2-paper-id <paperId>
 zotagent add --title "..." --author "Last, First" --year 2026 --publication "Journal"
 ```
 
-`add` is speed-first and does NOT dedupe against the existing Zotero library. New items are tagged `Added by AI Agent`. It returns `itemKey` immediately — but the new paper is not reachable via `search` / `search-in` / `read` / `expand` / `fulltext` until the next `zotagent sync` completes, so don't promise passage-level retrieval right after `add`.
+`add` is speed-first and does NOT dedupe against the existing Zotero library. New items are tagged `Added by AI Agent`. It returns `itemKey` immediately — but the new paper is not reachable via `search` / `search-in` / `blocks` / `expand` / `fulltext` until the next `zotagent sync` completes, so don't promise passage-level retrieval right after `add`.
 
 ### Look up a paper's metadata / itemKey
 
@@ -66,8 +66,8 @@ zotagent metadata "aging in China" --abstract
 # Only items that have an indexed attachment
 zotagent metadata "dangwei shuji" --has-file
 
-# Pipe the returned itemKey into read / fulltext for the paper body
-zotagent read --item-key KG326EEI --offset-block 0 --limit-blocks 40
+# Pipe the returned itemKey into blocks / fulltext for the paper body
+zotagent blocks --item-key KG326EEI --offset-block 0 --limit-blocks 40
 zotagent fulltext --citation-key lee2024aging --clean
 ```
 
@@ -81,12 +81,12 @@ These are the most common surprises when consuming `zotagent` output. Read them 
   - Do NOT try to extract the full quotation from `passage` alone; always `expand` if you need guaranteed-complete text.
 - **`metadata` omits `abstract` by default.** To keep bulk responses compact, the `abstract` field is stripped. Pass `--abstract` to include it. If a script expects `abstract` to always be present, add the flag or handle the missing case.
 - **`itemKey` is the stable primary id; `citationKey` is a mutable display field.** Prefer `itemKey` for anything that persists across time. Both commands that take a selector accept either via `--item-key` or `--citation-key`, but don't rely on `citationKey` matching any previous run.
-- **Block indices are item-global.** When an item has multiple indexed attachments (e.g. PDF + EPUB), block indices are monotonic across them with `# Attachment: <name>` dividers. Pass block indices straight from `search` into `read` / `expand` — don't translate them.
+- **Block indices are item-global.** When an item has multiple indexed attachments (e.g. PDF + EPUB), block indices are monotonic across them with `# Attachment: <name>` dividers. Pass block indices straight from `search` into `blocks` / `expand` — don't translate them.
 - **Every command — including errors — emits a JSON envelope.** On failure: `{"ok": false, "error": {"code": "...", "message": "..."}}` and a non-zero exit code. Missing credentials fail fast.
 
 ## Pre-requisites
 
-- `search` / `search-in` / `read` / `expand` / `fulltext` all work on a local index built by `zotagent sync`. If a query returns `NO_INDEX` or "No indexed documents found", run `zotagent sync` first.
+- `search` / `search-in` / `blocks` / `expand` / `fulltext` all work on a local index built by `zotagent sync`. If a query returns `NO_INDEX` or "No indexed documents found", run `zotagent sync` first.
 - `add` / `s2` / `metadata` do NOT require the local index and work even before the first sync.
 - Config lives at `~/.zotagent/config.json` (paths, Zotero Web API key, Semantic Scholar API key). First-time setup: `zotagent config` runs an interactive wizard that writes this file (required fields: `bibliographyJsonPath`, `attachmentsRoot`, `dataDir`). Any field can also come from `ZOTAGENT_*` env vars.
 - After setup: `zotagent sync` builds the index, then `zotagent status` confirms attachment counts and qmd state.

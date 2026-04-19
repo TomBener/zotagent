@@ -800,7 +800,7 @@ export function searchWithinDocuments(
   };
 }
 
-export function readDocument(
+export function getDocumentBlocks(
   input: { itemKey?: string; citationKey?: string; offsetBlock: number; limitBlocks: number },
   overrides: ConfigOverrides = {},
 ): {

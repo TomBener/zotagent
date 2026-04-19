@@ -7,7 +7,7 @@
 - `itemKey` (Zotero item key) is the primary identifier. `citationKey` is a mutable display field only.
 - `docKey = sha1(filePath)`, so renaming or moving an attachment looks like "old path removed + new path added".
 - `add` is speed-first and does not do Zotero-side duplicate checking; write responses should return `itemKey` immediately.
-- `read` and `expand` read local manifests directly; they do not depend on the search backend.
+- `blocks` and `expand` read local manifests directly; they do not depend on the search backend.
 - Long-lived indexes live in the iCloud-backed `dataDir`. Do not move persistent index files into `/tmp`.
 
 ## Local Environment
@@ -17,7 +17,7 @@
 ## Development Principles
 
 - Avoid unnecessary fallbacks or compatibility layers. When you change CLI or config behavior, switch cleanly and update help text, tests, and docs in the same change.
-- Validate search changes on a real indexed subset, not just unit tests. Check: top result is sensible; no single document dominates the first few slots; reference-only hits do not leak upward; `passage` is not polluted by title-page or front-matter text; `read` and `expand` still behave correctly.
+- Validate search changes on a real indexed subset, not just unit tests. Check: top result is sensible; no single document dominates the first few slots; reference-only hits do not leak upward; `passage` is not polluted by title-page or front-matter text; `blocks` and `expand` still behave correctly.
 - To exercise local changes, run `node dist/cli.js <cmd>` after `npm run build` (or `npm run dev -- <cmd>`). Never test against the globally-installed `zotagent` — it executes the previously-installed build and will silently run stale code.
 
 ## Release Process
