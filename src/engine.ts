@@ -29,30 +29,43 @@ type VerifiedSearchRow = SearchResultRow & { referenceOnly: boolean };
 
 const ITEM_KEY_RE = /^[A-Z0-9]{8}$/;
 
+interface ResolvedItemKey {
+  itemKey: string;
+  citationKey?: string;
+}
+
+// Resolve the --key argument to a Zotero itemKey. citationKey lookups
+// translate to itemKey first so downstream fetching can grab *every*
+// ready attachment for that item, even if citationKey is missing or
+// stale on some entries (e.g. a partial re-sync).
+function resolveKeyToItemKey(key: string, entries: CatalogEntry[]): ResolvedItemKey {
+  if (ITEM_KEY_RE.test(key)) return { itemKey: key };
+  const matches = entries.filter((entry) => entry.citationKey === key);
+  if (matches.length === 0) {
+    throw new Error(`No indexed attachment found for citationKey: ${key}`);
+  }
+  const itemKeys = new Set(matches.map((entry) => entry.itemKey));
+  if (itemKeys.size > 1) {
+    throw new Error(
+      `Multiple items share citationKey "${key}": itemKeys = ${[...itemKeys].sort().join(", ")}`,
+    );
+  }
+  return { itemKey: itemKeys.values().next().value as string, citationKey: key };
+}
+
 function resolveReadyEntries(key: string, entries: CatalogEntry[]): CatalogEntry[] {
   if (!key) {
     throw new Error("Provide --key <key>.");
   }
-  const looksLikeItemKey = ITEM_KEY_RE.test(key);
+  const resolved = resolveKeyToItemKey(key, entries);
   const matched = entries
-    .filter((entry) => (looksLikeItemKey ? entry.itemKey === key : entry.citationKey === key))
+    .filter((entry) => entry.itemKey === resolved.itemKey)
     .sort((a, b) => a.filePath.localeCompare(b.filePath));
   if (matched.length === 0) {
-    throw new Error(
-      looksLikeItemKey
-        ? `No indexed attachment found for itemKey: ${key}`
-        : `No indexed attachment found for citationKey: ${key}`,
-    );
+    throw new Error(`No indexed attachment found for itemKey: ${resolved.itemKey}`);
   }
-  if (!looksLikeItemKey) {
-    const itemKeys = new Set(matched.map((entry) => entry.itemKey));
-    if (itemKeys.size > 1) {
-      throw new Error(
-        `Multiple items share citationKey "${key}": itemKeys = ${[...itemKeys].sort().join(", ")}`,
-      );
-    }
-  }
-  return matched;
+  const citationKey = resolved.citationKey ?? matched.find((entry) => entry.citationKey)?.citationKey;
+  return citationKey ? matched.map((entry) => ({ ...entry, citationKey })) : matched;
 }
 
 function groupReadyEntriesByItemKey(entries: CatalogEntry[]): Map<string, CatalogEntry[]> {

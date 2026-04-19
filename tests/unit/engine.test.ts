@@ -1930,3 +1930,121 @@ test("resolveReadyEntries rejects citationKey collisions across different itemKe
     /Multiple items share citationKey "dup2024": itemKeys = ITEMX000, ITEMY000/,
   );
 });
+
+test("citationKey lookup resolves to itemKey first, then fetches every attachment for that item", () => {
+  // Fixture: one item (ITEMP000) with two attachments; only the EPUB entry
+  // carries citationKey, and the PDF sorts first. --key partial2024 should
+  // still return both attachments and emit the canonical citationKey.
+  const root = mkdtempSync(join(tmpdir(), "zotagent-partial-citekey-"));
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docPdf = "p".repeat(40);
+  const docEpub = "q".repeat(40);
+  const manifestPdfPath = join(manifestsDir, `${docPdf}${MANIFEST_EXT}`);
+  const manifestEpubPath = join(manifestsDir, `${docEpub}${MANIFEST_EXT}`);
+
+  writeManifest(manifestPdfPath, {
+    docKey: docPdf,
+    itemKey: "ITEMP000",
+    title: "Partial",
+    authors: ["A"],
+    filePath: "/tmp/partial-one.pdf",
+    normalizedPath: join(dataDir, "normalized", `${docPdf}.md`),
+    blocks: [
+      {
+        blockIndex: 0,
+        blockType: "paragraph",
+        sectionPath: ["Body"],
+        text: "PDF body.",
+        charStart: 0,
+        charEnd: 9,
+        lineStart: 1,
+        lineEnd: 1,
+        isReferenceLike: false,
+      },
+    ],
+  });
+  writeManifest(manifestEpubPath, {
+    docKey: docEpub,
+    itemKey: "ITEMP000",
+    citationKey: "partial2024",
+    title: "Partial",
+    authors: ["A"],
+    filePath: "/tmp/partial-two.epub",
+    normalizedPath: join(dataDir, "normalized", `${docEpub}.md`),
+    blocks: [
+      {
+        blockIndex: 0,
+        blockType: "paragraph",
+        sectionPath: ["Body"],
+        text: "EPUB body.",
+        charStart: 0,
+        charEnd: 10,
+        lineStart: 1,
+        lineEnd: 1,
+        isReferenceLike: false,
+      },
+    ],
+  });
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [
+      {
+        docKey: docPdf,
+        itemKey: "ITEMP000",
+        title: "Partial",
+        authors: ["A"],
+        filePath: "/tmp/partial-one.pdf",
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: 1,
+        mtimeMs: 1,
+        sourceHash: "hash-partial-pdf",
+        lastIndexedAt: new Date().toISOString(),
+        normalizedPath: join(dataDir, "normalized", `${docPdf}.md`),
+        manifestPath: manifestPdfPath,
+      },
+      {
+        docKey: docEpub,
+        itemKey: "ITEMP000",
+        citationKey: "partial2024",
+        title: "Partial",
+        authors: ["A"],
+        filePath: "/tmp/partial-two.epub",
+        fileExt: "epub",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: 1,
+        mtimeMs: 1,
+        sourceHash: "hash-partial-epub",
+        lastIndexedAt: new Date().toISOString(),
+        normalizedPath: join(dataDir, "normalized", `${docEpub}.md`),
+        manifestPath: manifestEpubPath,
+      },
+    ],
+  });
+
+  const merged = fullTextDocument(
+    { key: "partial2024" },
+    {
+      bibliographyJsonPath: join(root, "bibliography.json"),
+      attachmentsRoot: root,
+      dataDir,
+    },
+  );
+
+  assert.equal(merged.itemKey, "ITEMP000");
+  assert.equal(merged.citationKey, "partial2024");
+  assert.deepEqual(merged.files, ["/tmp/partial-one.pdf", "/tmp/partial-two.epub"]);
+  assert.match(merged.content, /PDF body\./);
+  assert.match(merged.content, /EPUB body\./);
+});

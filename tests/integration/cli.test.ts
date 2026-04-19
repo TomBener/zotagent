@@ -330,6 +330,7 @@ test("help summarizes current commands and keeps config-only overrides out of th
     /^Document selector \(used by search-in, blocks, fulltext, expand\)$/m,
   );
   assert.match(result.stdout, /--key <key>\s+Resolve an item by itemKey or citationKey\./);
+  assert.match(result.stdout, /A leading @ is\s+stripped before dispatch/);
   assert.doesNotMatch(result.stdout, /--item-key <key>\s/);
   assert.doesNotMatch(result.stdout, /--citation-key <key>/);
 
@@ -444,7 +445,7 @@ test("metadata rejects search-only flags", () => {
 
   assert.equal(result.status, 1);
   assert.match(result.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
-  assert.match(result.stdout, /metadata only supports --limit, --field, --has-file, and --abstract/);
+  assert.match(result.stdout, /metadata only supports --limit, --field, --has-file, --abstract\. Remove: --keyword/);
 });
 
 test("s2 rejects metadata and search-only flags", () => {
@@ -1025,3 +1026,51 @@ test("blocks reports misses with shape-specific error messages", async () => {
   assert.match(citationKeyMiss.stdout, /No indexed attachment found for citationKey: unknown-cite-2099/);
 });
 
+test("fulltext strips a leading @ from --key so Pandoc-style citations resolve", async () => {
+  const fixture = await createIndexedFixture();
+
+  const result = runCli([
+    "fulltext",
+    "--key",
+    `@${fixture.citationKey}`,
+    "--bibliography",
+    fixture.bibliographyPath,
+    "--attachments-root",
+    fixture.attachmentsRoot,
+    "--data-dir",
+    fixture.dataDir,
+  ]);
+
+  assert.equal(result.status, 0);
+  const parsed = JSON.parse(result.stdout) as {
+    ok: boolean;
+    data: { itemKey: string; citationKey?: string };
+  };
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.data.itemKey, "ITEM9000");
+  assert.equal(parsed.data.citationKey, fixture.citationKey);
+});
+
+test("unknown flags are rejected with UNEXPECTED_ARGUMENT rather than silently ignored", () => {
+  const oldRenameFlag = runCli(["metadata", "dangwei", "--has-pdf"]);
+  assert.equal(oldRenameFlag.status, 1);
+  assert.match(oldRenameFlag.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
+  assert.match(oldRenameFlag.stdout, /Remove: --has-pdf/);
+
+  const typo = runCli(["blocks", "--key", "ABCD1234", "--limit-block", "5"]);
+  assert.equal(typo.status, 1);
+  assert.match(typo.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
+  assert.match(typo.stdout, /Remove: --limit-block/);
+
+  const mixedWithGlobalOverride = runCli([
+    "fulltext",
+    "--key",
+    "ABCD1234",
+    "--data-dir",
+    "/tmp/whatever",
+    "--no-such-thing",
+  ]);
+  assert.equal(mixedWithGlobalOverride.status, 1);
+  assert.match(mixedWithGlobalOverride.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
+  assert.match(mixedWithGlobalOverride.stdout, /Remove: --no-such-thing/);
+});

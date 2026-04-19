@@ -71,7 +71,7 @@ zotagent metadata "dangwei shuji" --has-file
 
 # Pipe the returned key into blocks / fulltext for the paper body
 zotagent blocks --key KG326EEI --offset-block 0 --limit-blocks 40
-zotagent fulltext --item-key KG326EEI --clean
+zotagent fulltext --key KG326EEI --clean
 ```
 
 ## Output-shape gotchas
@@ -79,11 +79,11 @@ zotagent fulltext --item-key KG326EEI --clean
 These are the most common surprises when consuming `zotagent` output. Read them before parsing results.
 
 - **`passage` is capped at 500 tokens**, measured via `o200k_base` (a close proxy for Claude's tokenizer). Every `search` / `search-in` / `search --semantic` row has its `passage` field truncated to ~500 tokens. A trailing `…` signals truncation. To see more text:
-  - For the same blocks only: `expand --item-key <k> --block-start <blockStart> --block-end <blockEnd> --radius 0`
+  - For the same blocks only: `expand --key <k> --block-start <blockStart> --block-end <blockEnd> --radius 0`
   - For surrounding context: add `--radius <n>` (default 2); the response grows linearly in block count, not characters.
   - Do NOT try to extract the full quotation from `passage` alone; always `expand` if you need guaranteed-complete text.
 - **`metadata` omits `abstract` by default.** To keep bulk responses compact, the `abstract` field is stripped. Pass `--abstract` to include it. If a script expects `abstract` to always be present, add the flag or handle the missing case.
-- **`--key` accepts both `itemKey` and `citationKey`.** Format dispatch is regex-based: `[A-Z0-9]{8}` → Zotero itemKey; anything else → Better BibTeX citationKey. You can feed either `@knuth1984` or `@ABCD1234` straight into `search-in` / `blocks` / `fulltext` / `expand`. Every response emits both keys. Prefer `itemKey` when persisting references across time (it never mutates); `citationKey` is fine for one-shot lookups that mirror what you see in a draft.
+- **`--key` accepts both `itemKey` and `citationKey`.** Format dispatch is regex-based: `[A-Z0-9]{8}` → Zotero itemKey; anything else → Better BibTeX citationKey. A leading `@` is stripped, so you can paste a Pandoc citation straight from a draft (`--key @knuth1984` resolves the same as `--key knuth1984`). Every response emits both keys. Prefer `itemKey` when persisting references across time (it never mutates); `citationKey` is fine for one-shot lookups that mirror what you see in a draft.
 - **Block indices are item-global.** When an item has multiple indexed attachments (e.g. PDF + EPUB), block indices are monotonic across them with `# Attachment: <name>` dividers. Pass block indices straight from `search` into `blocks` / `expand` — don't translate them.
 - **Every command — including errors — emits a JSON envelope.** On failure: `{"ok": false, "error": {"code": "...", "message": "..."}}` and a non-zero exit code. Missing credentials fail fast.
 

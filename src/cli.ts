@@ -34,6 +34,67 @@ const BOOLEAN_FLAGS = new Set([
 ]);
 const METADATA_FIELDS: MetadataField[] = ["title", "author", "year", "abstract", "journal", "publisher"];
 
+// Every known command declares exactly which command-specific flags it accepts.
+// Global config overrides (GLOBAL_OVERRIDE_FLAGS) are always permitted on top.
+// Anything else triggers UNEXPECTED_ARGUMENT rather than being silently ignored.
+const COMMAND_FLAG_ALLOWLIST: Record<string, ReadonlyArray<string>> = {
+  sync: ["attachments-root", "retry-errors", "pdf-timeout-ms", "pdf-batch-size"],
+  status: [],
+  config: [],
+  version: [],
+  help: [],
+  add: [
+    "doi",
+    "s2-paper-id",
+    "title",
+    "author",
+    "year",
+    "publication",
+    "url",
+    "url-date",
+    "access-date",
+    "collection-key",
+    "item-type",
+  ],
+  s2: ["limit"],
+  search: ["keyword", "semantic", "limit", "min-score"],
+  "search-in": ["key", "limit"],
+  metadata: ["limit", "field", "has-file", "abstract"],
+  blocks: ["key", "offset-block", "limit-blocks"],
+  fulltext: ["key", "clean"],
+  expand: ["key", "block-start", "block-end", "radius"],
+};
+
+const GLOBAL_OVERRIDE_FLAGS: ReadonlyArray<string> = [
+  "bibliography",
+  "bibliography-json",
+  "attachments-root",
+  "data-dir",
+  "qmd-embed-model",
+  "semantic-scholar-api-key",
+  "zotero-library-id",
+  "zotero-library-type",
+  "zotero-collection-key",
+  "zotero-api-key",
+  "embedding-provider",
+  "embedding-model",
+  "google-api-key",
+];
+
+function rejectUnknownFlags(command: string, flags: Record<string, FlagValue>): string | undefined {
+  const commandAllowlist = COMMAND_FLAG_ALLOWLIST[command];
+  if (commandAllowlist === undefined) return undefined;
+  const allowed = new Set<string>([...commandAllowlist, ...GLOBAL_OVERRIDE_FLAGS]);
+  const unknown = Object.keys(flags).filter((flag) => !allowed.has(flag)).sort();
+  if (unknown.length === 0) return undefined;
+  const unknownList = unknown.map((flag) => `--${flag}`).join(", ");
+  if (commandAllowlist.length === 0) {
+    return `${command} does not accept any command-specific flags. Remove: ${unknownList}`;
+  }
+  const validList = commandAllowlist.map((flag) => `--${flag}`).join(", ");
+  return `${command} only supports ${validList}. Remove: ${unknownList}`;
+}
+
 function getCliVersion(): string {
   const packageJsonPath = new URL("../package.json", import.meta.url);
   const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as { version: string };
@@ -98,6 +159,15 @@ function getStringFlag(flags: Record<string, FlagValue>, ...keys: string[]): str
     }
   }
   return undefined;
+}
+
+// Strip a leading '@' so agents can pass Pandoc-style @citekey / @itemkey
+// directly. CSL JSON stores the bare id, so the '@' is only a draft-syntax
+// wrapper and should not reach resolution.
+function getKeyFlag(flags: Record<string, FlagValue>): string | undefined {
+  const raw = getStringFlag(flags, "key");
+  if (!raw) return undefined;
+  return raw.startsWith("@") ? raw.slice(1) : raw;
 }
 
 function getStringListFlag(flags: Record<string, FlagValue>, ...keys: string[]): string[] {
@@ -258,10 +328,10 @@ Retrieval
         --radius <n>                Include n blocks before and after. Default: 2.
 
 Document selector (used by search-in, blocks, fulltext, expand)
-  --key <key>                   Resolve an item by itemKey or citationKey. Values matching
-                                [A-Z0-9]{8} are dispatched as itemKey; anything else as
-                                citationKey. Both forms are emitted in output alongside
-                                the stable itemKey.
+  --key <key>                   Resolve an item by itemKey or citationKey. A leading @ is
+                                stripped before dispatch; values matching [A-Z0-9]{8} are
+                                itemKey, anything else is citationKey. Both forms are emitted
+                                in output alongside the stable itemKey.
 
 Other
   version, --version            Print the current zotagent version.
@@ -313,6 +383,11 @@ async function main(): Promise<void> {
   }
 
   try {
+    const flagError = rejectUnknownFlags(command, parsed.flags);
+    if (flagError) {
+      emitError("UNEXPECTED_ARGUMENT", flagError);
+      return;
+    }
     switch (command) {
       case "sync": {
         if (parsed.positionals.length > 1) {
@@ -474,16 +549,6 @@ async function main(): Promise<void> {
       }
 
       case "s2": {
-        const invalidFlags = ["keyword", "semantic", "min-score", "field", "has-file"].filter(
-          (flag) => flag in parsed.flags,
-        );
-        if (invalidFlags.length > 0) {
-          emitError(
-            "UNEXPECTED_ARGUMENT",
-            `s2 only supports --limit. Remove: ${invalidFlags.map((flag) => `--${flag}`).join(", ")}`,
-          );
-          return;
-        }
         const query = parsed.positionals.slice(1).join(" ");
         if (!query) {
           emitError("MISSING_ARGUMENT", 'Missing Semantic Scholar search text. Use: zotagent s2 "<text>"');
@@ -552,7 +617,7 @@ async function main(): Promise<void> {
           emitError("MISSING_ARGUMENT", 'Missing search text. Use: zotagent search-in "<text>" --key <key>');
           return;
         }
-        const key = getStringFlag(parsed.flags, "key");
+        const key = getKeyFlag(parsed.flags);
         if (!key) {
           emitError("MISSING_ARGUMENT", "Provide --key <key>.");
           return;
@@ -583,18 +648,6 @@ async function main(): Promise<void> {
       }
 
       case "metadata": {
-        const invalidFlags = ["keyword", "semantic", "min-score"].filter(
-          (flag) => flag in parsed.flags,
-        );
-        if (invalidFlags.length > 0) {
-          emitError(
-            "UNEXPECTED_ARGUMENT",
-            `metadata only supports --limit, --field, --has-file, and --abstract. Remove: ${invalidFlags
-              .map((flag) => `--${flag}`)
-              .join(", ")}`,
-          );
-          return;
-        }
         if (parsed.flags.field === true) {
           emitError(
             "INVALID_ARGUMENT",
@@ -639,7 +692,7 @@ async function main(): Promise<void> {
       }
 
       case "blocks": {
-        const key = getStringFlag(parsed.flags, "key");
+        const key = getKeyFlag(parsed.flags);
         if (!key) {
           emitError("MISSING_ARGUMENT", "Provide --key <key>.");
           return;
@@ -682,7 +735,7 @@ async function main(): Promise<void> {
       }
 
       case "fulltext": {
-        const key = getStringFlag(parsed.flags, "key");
+        const key = getKeyFlag(parsed.flags);
         if (!key) {
           emitError("MISSING_ARGUMENT", "Provide --key <key>.");
           return;
@@ -704,7 +757,7 @@ async function main(): Promise<void> {
       }
 
       case "expand": {
-        const key = getStringFlag(parsed.flags, "key");
+        const key = getKeyFlag(parsed.flags);
         const blockStartInput = parseNumericFlag(parsed.flags, "block-start", {
           requirement: "a non-negative integer",
           constraint: "a non-negative integer",
