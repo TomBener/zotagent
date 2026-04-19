@@ -8,34 +8,41 @@
 
 ## Features
 
-- **Add to Zotero** — create items by DOI or basic fields and return the new `itemKey` immediately. `s2` searches Semantic Scholar and pipes a `paperId` into `add`.
-- **Index local attachments** — `sync` extracts and indexes PDF, EPUB, HTML, and TXT files from a Zotero library. PDF extraction uses an OpenDataLoader cascade with `pdftotext` fallback; EPUB and HTML extraction runs in-process.
-- **Search** — `search` runs FTS5 keyword search by default (`"exact phrase"`, `OR`, `NOT`, `NEAR`, prefix*) or semantic search with `--semantic` (qmd vector + LLM query expansion). Keyword search handles CJK (Chinese, Japanese, Korean) via character-level segmentation with `NEAR` proximity matching, and keeps only candidates verified by a phrase, term, or title hit to avoid FTS5 false positives. `search-in` scopes a query to a single document. `metadata` searches bibliography fields.
-- **Read** — `read`, `fulltext`, and `expand` return blocks, full normalized markdown, or context around a hit, addressed by `itemKey` or `citationKey`. When one item has multiple indexed attachments, they are merged into a single logical document with monotonic block indices and `# Attachment: <name>` dividers.
+Search and Read are the core features. Both read from a local index that `sync` builds from PDF, EPUB, HTML, and TXT attachments in a Zotero library — PDFs via an OpenDataLoader cascade with `pdftotext` fallback; EPUB and HTML extracted in-process.
+
+### Search
+
+- `search` — FTS5 keyword search (default) with porter stemming. Supports `"exact phrase"`, `OR`, `NOT`, `term NEAR/<n> term`, and `prefix*`. Chinese, Japanese, and Korean (CJK) text is supported with accurate phrase matching and built-in false-positive filtering.
+- `search --semantic` — vector search over [qmd](https://github.com/tobi/qmd) embeddings with LLM query expansion; slower and heavier than keyword search.
+- `search-in` — scope a text query to a single indexed item's attachments, addressed by `itemKey` or `citationKey`.
+- `metadata` — search the Zotero bibliography (CSL JSON) across `title`, `author`, `year`, `abstract`, `journal`, and `publisher`. `--field` narrows the fields searched; `--has-file` keeps only items with an indexed attachment.
+
+### Read
+
+- `read` — paginate blocks from one item's manifest with `--offset-block` / `--limit-blocks`.
+- `fulltext` — return the full normalized markdown for one item. `--clean` drops duplicate blocks and common boilerplate (citation notices, TOC lines).
+- `expand` — pull context around a block range, typically a search hit, with a configurable `--radius`.
+
+All three address an item by `itemKey` or `citationKey`. When one item has multiple indexed attachments, they are merged into one logical document with monotonic block indices and `# Attachment: <name>` dividers.
+
+### Add to Zotero
+
+- `add` — create an item by DOI or basic fields and return the new `itemKey` immediately.
+- `s2` — search Semantic Scholar; pipe a returned `paperId` into `add --s2-paper-id`.
 
 All commands write JSON to stdout and are designed to be chained by AI agents.
 
 ## Installation
 
-Requirements:
-
-- Node.js `24+`
-- JDK `11+` (only used by `sync` for PDF extraction)
-- `pdftotext` (Poppler) is optional but recommended; `sync` uses it as a final fallback when OpenDataLoader fails
-
-With Homebrew:
+Install `zotagent` with Homebrew:
 
 ```bash
 brew install TomBener/tap/zotagent
 ```
-
-From source:
+Install the `zotagent` skill:
 
 ```bash
-npm install
-npm run check
-npm run build
-npm install -g .
+npx skills add TomBener/zotagent
 ```
 
 Configure once at `~/.zotagent/config.json`:
@@ -53,32 +60,142 @@ Configure once at `~/.zotagent/config.json`:
 }
 ```
 
-`zoteroLibraryType` accepts `user` or `group`. `zoteroCollectionKey` is optional. The Semantic Scholar key is only needed for `s2` and `add --s2-paper-id`. Any of these can also come from environment variables (`ZOTAGENT_*` or unprefixed fallbacks like `ZOTERO_API_KEY`).
+Where each field comes from:
 
-### Read-only hosts
+- **`bibliographyJsonPath`** — a **Better CSL JSON** export produced by the [Better BibTeX for Zotero](https://retorque.re/zotero-better-bibtex) plugin. The translator already emits the citation key (`id`) and attachment paths (`file`), but the Zotero item key (`zotero-item-key`) is **not** included by default — and zotagent silently skips any item without it. Add this one-line postscript in Better BibTeX preferences (Edit → Preferences → Better BibTeX → Export → Postscript):
 
-If you share `dataDir` across machines (e.g. via iCloud) but keep the attachment files only on the machine that runs `sync`, set `"syncEnabled": false` in the other hosts' `~/.zotagent/config.json` (or export `ZOTAGENT_SYNC_ENABLED=false`). `sync` on those hosts fails fast with `SYNC_DISABLED` before touching the index — without this guard, a misfired `sync` would see every attachment as missing and wipe the keyword / semantic indexes. All read commands (`search`, `read`, `expand`, `fulltext`, `metadata`) still work.
+  ```javascript
+  if (Translator.BetterCSLJSON) {
+    csl["zotero-item-key"] = zotero.key;
+  }
+  ```
 
-## Agent skill
+  Then set Better BibTeX's auto-export trigger to `On Change` so `bibliography.json` stays in sync with the library without manual re-exports.
 
-[`skills/zotagent/SKILL.md`](./skills/zotagent/SKILL.md) teaches AI coding agents (Claude Code, Codex, Cursor, etc.) how to drive this CLI. Install it via [`skills`](https://github.com/vercel-labs/skills):
+- **`attachmentsRoot`** — the root folder where Zotero keeps attachment files. For linked attachments, use the path configured at Zotero → Settings → Files and Folders → "Linked Attachment Base Directory". For stored attachments, this is typically `~/Zotero/storage`.
 
-```bash
-npx skills add TomBener/zotagent
-```
+- **`dataDir`** — where zotagent writes its index, manifests, and normalized markdown. Point this at an iCloud / Dropbox folder to share the cached index across machines (see the read-only-hosts tip below).
+
+- **`zoteroLibraryId`** and **`zoteroLibraryType`** — open [zotero.org/settings/security](https://www.zotero.org/settings/security); your numeric userID is shown at the top of the "Applications" section. Use `"user"` with that userID for a personal library, or `"group"` with the group ID (visible under Groups) for a shared library.
+
+- **`zoteroApiKey`** — required by `add` (and `add --s2-paper-id`). Create one at [zotero.org/settings/keys/new](https://www.zotero.org/settings/keys/new) with library read/write access for the target library.
+
+- **`zoteroCollectionKey`** — optional. 8-character key of a collection that `add` will drop new items into. Open the collection in the Zotero web library (`zotero.org/<user>/collections/<key>`); the last segment is the key.
+
+- **`semanticScholarApiKey`** — required by `s2` and `add --s2-paper-id`; other commands ignore it. Request one from the "API Key Form" on [semanticscholar.org/product/api](https://www.semanticscholar.org/product/api#api-key) (approval typically takes a few business days).
+
+Any of these can also come from environment variables (`ZOTAGENT_*` or unprefixed fallbacks like `ZOTERO_API_KEY`).
+
+> [!TIP]
+> **Read-only hosts:** If you share `dataDir` across machines (e.g. via iCloud) but keep the attachment files only on the machine that runs `sync`, set `"syncEnabled": false` in the other hosts' `~/.zotagent/config.json` (or export `ZOTAGENT_SYNC_ENABLED=false`). `sync` on those hosts fails fast with `SYNC_DISABLED` before touching the index — without this guard, a misfired `sync` would see every attachment as missing and wipe the keyword / semantic indexes. All read commands (`search`, `read`, `expand`, `fulltext`, `metadata`) still work.
 
 ## Usage
 
-Run `zotagent help` for the full command reference. A typical session:
+`zotagent help` prints the full command reference:
 
 ```bash
-zotagent sync                                       # build or refresh the local index
-zotagent add --doi "10.1111/dech.70058"             # add by DOI, returns itemKey
-zotagent search "party secretary governance"        # FTS5 keyword search
-zotagent search "aging in China" --semantic         # qmd semantic search
-zotagent metadata "Development and Change" --field journal
-zotagent read --item-key KG326EEI                   # read blocks from one document
-zotagent expand --item-key KG326EEI --block-start 10 --radius 2
+zotagent — Zotero CLI for AI agents.
+
+Usage: zotagent <command> [flags]
+
+Index
+  sync [--attachments-root <path>] [--retry-errors] [--pdf-timeout-ms <n>] [--pdf-batch-size <n>]
+      Build or refresh the local index of PDF, EPUB, HTML, and TXT attachments.
+      Unchanged extraction errors are skipped by default; pass --retry-errors to retry them.
+        --attachments-root <path>   Index only a Zotero subfolder.
+        --retry-errors              Retry unchanged files that failed extraction earlier.
+        --pdf-timeout-ms <n>        Override the OpenDataLoader timeout for each PDF extraction call.
+        --pdf-batch-size <n>        Override the maximum number of PDFs per extraction batch.
+
+  status
+      Show attachment counts, local index paths, and qmd status.
+
+Add to Zotero
+  add [--doi <doi> | --s2-paper-id <id>] [--title <text>] [--author <name>] [--year <text>]
+      [--publication <text>] [--url <url>] [--url-date <date>] [--collection-key <key>] [--item-type <type>]
+      Create a Zotero item and return its itemKey. Prefer --doi when available.
+      --s2-paper-id imports from Semantic Scholar (and still prefers DOI when present).
+        --doi <doi>                 Import from DOI metadata when possible.
+        --s2-paper-id <id>          Import a Semantic Scholar paper by paperId.
+        --title <text>              Set title for manual add or DOI fallback.
+        --author <name>             Add an author. Repeat for multiple authors.
+        --year <text>               Set the Zotero date field.
+        --publication <text>        Set journal, website, or container title when supported.
+        --url <url>                 Set the item URL.
+        --url-date <date>           Set the access date for the URL.
+        --collection-key <key>      Add the new item to a Zotero collection by collection key.
+        --item-type <type>          Override the Zotero item type. Default: journalArticle or webpage.
+
+  s2 "<text>" [--limit <n>]
+      Search Semantic Scholar; pass a returned paperId to `add --s2-paper-id`.
+
+Search
+  search "<text>" [--keyword | --semantic] [--limit <n>] [--min-score <n>]
+      Search indexed documents.
+      Default is keyword search (FTS5 with porter stemming): "exact phrase", OR, NOT,
+      term NEAR/<n> term, prefix*. Use NEAR/50 for proximity; NEAR(...) is not accepted.
+      --semantic uses vector + LLM query expansion (slower, heavier); cannot combine with --keyword.
+        --limit <n>                 Return up to n search results. Default: 10 for search, 20 for metadata.
+        --min-score <n>             Drop lower-scoring search hits before mapping.
+
+  search-in "<text>" (--item-key <key> | --citation-key <key>) [--limit <n>]
+      Search within all attachments of one indexed item.
+
+  metadata "<text>" [--limit <n>] [--field <field>] [--has-file] [--abstract]
+      Search Zotero bibliography metadata from bibliography.json.
+        --field <field>             Limit metadata search to title, author, year, abstract, journal,
+                                    or publisher. Repeatable.
+        --has-file                  Keep only metadata results with a supported indexed attachment.
+        --abstract                  Include the abstract in each result. Omitted by default to keep
+                                    bulk responses compact for agents.
+
+Read
+  read (--item-key <key> | --citation-key <key>) [--offset-block <n>] [--limit-blocks <n>]
+      Read blocks from a local manifest.
+      When one item has multiple indexed attachments, they are merged into one logical
+      document with monotonic block indices and "# Attachment: <name>" dividers between them.
+        --offset-block <n>          Start reading at block n. Default: 0.
+        --limit-blocks <n>          Read up to n blocks. Default: 20.
+
+  fulltext (--item-key <key> | --citation-key <key>) [--clean]
+      Output agent-friendly full text for one item. Multi-attachment items return one
+      merged markdown document.
+        --clean                     Apply heuristic cleanup (drops duplicate blocks and
+                                    common boilerplate such as citation notices and TOC lines).
+
+  expand (--item-key <key> | --citation-key <key>) --block-start <n> [--block-end <n>] [--radius <n>]
+      Expand around a search hit or block range from a local manifest.
+      Block indices are item-global; feed blockStart from search results directly.
+        --block-start <n>           Start block for expand.
+        --block-end <n>             End block for expand. Default: block-start.
+        --radius <n>                Include n blocks before and after. Default: 2.
+
+Document selectors (used by search-in, read, fulltext, expand)
+  --item-key <key>              Resolve an indexed item by Zotero item key.
+  --citation-key <key>          Resolve an indexed item by citation key.
+
+Other
+  version, --version            Print the current zotagent version.
+  help, --help                  Show this help.
+
+Config
+  Paths and credentials are read from ~/.zotagent/config.json.
+  The add command also needs zoteroLibraryId, zoteroLibraryType, and zoteroApiKey.
+  zoteroLibraryType supports both user and group.
+  zoteroCollectionKey sets the default collection for new items created by add.
+  The s2 command and --s2-paper-id also need semanticScholarApiKey.
+
+Examples
+  zotagent sync
+  zotagent add --doi "10.1016/j.econmod.2026.107590"
+  zotagent s2 "state-owned enterprise governance" --limit 5
+  zotagent search '"aging in China" NOT famine'
+  zotagent search "party secretary governance" --semantic
+  zotagent search-in "dangwei shuji" --item-key KG326EEI
+  zotagent metadata "American Journal of Political Science" --field journal
+  zotagent read --item-key KG326EEI
+  zotagent fulltext --citation-key lee2024aging --clean
+  zotagent expand --item-key KG326EEI --block-start 10 --radius 2
 ```
 
 A few behaviors worth knowing:
@@ -95,19 +212,10 @@ A few behaviors worth knowing:
 
 ```bash
 npm install
-npm run check       # tsc --noEmit + node --test
-npm run build       # tsc → dist/
-npm run dev -- sync # run the CLI from source via tsx
+npm run check
+npm run build
+npm run dev -- sync
 ```
-
-Project layout (high level):
-
-- `src/cli.ts` — command parsing and dispatch
-- `src/sync.ts` — extraction cascade, manifest writing, keyword/qmd index updates
-- `src/engine.ts` — `search`, `read`, `expand`, `fulltext`
-- `src/keyword-db.ts`, `src/qmd.ts` — keyword (FTS5) and semantic (qmd) backends
-- `src/add.ts`, `src/s2.ts` — Zotero Web API and Semantic Scholar clients
-- `tests/unit`, `tests/integration` — unit and CLI integration tests
 
 ## License
 
