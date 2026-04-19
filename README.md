@@ -191,13 +191,9 @@ Other
 
 Config
   config
-      Interactively set ~/.zotagent/config.json. Prompts for each basic field using
-      the current value (if any) as default; Enter keeps, `-` clears an optional
-      field. Requires an interactive terminal.
+      Interactively set ~/.zotagent/config.json.
 
   Paths and credentials are read from ~/.zotagent/config.json.
-  zoteroLibraryType supports both user and group.
-  zoteroCollectionKey sets the default collection for new items created by add.
   Any field can also come from a ZOTAGENT_* env var (ZOTERO_* /
   SEMANTIC_SCHOLAR_* are accepted as unprefixed fallbacks).
 ```

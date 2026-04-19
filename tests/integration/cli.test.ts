@@ -335,8 +335,6 @@ test("help summarizes current commands and keeps config-only overrides out of th
   assert.match(result.stdout, /^\s+config$/m);
   assert.match(result.stdout, /Interactively set \~\/\.zotagent\/config\.json\./);
   assert.match(result.stdout, /Paths and credentials are read from \~\/\.zotagent\/config\.json\./);
-  assert.match(result.stdout, /zoteroLibraryType supports both user and group\./);
-  assert.match(result.stdout, /zoteroCollectionKey sets the default collection/);
 
   // Examples block was removed; workflows live in the zotagent skill, not here.
   assert.doesNotMatch(result.stdout, /^Examples$/m);
