@@ -59,6 +59,14 @@ Configure once at `~/.zotagent/config.json`:
 
 If you share `dataDir` across machines (e.g. via iCloud) but keep the attachment files only on the machine that runs `sync`, set `"syncEnabled": false` in the other hosts' `~/.zotagent/config.json` (or export `ZOTAGENT_SYNC_ENABLED=false`). `sync` on those hosts fails fast with `SYNC_DISABLED` before touching the index — without this guard, a misfired `sync` would see every attachment as missing and wipe the keyword / semantic indexes. All read commands (`search`, `read`, `expand`, `fulltext`, `metadata`) still work.
 
+## Agent skill
+
+[`skills/zotagent/SKILL.md`](./skills/zotagent/SKILL.md) teaches AI coding agents (Claude Code, Codex, Cursor, etc.) how to drive this CLI. Install it via [`skills`](https://github.com/vercel-labs/skills):
+
+```bash
+npx skills add TomBener/zotagent
+```
+
 ## Usage
 
 Run `zotagent help` for the full command reference. A typical session:
