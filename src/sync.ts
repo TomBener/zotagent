@@ -70,18 +70,18 @@ const ODL_DEFAULT_BATCH_SIZE = 8;
 const ODL_SINGLE_BATCH_SIZE_BYTES = 20 * 1024 * 1024;
 
 const require = createRequire(import.meta.url);
-const PACKAGE_JSON = require("../package.json") as { version?: string };
-const ZOTAGENT_PACKAGE_VERSION =
-  typeof PACKAGE_JSON.version === "string" && PACKAGE_JSON.version.length > 0 ? PACKAGE_JSON.version : "unknown";
 const ODL_PACKAGE_ENTRY = require.resolve("@opendataloader/pdf");
 const ODL_JAR_PATH = resolve(dirname(ODL_PACKAGE_ENTRY), "..", "lib", ODL_JAR_NAME);
+// Bump this when the sync pipeline's indexing logic changes in a way that
+// invalidates previously stored embeddings or keyword rows. Do NOT tie it to
+// the zotagent package version — routine releases should not trigger a full
+// re-embed of the library.
 const SYNC_INDEXER_VERSION = "sync-index-v1";
 
 export function buildIndexerSignature(qmdEmbedModel: string): string {
   return createHash("sha1")
     .update(
       [
-        `zotagent=${ZOTAGENT_PACKAGE_VERSION}`,
         `syncIndexer=${SYNC_INDEXER_VERSION}`,
         `keywordSchema=${KEYWORD_INDEX_SCHEMA_VERSION}`,
         `qmdPackage=${QMD_PACKAGE_VERSION}`,
@@ -1704,8 +1704,8 @@ export async function runSync(
     // only present if the previous run reached the end of the qmd block, so a
     // crash between the progress-catalog write and qmd completion does not
     // incorrectly trigger this path. Also require indexer state to match:
-    // changing the qmd model, qmd package, keyword schema, or zotagent indexer
-    // version invalidates stored index data.
+    // changing the qmd model, qmd package, keyword schema, or SYNC_INDEXER_VERSION
+    // invalidates stored index data.
     const allEntriesUnchanged =
       previousCatalog.indexesCompletedAt !== undefined &&
       !qmdEmbedModelChanged &&
