@@ -19,6 +19,8 @@ Do not invent citation keys, item keys, or passage text. If a command returns no
 
 Keyword syntax (default `search`): `"exact phrase"`, `OR`, `NOT`, `term NEAR/50 term`, `prefix*`. `NEAR(...)` syntax is **not** accepted; use `NEAR/<n>`.
 
+Chinese trad/simp folding: `search`, `search-in`, and `metadata` fold traditional to simplified at both index and query time, so 黨組書記 and 党组书记 match each other — you don't need to try both forms. `search --semantic` does NOT fold; align the query to the likely source form. Returned text preserves the original characters as stored.
+
 ## Typical workflows
 
 ### Find passages, then retrieve surrounding context
