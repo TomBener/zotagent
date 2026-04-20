@@ -2571,6 +2571,85 @@ test("readCatalogFile relocates stale Mac home paths to the current iCloud dataD
   }
 });
 
+test("readCatalogFile redirects cache paths outside the current dataDir to the fallback path", () => {
+  // Regression: when a catalog is cloned from a backup (or carries paths from
+  // an earlier dataDir location), its `manifestPath` / `normalizedPath` may
+  // still point into the old dataDir. If those files still exist there,
+  // hydration used to keep the foreign path, and sync would silently reuse
+  // cache from outside the current dataDir. That couples two installations
+  // and causes confusing staleness. Hydration must redirect to the current
+  // dataDir's canonical path; sync will then decide reusability against that
+  // path alone.
+  const root = mkdtempSync(join(tmpdir(), "zotagent-catalog-foreign-dir-"));
+  try {
+    const foreignDataDir = join(root, "foreign-data");
+    const currentDataDir = join(root, "current-data");
+    const foreignIndex = join(foreignDataDir, "index");
+    const currentIndex = join(currentDataDir, "index");
+    const foreignNormalized = join(foreignDataDir, "normalized");
+    const foreignManifests = join(foreignDataDir, "manifests");
+    const currentNormalized = join(currentDataDir, "normalized");
+    const currentManifests = join(currentDataDir, "manifests");
+    mkdirSync(foreignIndex, { recursive: true });
+    mkdirSync(foreignNormalized, { recursive: true });
+    mkdirSync(foreignManifests, { recursive: true });
+    mkdirSync(currentIndex, { recursive: true });
+    mkdirSync(currentNormalized, { recursive: true });
+    mkdirSync(currentManifests, { recursive: true });
+
+    const docKey = "9".repeat(40);
+    // Populate the foreign dataDir with cache files (simulating an old backup
+    // the user happens to still have lying around).
+    writeFileSync(join(foreignNormalized, `${docKey}.md`), "Foreign body");
+    writeFileSync(join(foreignManifests, `${docKey}${MANIFEST_EXT}`), "{}");
+
+    const foreignNormalizedPath = join(foreignNormalized, `${docKey}.md`);
+    const foreignManifestPath = join(foreignManifests, `${docKey}${MANIFEST_EXT}`);
+    const expectedFallbackNormalizedPath = join(currentNormalized, `${docKey}.md`);
+    const expectedFallbackManifestPath = join(currentManifests, `${docKey}${MANIFEST_EXT}`);
+
+    writeFileSync(
+      join(currentIndex, "catalog.json"),
+      JSON.stringify(
+        {
+          version: 1,
+          generatedAt: new Date().toISOString(),
+          entries: [
+            {
+              docKey,
+              itemKey: "ITEM1",
+              title: "Paper",
+              authors: [],
+              filePath: "/irrelevant.pdf",
+              fileExt: "pdf",
+              exists: true,
+              supported: true,
+              extractStatus: "ready",
+              size: 1,
+              mtimeMs: 1,
+              sourceHash: "hash",
+              lastIndexedAt: new Date().toISOString(),
+              normalizedPath: foreignNormalizedPath,
+              manifestPath: foreignManifestPath,
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+
+    const hydrated = readCatalogFile(join(currentIndex, "catalog.json"));
+    // Even though the foreign paths exist on disk, hydration must point the
+    // entry at the current dataDir's path.
+    assert.equal(hydrated.entries[0]?.normalizedPath, expectedFallbackNormalizedPath);
+    assert.equal(hydrated.entries[0]?.manifestPath, expectedFallbackManifestPath);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("runSync keeps cached outputs when attachment disappears from the current catalog", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-stale-"));
   const attachmentsRoot = join(root, "attachments");

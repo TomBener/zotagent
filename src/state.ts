@@ -18,6 +18,12 @@ function replaceForeignHome(path: string): string {
   return replaced !== normalized && exists(replaced) ? replaced : normalized;
 }
 
+function isInsideDir(candidate: string, root: string): boolean {
+  const normalizedCandidate = normalizePathForLookup(candidate);
+  const normalizedRoot = normalizePathForLookup(root);
+  return normalizedCandidate.startsWith(`${normalizedRoot}/`);
+}
+
 function hydrateCatalogEntry(entry: CatalogEntry, dataDir: string): CatalogEntry {
   const normalizedPath = entry.normalizedPath
     ? replaceForeignHome(entry.normalizedPath)
@@ -29,13 +35,26 @@ function hydrateCatalogEntry(entry: CatalogEntry, dataDir: string): CatalogEntry
   const fallbackNormalizedPath = resolve(dataDir, "normalized", `${entry.docKey}.md`);
   const fallbackManifestPath = resolve(dataDir, "manifests", `${entry.docKey}${MANIFEST_EXT}`);
 
+  // Cached artifacts that live outside the current dataDir must never be
+  // reused: they belong to a different dataDir (e.g. a catalog migrated from
+  // another machine or cloned from a backup) and reading from them silently
+  // couples two installations. Fall back to the current-dataDir path; the
+  // downstream reusability check will decide whether to reuse it or re-extract.
+  const normalizedInside = isInsideDir(normalizedPath, dataDir);
+  const manifestInside = isInsideDir(manifestPath, dataDir);
+
+  const resolvedNormalizedPath = normalizedInside && exists(normalizedPath)
+    ? normalizedPath
+    : fallbackNormalizedPath;
+  const resolvedManifestPath = manifestInside && exists(manifestPath)
+    ? manifestPath
+    : fallbackManifestPath;
+
   return {
     ...entry,
     filePath: replaceForeignHome(entry.filePath),
-    ...(entry.normalizedPath
-      ? { normalizedPath: exists(normalizedPath) ? normalizedPath : fallbackNormalizedPath }
-      : {}),
-    ...(entry.manifestPath ? { manifestPath: exists(manifestPath) ? manifestPath : fallbackManifestPath } : {}),
+    ...(entry.normalizedPath ? { normalizedPath: resolvedNormalizedPath } : {}),
+    ...(entry.manifestPath ? { manifestPath: resolvedManifestPath } : {}),
   };
 }
 
