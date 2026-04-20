@@ -1415,7 +1415,17 @@ export async function runSync(
         }
       }
 
-      if (!previousIsReadyAndUnchanged && !fallbackArtifactsReusable) {
+      // If the previous record says the attachment was ready but the source
+      // file's size/mtime has changed since, on-disk artifacts matching the
+      // docKey are stale — they were produced before the change. Reusing them
+      // would keep indexing the pre-change content (seen in practice after a
+      // user re-OCR's a scanned PDF in place). The `fallbackArtifactsReusable`
+      // path is only valid as a recovery hint when we have no reliable prior
+      // size/mtime to compare against (catalog lost, or previous status was
+      // missing/error with null metadata).
+      const previousWasReadyButChanged =
+        previous?.extractStatus === "ready" && !previousIsUnchanged;
+      if (!previousIsReadyAndUnchanged && (previousWasReadyButChanged || !fallbackArtifactsReusable)) {
         changedAttachments.push(attachment);
         continue;
       }
