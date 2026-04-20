@@ -1547,9 +1547,12 @@ export async function runSync(
         skippedAttachments: stats.skippedAttachments,
         note: `starting batch with ${batch.length} pdf(s)`,
       });
-      logger.info(`Extracting batch ${batchIndex + 1}/${batches.length} (${batch.length} PDF(s)).`, {
+      logger.info(`Extracting batch ${batchIndex + 1}/${batches.length} (${batch.length} PDF(s)):`, {
         console: true,
       });
+      for (const attachment of batch) {
+        logger.info(`  - ${compactHomePath(attachment.filePath)}`);
+      }
       try {
         const extracted = await extractBatchFn(
           batch,
@@ -1683,6 +1686,15 @@ export async function runSync(
       writeProgressCatalog(paths.catalogPath, nextEntries, progressIndexerState);
     }
 
+    if (staleDocKeys.size > 0) {
+      logger.info(`Removing ${staleDocKeys.size} attachment(s) no longer in the catalog:`, {
+        console: true,
+      });
+      for (const docKey of staleDocKeys) {
+        const previous = previousByDocKey.get(docKey);
+        if (previous) logger.info(`  - ${compactHomePath(previous.filePath)}`);
+      }
+    }
     for (const docKey of staleDocKeys) {
       stats.removedAttachments += 1;
       const previous = previousByDocKey.get(docKey);
