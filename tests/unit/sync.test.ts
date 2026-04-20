@@ -1310,8 +1310,8 @@ test("runSync re-extracts renamed attachments when cached artifacts are not reus
   );
 
   assert.equal(extractCalls.length, 1);
-  assert.ok(existsSync(oldNormalizedPath), "bad old normalized cache should not be moved");
-  assert.ok(existsSync(oldManifestPath), "bad old manifest cache should not be moved");
+  assert.ok(!existsSync(oldNormalizedPath), "stale docKey normalized cache should be pruned");
+  assert.ok(!existsSync(oldManifestPath), "stale docKey manifest cache should be pruned");
   assert.equal(readFileSync(join(normalizedDir, `${newDocKey}.md`), "utf-8"), "Fresh extraction");
 });
 
@@ -1435,8 +1435,8 @@ test("runSync re-extracts renamed attachments when rename candidates are ambiguo
   );
 
   assert.equal(extractCalls.length, 1);
-  assert.ok(existsSync(previousEntries[0]!.normalizedPath));
-  assert.ok(existsSync(previousEntries[1]!.normalizedPath));
+  assert.ok(!existsSync(previousEntries[0]!.normalizedPath));
+  assert.ok(!existsSync(previousEntries[1]!.normalizedPath));
   assert.equal(
     readFileSync(join(normalizedDir, `${newDocKey}.md`), "utf-8"),
     "Fresh extraction for ambiguous rename",
@@ -2650,7 +2650,7 @@ test("readCatalogFile redirects cache paths outside the current dataDir to the f
   }
 });
 
-test("runSync keeps cached outputs when attachment disappears from the current catalog", async () => {
+test("runSync prunes cached outputs when attachment disappears from the current catalog", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-stale-"));
   const attachmentsRoot = join(root, "attachments");
   const dataDir = join(root, "data");
@@ -2718,8 +2718,8 @@ test("runSync keeps cached outputs when attachment disappears from the current c
 
   assert.equal(result.stats.removedAttachments, 1);
   assert.equal(statSync(indexDir).isDirectory(), true);
-  assert.equal(existsSync(normalizedPath), true);
-  assert.equal(existsSync(manifestPath), true);
+  assert.equal(existsSync(normalizedPath), false);
+  assert.equal(existsSync(manifestPath), false);
 });
 
 test("runSync reuses cached outputs after an attachment temporarily disappears", async () => {

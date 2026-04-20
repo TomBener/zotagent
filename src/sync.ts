@@ -1158,11 +1158,10 @@ export async function runSync(
     );
     const previousCatalog = readCatalogFile(paths.catalogPath);
     const previousByDocKey = mapEntriesByDocKey(previousCatalog);
-    // Paths the current bibliography still references. Used twice below:
-    // (a) building the rename-detection index, so we only treat an entry as
-    //     the "old side" of a rename when its filePath has actually dropped
-    //     out of the bibliography — otherwise it is still live;
-    // (b) deciding whether to prune caches for deduplicated attachments.
+    // Paths the current bibliography still references. Used when building the
+    // rename-detection index so we only treat an entry as the "old side" of a
+    // rename when its filePath has actually dropped out of the bibliography —
+    // otherwise it is still live.
     const bibliographyReferencedPaths = new Set(
       catalogData.records.flatMap((record) => record.attachmentPaths),
     );
@@ -1697,13 +1696,6 @@ export async function runSync(
     }
     for (const docKey of staleDocKeys) {
       stats.removedAttachments += 1;
-      const previous = previousByDocKey.get(docKey);
-      // Only prune cached artifacts for deliberately-deduplicated attachments
-      // (the file is still referenced by the bibliography, just filtered from
-      // the indexer queue). Attachments that simply disappeared from disk or
-      // from Zotero keep their cache so a future sync can resume without
-      // re-extracting.
-      if (!previous || !bibliographyReferencedPaths.has(previous.filePath)) continue;
       const manifestPath = resolve(paths.manifestsDir, `${docKey}${MANIFEST_EXT}`);
       const normalizedPath = resolve(paths.normalizedDir, `${docKey}.md`);
       for (const p of [manifestPath, normalizedPath]) {
