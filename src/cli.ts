@@ -38,7 +38,7 @@ const METADATA_FIELDS: MetadataField[] = ["title", "author", "year", "abstract",
 // Global config overrides (GLOBAL_OVERRIDE_FLAGS) are always permitted on top.
 // Anything else triggers UNEXPECTED_ARGUMENT rather than being silently ignored.
 const COMMAND_FLAG_ALLOWLIST: Record<string, ReadonlyArray<string>> = {
-  sync: ["attachments-root", "retry-errors", "pdf-timeout-ms", "pdf-batch-size"],
+  sync: ["attachments-root", "retry-errors", "pdf-timeout-ms", "pdf-batch-size", "pdf-concurrency"],
   status: [],
   config: [],
   version: [],
@@ -256,12 +256,15 @@ meta?} with exit code 1. Missing credentials fail fast with a JSON error.
 
 Index
   sync [--attachments-root <path>] [--retry-errors] [--pdf-timeout-ms <n>] [--pdf-batch-size <n>]
+       [--pdf-concurrency <n>]
       Build or refresh the local index of PDF, EPUB, HTML, and TXT attachments.
       Unchanged extraction errors are skipped by default; pass --retry-errors to retry them.
         --attachments-root <path>   Index only a Zotero subfolder.
         --retry-errors              Retry unchanged files that failed extraction earlier.
         --pdf-timeout-ms <n>        Override the OpenDataLoader timeout for each PDF extraction call.
         --pdf-batch-size <n>        Override the maximum number of PDFs per extraction batch.
+        --pdf-concurrency <n>       Run N extraction batches in parallel (default 2). Each batch
+                                    spawns its own java process; tune with available CPU and RAM.
 
   status
       Show attachment counts, local index paths, and qmd status.
@@ -399,6 +402,10 @@ async function main(): Promise<void> {
           emitError("INVALID_ARGUMENT", "`--pdf-batch-size` requires a positive number.");
           return;
         }
+        if (parsed.flags["pdf-concurrency"] === true) {
+          emitError("INVALID_ARGUMENT", "`--pdf-concurrency` requires a positive number.");
+          return;
+        }
         const pdfTimeoutMs = getNumberFlag(parsed.flags, "pdf-timeout-ms");
         if (pdfTimeoutMs !== undefined && (!Number.isInteger(pdfTimeoutMs) || pdfTimeoutMs <= 0)) {
           emitError("INVALID_ARGUMENT", "`--pdf-timeout-ms` must be a positive integer.");
@@ -407,6 +414,11 @@ async function main(): Promise<void> {
         const pdfBatchSize = getNumberFlag(parsed.flags, "pdf-batch-size");
         if (pdfBatchSize !== undefined && (!Number.isInteger(pdfBatchSize) || pdfBatchSize <= 0)) {
           emitError("INVALID_ARGUMENT", "`--pdf-batch-size` must be a positive integer.");
+          return;
+        }
+        const pdfConcurrency = getNumberFlag(parsed.flags, "pdf-concurrency");
+        if (pdfConcurrency !== undefined && (!Number.isInteger(pdfConcurrency) || pdfConcurrency <= 0)) {
+          emitError("INVALID_ARGUMENT", "`--pdf-concurrency` must be a positive integer.");
           return;
         }
         const syncConfig = resolveConfig(overrides);
@@ -421,6 +433,7 @@ async function main(): Promise<void> {
           ...(getBooleanFlag(parsed.flags, "retry-errors") ? { retryErrors: true } : {}),
           ...(pdfTimeoutMs !== undefined ? { pdfTimeoutMs } : {}),
           ...(pdfBatchSize !== undefined ? { pdfBatchSize } : {}),
+          ...(pdfConcurrency !== undefined ? { pdfConcurrency } : {}),
         });
         emitOk(
           {

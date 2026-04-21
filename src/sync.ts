@@ -67,6 +67,7 @@ function isOdlTimeout(error: unknown): boolean {
 const ODL_EXTRA_BATCH_TIMEOUT_MS = 30_000;
 const ODL_FORCE_KILL_GRACE_MS = 1_000;
 const ODL_DEFAULT_BATCH_SIZE = 8;
+const ODL_DEFAULT_CONCURRENCY = 2;
 const ODL_SINGLE_BATCH_SIZE_BYTES = 20 * 1024 * 1024;
 
 const require = createRequire(import.meta.url);
@@ -691,6 +692,7 @@ export type SyncRunOptions = {
   retryErrors?: boolean;
   pdfTimeoutMs?: number;
   pdfBatchSize?: number;
+  pdfConcurrency?: number;
 };
 
 async function extractBatchPdftotext(
@@ -1527,8 +1529,13 @@ export async function runSync(
     }
 
     const batches = groupForOdlBatches(pdfAttachments, options.pdfBatchSize ?? ODL_DEFAULT_BATCH_SIZE);
-    for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
-      const batch = batches[batchIndex]!;
+    const concurrency = Math.max(1, options.pdfConcurrency ?? ODL_DEFAULT_CONCURRENCY);
+    logger.info(
+      `Extracting ${pdfAttachments.length} PDF(s) in ${batches.length} batch(es) with concurrency ${concurrency}.`,
+      { console: true },
+    );
+
+    const processBatch = async (batchIndex: number, batch: AttachmentCatalogEntry[]): Promise<void> => {
       writeProgress({
         status: "running",
         batchIndex: batchIndex + 1,
@@ -1644,7 +1651,7 @@ export async function runSync(
             note: "finished individual retries",
           });
           writeProgressCatalog(paths.catalogPath, nextEntries, progressIndexerState);
-          continue;
+          return;
         }
 
         recordErroredAttachment(batch[0]!, batchError);
@@ -1683,7 +1690,20 @@ export async function runSync(
         note: "batch finished",
       });
       writeProgressCatalog(paths.catalogPath, nextEntries, progressIndexerState);
-    }
+    };
+
+    let nextBatchIndex = 0;
+    const workers = Array.from(
+      { length: Math.min(concurrency, batches.length) },
+      async () => {
+        while (true) {
+          const idx = nextBatchIndex++;
+          if (idx >= batches.length) return;
+          await processBatch(idx, batches[idx]!);
+        }
+      },
+    );
+    await Promise.all(workers);
 
     if (staleDocKeys.size > 0) {
       logger.info(`Removing ${staleDocKeys.size} attachment(s) no longer in the catalog:`, {
