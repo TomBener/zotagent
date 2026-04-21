@@ -111,12 +111,15 @@ meta?} with exit code 1. Missing credentials fail fast with a JSON error.
 
 Index
   sync [--attachments-root <path>] [--retry-errors] [--pdf-timeout-ms <n>] [--pdf-batch-size <n>]
+       [--pdf-concurrency <n>]
       Build or refresh the local index of PDF, EPUB, HTML, and TXT attachments.
       Unchanged extraction errors are skipped by default; pass --retry-errors to retry them.
         --attachments-root <path>   Index only a Zotero subfolder.
         --retry-errors              Retry unchanged files that failed extraction earlier.
         --pdf-timeout-ms <n>        Override the OpenDataLoader timeout for each PDF extraction call.
         --pdf-batch-size <n>        Override the maximum number of PDFs per extraction batch.
+        --pdf-concurrency <n>       Run N extraction batches in parallel (default 2). Each batch
+                                    spawns its own java process; tune with available CPU and RAM.
 
   status
       Show attachment counts, local index paths, and qmd status.
