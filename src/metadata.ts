@@ -18,6 +18,7 @@ interface MetadataSearchOptions {
   fields?: MetadataField[];
   hasFile?: boolean;
   includeAbstract?: boolean;
+  filters?: Partial<Record<MetadataField, string>>;
 }
 
 function includesNormalizedText(text: string | undefined, query: string): boolean {
@@ -92,20 +93,38 @@ export async function searchMetadata(
 }> {
   const config = resolveConfig(overrides);
   const normalizedQuery = normalizeExactText(query);
-  if (normalizedQuery.length === 0) {
-    throw new Error("Metadata search text cannot be empty.");
+  const filterEntries = Object.entries(options.filters ?? {})
+    .filter((entry): entry is [MetadataField, string] =>
+      typeof entry[1] === "string" && entry[1].length > 0,
+    )
+    .map(([field, value]) => [field, normalizeExactText(value)] as const)
+    .filter(([, normalized]) => normalized.length > 0);
+  const hasQuery = normalizedQuery.length > 0;
+  const hasFilters = filterEntries.length > 0;
+
+  if (!hasQuery && !hasFilters) {
+    throw new Error("Metadata search requires a query or at least one field filter.");
   }
 
   const selectedFields = new Set(options.fields ?? FIELD_ORDER);
   const includeAbstract = options.includeAbstract ?? false;
+  const filterFieldSet = new Set(filterEntries.map(([field]) => field));
   const { records } = loadCatalog(config);
   const results = records
     .filter((record) => !options.hasFile || record.hasSupportedFile)
+    .filter((record) =>
+      filterEntries.every(([field, normalized]) => matchesField(record, field, normalized)),
+    )
     .map((record) => {
+      const queryMatched = hasQuery
+        ? FIELD_ORDER.filter(
+            (field) => selectedFields.has(field) && matchesField(record, field, normalizedQuery),
+          )
+        : [];
+      if (hasQuery && queryMatched.length === 0) return null;
       const matchedFields = FIELD_ORDER.filter(
-        (field) => selectedFields.has(field) && matchesField(record, field, normalizedQuery),
+        (field) => queryMatched.includes(field) || filterFieldSet.has(field),
       );
-      if (matchedFields.length === 0) return null;
       return toMetadataSearchResultRow(record, matchedFields, includeAbstract);
     })
     .filter((result): result is MetadataSearchResultRow => result !== null)

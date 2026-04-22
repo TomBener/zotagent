@@ -59,7 +59,7 @@ const COMMAND_FLAG_ALLOWLIST: Record<string, ReadonlyArray<string>> = {
   s2: ["limit"],
   search: ["keyword", "semantic", "limit", "min-score"],
   "search-in": ["key", "limit"],
-  metadata: ["limit", "field", "has-file", "abstract"],
+  metadata: ["limit", "field", "has-file", "abstract", "author", "year", "title", "journal", "publisher"],
   blocks: ["key", "offset-block", "limit-blocks"],
   fulltext: ["key", "clean"],
   expand: ["key", "block-start", "block-end", "radius"],
@@ -288,10 +288,19 @@ Search
   search-in "<text>" --key <key> [--limit <n>]
       Search within one indexed item's attachments (exact phrase and term match).
 
-  metadata "<text>" [--limit <n>] [--field <field>] [--has-file] [--abstract]
+  metadata ["<text>"] [--limit <n>] [--field <field>] [--has-file] [--abstract]
+           [--author <text>] [--year <text>] [--title <text>] [--journal <text>] [--publisher <text>]
       Search Zotero bibliography metadata read from bibliographyJsonPath.
-        --field <field>             Limit metadata search to title, author, year, abstract, journal,
-                                    or publisher. Repeatable.
+      Provide a positional query, one or more field filters, or both. The
+      positional query is substring-matched across --field selections; each
+      filter flag adds an AND constraint on that specific field.
+        --field <field>             Limit the positional query to title, author, year, abstract,
+                                    journal, or publisher. Repeatable.
+        --author <text>             Filter by author substring.
+        --year <text>               Filter by year substring (e.g. "1985", "198" for the 80s).
+        --title <text>              Filter by title substring.
+        --journal <text>            Filter by journal substring.
+        --publisher <text>          Filter by publisher substring.
         --has-file                  Keep only metadata results with a supported indexed attachment.
         --abstract                  Include the abstract in each result. Omitted by default to keep
                                     bulk responses compact for agents.
@@ -663,8 +672,22 @@ async function main(): Promise<void> {
           return;
         }
         const query = parsed.positionals.slice(1).join(" ");
-        if (!query) {
-          emitError("MISSING_ARGUMENT", 'Missing metadata search text. Use: zotagent metadata "<text>"');
+        const filterFlagFields: MetadataField[] = ["author", "year", "title", "journal", "publisher"];
+        const filters: Partial<Record<MetadataField, string>> = {};
+        for (const field of filterFlagFields) {
+          if (parsed.flags[field] === true) {
+            emitError("INVALID_ARGUMENT", `\`--${field}\` requires a value.`);
+            return;
+          }
+          const value = getStringFlag(parsed.flags, field);
+          if (value) filters[field] = value;
+        }
+        const hasFilters = Object.keys(filters).length > 0;
+        if (!query && !hasFilters) {
+          emitError(
+            "MISSING_ARGUMENT",
+            'Provide a positional query or at least one field filter. Use: zotagent metadata "<text>" [--author/--year/--title/--journal/--publisher <value>]',
+          );
           return;
         }
         const requestedFields = [...new Set(getStringListFlag(parsed.flags, "field"))];
@@ -693,6 +716,7 @@ async function main(): Promise<void> {
           ...(requestedFields.length > 0 ? { fields: requestedFields as MetadataField[] } : {}),
           ...(getBooleanFlag(parsed.flags, "has-file") ? { hasFile: true } : {}),
           ...(getBooleanFlag(parsed.flags, "abstract") ? { includeAbstract: true } : {}),
+          ...(hasFilters ? { filters } : {}),
         });
         emitOk(data, { elapsedMs: Date.now() - startedAt });
         return;

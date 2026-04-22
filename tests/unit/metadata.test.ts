@@ -237,3 +237,74 @@ test("searchMetadata supports author variants and field filtering", async () => 
   assert.equal(thesisTitle.results.length, 1);
   assert.equal("publisher" in thesisTitle.results[0]!, false);
 });
+
+test("searchMetadata field-filter flags AND across fields and allow empty query", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-metadata-filter-"));
+  const { attachmentsRoot } = createFixturePaths(root);
+  const { bibliographyPath, dataDir } = writeBibliography(root, [
+    {
+      id: "pratt1985",
+      title: "Scratches on the Face of the Country",
+      author: [{ family: "Pratt", given: "Mary Louise" }],
+      issued: { "date-parts": [[1985]] },
+      "container-title": "Critical Inquiry",
+      type: "article-journal",
+      "zotero-item-key": "ITEM1",
+    },
+    {
+      id: "pratt1992",
+      title: "Imperial Eyes",
+      author: [{ family: "Pratt", given: "Mary Louise" }],
+      issued: { "date-parts": [[1992]] },
+      publisher: "Routledge",
+      type: "book",
+      "zotero-item-key": "ITEM2",
+    },
+    {
+      id: "other1985",
+      title: "Another 1985 Study",
+      author: [{ family: "Smith", given: "Jane" }],
+      issued: { "date-parts": [[1985]] },
+      type: "article-journal",
+      "zotero-item-key": "ITEM3",
+    },
+  ]);
+
+  const overrides = { bibliographyJsonPath: bibliographyPath, attachmentsRoot, dataDir };
+
+  // Author + year narrows to the one paper a query string could never reach.
+  const authorAndYear = await searchMetadata("", 10, overrides, {
+    filters: { author: "Pratt", year: "1985" },
+  });
+  assert.deepEqual(
+    authorAndYear.results.map((row) => row.itemKey),
+    ["ITEM1"],
+  );
+  assert.deepEqual(authorAndYear.results[0]?.matchedFields, ["author", "year"]);
+
+  // Filter-only by year substring spans a range.
+  const yearPrefix = await searchMetadata("", 10, overrides, {
+    filters: { year: "198" },
+  });
+  assert.deepEqual(
+    yearPrefix.results.map((row) => row.itemKey).sort(),
+    ["ITEM1", "ITEM3"],
+  );
+
+  // Positional query still required to hit; filter ANDs on top.
+  const queryPlusFilter = await searchMetadata("imperial", 10, overrides, {
+    filters: { author: "Pratt" },
+  });
+  assert.deepEqual(
+    queryPlusFilter.results.map((row) => row.itemKey),
+    ["ITEM2"],
+  );
+  assert.ok(queryPlusFilter.results[0]?.matchedFields.includes("title"));
+  assert.ok(queryPlusFilter.results[0]?.matchedFields.includes("author"));
+
+  // Empty query and empty filters rejected.
+  await assert.rejects(
+    () => searchMetadata("", 10, overrides, {}),
+    /requires a query or at least one field filter/,
+  );
+});

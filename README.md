@@ -15,7 +15,7 @@ Search and retrieval are the core features. Both read from a local index that `s
 - `search` — FTS5 keyword search (default) with porter stemming. Supports `"exact phrase"`, `OR`, `NOT`, `term NEAR/<n> term`, and `prefix*`. Chinese, Japanese, and Korean (CJK) text is supported with accurate phrase matching and built-in false-positive filtering.
 - `search --semantic` — vector search over [qmd](https://github.com/tobi/qmd) embeddings with LLM query expansion; slower and heavier than keyword search.
 - `search-in` — scope a text query to a single indexed item's attachments, addressed by `itemKey` or `citationKey` (auto-detected).
-- `metadata` — search the Zotero bibliography (Better CSL JSON) across `title`, `author`, `year`, `abstract`, `journal`, and `publisher`. `--field` narrows the fields searched; `--has-file` keeps only items with an indexed attachment.
+- `metadata` — search the Zotero bibliography (Better CSL JSON) across `title`, `author`, `year`, `abstract`, `journal`, and `publisher`. `--field` narrows the fields the positional query hits; per-field filters (`--author`, `--year`, `--title`, `--journal`, `--publisher`) AND together and can replace the positional query entirely (e.g. `metadata --author "Pratt" --year "1985"`); `--has-file` keeps only items with an indexed attachment.
 
 ### Retrieve
 
@@ -143,10 +143,19 @@ Search
   search-in "<text>" --key <key> [--limit <n>]
       Search within one indexed item's attachments (exact phrase and term match).
 
-  metadata "<text>" [--limit <n>] [--field <field>] [--has-file] [--abstract]
+  metadata ["<text>"] [--limit <n>] [--field <field>] [--has-file] [--abstract]
+           [--author <text>] [--year <text>] [--title <text>] [--journal <text>] [--publisher <text>]
       Search Zotero bibliography metadata read from bibliographyJsonPath.
-        --field <field>             Limit metadata search to title, author, year, abstract, journal,
-                                    or publisher. Repeatable.
+      Provide a positional query, one or more field filters, or both. The
+      positional query is substring-matched across --field selections; each
+      filter flag adds an AND constraint on that specific field.
+        --field <field>             Limit the positional query to title, author, year, abstract,
+                                    journal, or publisher. Repeatable.
+        --author <text>             Filter by author substring.
+        --year <text>               Filter by year substring (e.g. "1985", "198" for the 80s).
+        --title <text>              Filter by title substring.
+        --journal <text>            Filter by journal substring.
+        --publisher <text>          Filter by publisher substring.
         --has-file                  Keep only metadata results with a supported indexed attachment.
         --abstract                  Include the abstract in each result. Omitted by default to keep
                                     bulk responses compact for agents.
