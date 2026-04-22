@@ -1,13 +1,13 @@
 ---
 name: zotagent
-description: Search, retrieve, or add Zotero literature via the local `zotagent` CLI. Load this skill whenever the user wants to query their Zotero library (keyword / semantic / metadata), pull quotations or context from indexed papers, add new items by DOI or Semantic Scholar paperId, or resolve bibliographic metadata. Use it even when the request is indirect — any mention of references, citations, bibliography checks, PDF passages, or literature discovery should trigger this skill. Do not guess at zotagent's flags — consult this reference first.
+description: Search, retrieve, or add Zotero literature via the `zotagent` CLI. Load this skill whenever the user wants to query their Zotero library (keyword / semantic / metadata), pull quotations or context from indexed papers, add new items by DOI or Semantic Scholar paperId, or resolve bibliographic metadata. Use it even when the request is indirect — any mention of references, citations, bibliography checks, PDF passages, or literature discovery should trigger this skill. Do not guess at zotagent's flags — consult this reference first.
 ---
 
 # zotagent
 
-`zotagent` is a one-shot CLI over a local index of Zotero attachments (PDF / EPUB / HTML / TXT). Each invocation is independent. All commands emit JSON on stdout with the envelope `{"ok": bool, "data" | "error", "meta"?: {"elapsedMs": n}}`.
+`zotagent` is a CLI over a local index of Zotero attachments (PDF / EPUB / HTML / TXT) plus bibliography metadata. Commands are stateless; every output is JSON (`{ok, data}` on success, `{ok: false, error}` + exit 1 on failure).
 
-Do not invent citation keys, item keys, or passage text. If a command returns no results, say so plainly rather than synthesizing a plausible-looking reference.
+Don't invent citation keys, item keys, or passage text. If a query returns nothing, say so.
 
 ## Three search layers — pick the right one
 
@@ -17,9 +17,15 @@ Do not invent citation keys, item keys, or passage text. If a command returns no
 | `zotagent search-in "<q>" --key <k> [--limit n]` | Full text of one item's attachments | Drilling into a single paper for a term |
 | `zotagent metadata "<q>" [--field f] [--abstract] [--has-file] [--limit n]` | Bibliography fields: title / author / year / journal / publisher / abstract | Finding papers by metadata, verifying existence, resolving an `itemKey` |
 
-Keyword syntax (default `search`): `"exact phrase"`, `OR`, `NOT`, `term NEAR/50 term`, `prefix*`. `NEAR(...)` syntax is **not** accepted; use `NEAR/<n>`.
+Keyword syntax (default `search`): `"exact phrase"`, `OR`, `NOT`, `term NEAR/<n> term`, `prefix*`. Use `NEAR/<n>` not `NEAR(...)`.
 
-Chinese trad/simp folding: `search`, `search-in`, and `metadata` fold traditional to simplified at both index and query time, so 黨組書記 and 党组书记 match each other — you don't need to try both forms. `search --semantic` does NOT fold; align the query to the likely source form. Returned text preserves the original characters as stored.
+**`NEAR/<n>` is the most useful operator** when you have 2–3 anchor terms that should co-occur but not necessarily adjacent — e.g. `"土地" NEAR/20 "垦荒"` catches passages discussing both regardless of phrasing. More precise than plain keyword, far faster than `--semantic`. Reach for it first whenever you have anchor terms.
+
+`NEAR/<n>` is especially valuable on OCR'd or scanned materials (Republican China vertical-layout texts, old gazetteers, etc.), where OCR noise makes `--semantic` unreliable and any single keyword drowns in hits — co-occurrence anchors cut through.
+
+Keyword vs semantic heuristic: keyword (with NEAR and exact phrases) first for named concepts, anchor terms, or quotations (`"terra nullius"`, `"empty land" OR "wasteland"`); switch to `--semantic` when phrasing is fuzzy or you want conceptual neighbors. The two layers return overlapping but distinct sets — for a thorough sweep, running both and merging is often worth the extra call.
+
+Chinese trad/simp folding: keyword `search`, `search-in`, and `metadata` match across 繁 ↔ 简 both ways (黨組書記 ≡ 党组书记), so one form is enough. `search --semantic` does NOT fold — pick the likely source form.
 
 ## Typical workflows
 
@@ -55,8 +61,6 @@ zotagent add --s2-paper-id <paperId>
 zotagent add --title "..." --author "Last, First" --year 2026 --publication "Journal"
 ```
 
-`add` is speed-first and does NOT dedupe against the existing Zotero library. New items are tagged `Added by AI Agent`. It returns `itemKey` immediately — but the new paper is not reachable via `search` / `search-in` / `blocks` / `expand` / `fulltext` until the next `zotagent sync` completes, so don't promise passage-level retrieval right after `add`.
-
 ### Look up a paper's metadata / itemKey
 
 ```bash
@@ -69,6 +73,11 @@ zotagent metadata "aging in China" --abstract
 # Only items that have an indexed attachment
 zotagent metadata "dangwei shuji" --has-file
 
+# `metadata` matches the whole query as a substring against each field,
+# so author + year in one string never hits. Search one anchor and read
+# `year` off the returned JSON to filter by year yourself:
+zotagent metadata "Pratt" --field author
+
 # Pipe the returned key into blocks / fulltext for the paper body
 zotagent blocks --key KG326EEI --offset-block 0 --limit-blocks 40
 zotagent fulltext --key KG326EEI --clean
@@ -76,37 +85,12 @@ zotagent fulltext --key KG326EEI --clean
 
 ## Output-shape gotchas
 
-These are the most common surprises when consuming `zotagent` output. Read them before parsing results.
+- **`passage` is a ~500-token snippet** — the trailing `…` signals truncation. Scanning is fine; before quoting it verbatim or treating it as evidence, call `expand --key <k> --block-start <blockStart> --block-end <blockEnd>` to get the complete block text (`--radius 0` for the hit only, `--radius n` for surrounding context, default 2). This matters because a sentence at the cut may be halved, and `passage` can't show you whether the author is stating their own view or paraphrasing someone else — `expand` can.
+- **`metadata` omits `abstract` by default** to keep bulk responses compact. Pass `--abstract` when you need it.
+- **`--key` accepts `itemKey` or `citationKey`**, with or without a leading `@` (so Pandoc `@citekey` pastes straight in). Every response returns both. Prefer `itemKey` when persisting a reference — `citationKey` can change if someone renames it in Zotero.
+- **Block indices are item-global.** When an item has multiple indexed attachments, indices run monotonically across them with `# Attachment: <name>` dividers. Pass `blockStart` from `search` straight into `blocks` / `expand`.
+- **`search-in` on a chapter key may miss.** `SEARCH_IN_FAILED: No indexed attachment found` usually means the chapter's PDF is indexed only inside its parent volume. Look the parent up with `metadata`, then `search-in` against the parent's key and locate the chapter by its heading. Common for edited collections and proceedings.
 
-- **`passage` is capped at 500 tokens**, measured via `o200k_base` (a close proxy for Claude's tokenizer). Every `search` / `search-in` / `search --semantic` row has its `passage` field truncated to ~500 tokens. A trailing `…` signals truncation. To see more text:
-  - For the same blocks only: `expand --key <k> --block-start <blockStart> --block-end <blockEnd> --radius 0`
-  - For surrounding context: add `--radius <n>` (default 2); the response grows linearly in block count, not characters.
-  - Do NOT try to extract the full quotation from `passage` alone; always `expand` if you need guaranteed-complete text.
-- **`metadata` omits `abstract` by default.** To keep bulk responses compact, the `abstract` field is stripped. Pass `--abstract` to include it. If a script expects `abstract` to always be present, add the flag or handle the missing case.
-- **`--key` accepts both `itemKey` and `citationKey`.** Format dispatch is regex-based: `[A-Z0-9]{8}` → Zotero itemKey; anything else → Better BibTeX citationKey. A leading `@` is stripped, so you can paste a Pandoc citation straight from a draft (`--key @knuth1984` resolves the same as `--key knuth1984`). Every response emits both keys. Prefer `itemKey` when persisting references across time (it never mutates); `citationKey` is fine for one-shot lookups that mirror what you see in a draft.
-- **Block indices are item-global.** When an item has multiple indexed attachments (e.g. PDF + EPUB), block indices are monotonic across them with `# Attachment: <name>` dividers. Pass block indices straight from `search` into `blocks` / `expand` — don't translate them.
-- **Every command — including errors — emits a JSON envelope.** On failure: `{"ok": false, "error": {"code": "...", "message": "..."}}` and a non-zero exit code. Missing credentials fail fast.
+## Index freshness
 
-## Pre-requisites
-
-- `search` / `search-in` / `blocks` / `expand` / `fulltext` all work on a local index built by `zotagent sync`. If a query returns `NO_INDEX` or "No indexed documents found", run `zotagent sync` first.
-- `add` / `s2` / `metadata` do NOT require the local index and work even before the first sync.
-- Config lives at `~/.zotagent/config.json` (paths, Zotero Web API key, Semantic Scholar API key). First-time setup: `zotagent config` runs an interactive wizard that writes this file (required fields: `bibliographyJsonPath`, `attachmentsRoot`, `dataDir`). Any field can also come from `ZOTAGENT_*` env vars.
-- After setup: `zotagent sync` builds the index, then `zotagent status` confirms attachment counts and qmd state.
-- `sync` needs Java (JDK 11+) for PDF extraction via OpenDataLoader. `pdftotext` is an optional fallback.
-
-## Common errors
-
-| Error code | What it means | Fix |
-|---|---|---|
-| `NO_INDEX` | Search ran before `sync` | Run `zotagent sync` |
-| `SYNC_DISABLED` | Host is marked read-only (shared `dataDir` via iCloud) | Expected — run `sync` on the primary host only |
-| `MISSING_ARGUMENT` / `INVALID_ARGUMENT` | Malformed flags | Check flags via `zotagent help` |
-| `UNEXPECTED_ARGUMENT` | Flag not supported by the given command (each command has its own allow-list) | Consult the help text for that command |
-| Missing API key errors | `semanticScholarApiKey` / `zoteroApiKey` not set | Add to `~/.zotagent/config.json` or env |
-
-## When not to use zotagent
-
-- Full-text search outside the Zotero library → use `rg` / `grep`.
-- Bibliography management that needs Zotero GUI features (collections, tags UI) → use Zotero directly.
-- Web search for papers not in the library → prefer `s2` (Semantic Scholar) over a web fetch; if `s2` misses, then web search.
+`search` / `search-in` / `blocks` / `expand` / `fulltext` read a local index. On `NO_INDEX` or "No indexed documents found", suggest `zotagent sync`. `metadata` / `add` / `s2` work without the index. After `add`, the new paper isn't full-text searchable until the next `sync`.
