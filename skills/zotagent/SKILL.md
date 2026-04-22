@@ -64,7 +64,7 @@ zotagent add --title "..." --author "Last, First" --year 2026 --publication "Jou
 ### Look up a paper's metadata / itemKey
 
 ```bash
-# Multi-field search (title OR abstract)
+# Multi-field positional search (title OR abstract)
 zotagent metadata "aging in China" --field title --field abstract
 
 # Include the full abstract in the response (suppressed by default)
@@ -73,10 +73,15 @@ zotagent metadata "aging in China" --abstract
 # Only items that have an indexed attachment
 zotagent metadata "dangwei shuji" --has-file
 
-# `metadata` matches the whole query as a substring against each field,
-# so author + year in one string never hits. Search one anchor and read
-# `year` off the returned JSON to filter by year yourself:
-zotagent metadata "Pratt" --field author
+# Field filters (--author / --year / --title / --journal / --publisher)
+# are substring-matched and AND together. Combine them to pin a single paper:
+zotagent metadata --author "Pratt" --year "1985"
+
+# Year substring spans a range; `--year 198` matches the entire 1980s:
+zotagent metadata --author "Pratt" --year "198"
+
+# Positional query plus filter: query matches any selected field, filters AND on top
+zotagent metadata "imperial" --author "Pratt"
 
 # Pipe the returned key into blocks / fulltext for the paper body
 zotagent blocks --key KG326EEI --offset-block 0 --limit-blocks 40
