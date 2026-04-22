@@ -21,6 +21,7 @@ Metadata quick rules:
 - Positional query, field filters (`--author` / `--year` / `--title` / `--journal` / `--publisher`), or both are valid.
 - `--field` scopes only the positional query; filter flags AND together.
 - `--abstract` includes abstract text in the output. To search abstract text, use a positional query with `--field abstract`.
+- `metadata "Pratt 1985"` returns empty (year is not OR'd in) — split into `--author "Pratt" --year "1985"`.
 
 Keyword syntax (default `search`): `"exact phrase"`, `OR`, `NOT`, `term NEAR/<n> term`, `prefix*`. Use `NEAR/<n>` not `NEAR(...)`.
 
@@ -59,9 +60,11 @@ zotagent add --doi "10.1111/dech.70058"
 zotagent s2 "state-owned enterprise governance" --limit 5
 zotagent add --s2-paper-id <paperId>
 
-# Manual fallback
+# Manual fallback — authors go in Zotero "Last, First" form; repeat --author for multiple
 zotagent add --title "Title of a paper" --author "Zhang, San" --year 2026 --publication "Journal of Important Studies"
 ```
+
+`s2` results include `openAccessPdfUrl` when available — surface it to the user as a free PDF link alongside the `add` suggestion.
 
 ### Look up a paper's metadata
 
