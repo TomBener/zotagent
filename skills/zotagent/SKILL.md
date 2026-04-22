@@ -15,7 +15,9 @@ Don't invent citation keys, item keys, or passage text. If a query returns nothi
 |---|---|---|
 | `zotagent search "<q>" [--semantic] [--limit n] [--min-score n]` | Indexed full text (FTS5 keyword by default; vector + LLM query expansion with `--semantic`) | Finding passages that discuss a topic across the library |
 | `zotagent search-in "<q>" --key <k> [--limit n]` | Full text of one item's attachments | Drilling into a single paper for a term |
-| `zotagent metadata "<q>" [--field f] [--abstract] [--has-file] [--limit n]` | Bibliography fields: title / author / year / journal / publisher / abstract | Finding papers by metadata, verifying existence, resolving an `itemKey` |
+| `zotagent metadata ["<q>"] [metadata filters...] [--field f] [--abstract] [--has-file] [--limit n]` | Bibliography fields: title / author / year / journal / publisher / abstract | Finding papers by metadata, verifying existence, resolving an `itemKey` |
+
+`metadata` accepts a positional query, field filters (`--author` / `--year` / `--title` / `--journal` / `--publisher`), or both. `--field` scopes only the positional query.
 
 Keyword syntax (default `search`): `"exact phrase"`, `OR`, `NOT`, `term NEAR/<n> term`, `prefix*`. Use `NEAR/<n>` not `NEAR(...)`.
 
@@ -61,30 +63,27 @@ zotagent add --s2-paper-id <paperId>
 zotagent add --title "..." --author "Last, First" --year 2026 --publication "Journal"
 ```
 
-### Look up a paper's metadata / itemKey
+### Look up a paper's metadata
 
 ```bash
-# Multi-field positional search (title OR abstract)
+# Search selected fields with a positional query
 zotagent metadata "aging in China" --field title --field abstract
 
-# Include the full abstract in the response (suppressed by default)
-zotagent metadata "aging in China" --abstract
-
-# Only items that have an indexed attachment
-zotagent metadata "dangwei shuji" --has-file
-
-# Field filters (--author / --year / --title / --journal / --publisher)
-# are substring-matched and AND together. Combine them to pin a single paper:
+# Narrow by specific metadata fields
 zotagent metadata --author "Pratt" --year "1985"
 
-# Year substring spans a range; `--year 198` matches the entire 1980s:
+# Year substring spans a range; `--year 198` matches the entire 1980s
 zotagent metadata --author "Pratt" --year "198"
 
-# Positional query plus filter: query matches any selected field, filters AND on top
+# Combine a positional query with a filter
 zotagent metadata "imperial" --author "Pratt"
 
-# Pipe the returned key into blocks / fulltext for the paper body
-zotagent blocks --key KG326EEI --offset-block 0 --limit-blocks 40
+# Keep only indexed items; include abstracts only when needed
+zotagent metadata "dangwei shuji" --has-file
+zotagent metadata "aging in China" --abstract
+
+# Use a returned key with retrieval commands
+zotagent blocks --key KG326EEI --limit-blocks 40
 zotagent fulltext --key KG326EEI --clean
 ```
 
