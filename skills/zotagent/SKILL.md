@@ -17,15 +17,16 @@ Don't invent citation keys, item keys, or passage text. If a query returns nothi
 | `zotagent search-in "<q>" --key <k> [--limit n]` | Full text of one item's attachments | Drilling into a single paper for a term |
 | `zotagent metadata ["<q>"] [metadata filters...] [--field f] [--abstract] [--has-file] [--limit n]` | Bibliography fields: title / author / year / journal / publisher / abstract | Finding papers by metadata, verifying existence, resolving an `itemKey` |
 
-`metadata` accepts a positional query, field filters (`--author` / `--year` / `--title` / `--journal` / `--publisher`), or both. `--field` scopes only the positional query.
+Metadata quick rules:
+- Positional query, field filters (`--author` / `--year` / `--title` / `--journal` / `--publisher`), or both are valid.
+- `--field` scopes only the positional query; filter flags AND together.
+- `--abstract` includes abstract text in the output. To search abstract text, use a positional query with `--field abstract`.
 
 Keyword syntax (default `search`): `"exact phrase"`, `OR`, `NOT`, `term NEAR/<n> term`, `prefix*`. Use `NEAR/<n>` not `NEAR(...)`.
 
-**`NEAR/<n>` is the most useful operator** when you have 2–3 anchor terms that should co-occur but not necessarily adjacent — e.g. `"土地" NEAR/20 "垦荒"` catches passages discussing both regardless of phrasing. More precise than plain keyword, far faster than `--semantic`. Reach for it first whenever you have anchor terms.
+**`NEAR/<n>` is the best first pass** when you have 2–3 anchor terms that should co-occur but not necessarily adjacent — e.g. `"土地" NEAR/20 "垦荒"`. It is usually more precise than plain keyword and much faster than `--semantic`.
 
-`NEAR/<n>` is especially valuable on OCR'd or scanned materials (Republican China vertical-layout texts, old gazetteers, etc.), where OCR noise makes `--semantic` unreliable and any single keyword drowns in hits — co-occurrence anchors cut through.
-
-Keyword vs semantic heuristic: keyword (with NEAR and exact phrases) first for named concepts, anchor terms, or quotations (`"terra nullius"`, `"empty land" OR "wasteland"`); switch to `--semantic` when phrasing is fuzzy or you want conceptual neighbors. The two layers return overlapping but distinct sets — for a thorough sweep, running both and merging is often worth the extra call.
+Keyword vs semantic heuristic: start with keyword (exact phrases, `OR`, `NEAR`) for names, anchor terms, or quotations; switch to `--semantic` when phrasing is fuzzy or you want conceptual neighbors. `NEAR/<n>` is especially useful on OCR'd or scanned materials (Republican China vertical-layout texts, old gazetteers, etc.), where one keyword often drowns in noise.
 
 Chinese trad/simp folding: keyword `search`, `search-in`, and `metadata` match across 繁 ↔ 简 both ways (黨組書記 ≡ 党组书记), so one form is enough. `search --semantic` does NOT fold — pick the likely source form.
 
@@ -34,33 +35,32 @@ Chinese trad/simp folding: keyword `search`, `search-in`, and `metadata` match a
 ### Find passages, then retrieve surrounding context
 
 ```bash
-# 1. Broad keyword search
+# Search across the library
 zotagent search "party secretary governance" --limit 10
 
-# 2. A row comes back with itemKey (and citationKey if available), blockStart, blockEnd, passage
-#    (see "Output gotchas" below). Pull surrounding context (radius = 2 blocks before/after):
+# Expand around a returned hit
 zotagent expand --key KG326EEI --block-start 134 --radius 2
 
-# 3. Or retrieve the whole document — --key accepts itemKey or citationKey:
+# Read the whole document
 zotagent fulltext --key KG326EEI --clean
 zotagent fulltext --key lee2024party --clean
 
-# 4. Or paginate blocks:
+# Or page through blocks
 zotagent blocks --key KG326EEI --offset-block 120 --limit-blocks 30
 ```
 
 ### Add a paper to Zotero
 
 ```bash
-# Best path: you have a DOI.
+# Add by DOI
 zotagent add --doi "10.1111/dech.70058"
 
-# Otherwise: search Semantic Scholar, then add by paperId.
+# Search Semantic Scholar, then add by paperId
 zotagent s2 "state-owned enterprise governance" --limit 5
 zotagent add --s2-paper-id <paperId>
 
-# Manual entry fallback.
-zotagent add --title "..." --author "Last, First" --year 2026 --publication "Journal"
+# Manual fallback
+zotagent add --title "Title of a paper" --author "Zhang, San" --year 2026 --publication "Journal of Important Studies"
 ```
 
 ### Look up a paper's metadata
@@ -72,13 +72,13 @@ zotagent metadata "aging in China" --field title --field abstract
 # Narrow by specific metadata fields
 zotagent metadata --author "Pratt" --year "1985"
 
-# Year substring spans a range; `--year 198` matches the entire 1980s
+# Use a year prefix for a range; `--year 198` matches the 1980s
 zotagent metadata --author "Pratt" --year "198"
 
 # Combine a positional query with a filter
 zotagent metadata "imperial" --author "Pratt"
 
-# Keep only indexed items; include abstracts only when needed
+# Keep only indexed items; include abstract text only when needed
 zotagent metadata "dangwei shuji" --has-file
 zotagent metadata "aging in China" --abstract
 
@@ -89,7 +89,7 @@ zotagent fulltext --key KG326EEI --clean
 
 ## Output-shape gotchas
 
-- **`passage` is a ~500-token snippet** — the trailing `…` signals truncation. Scanning is fine; before quoting it verbatim or treating it as evidence, call `expand --key <k> --block-start <blockStart> --block-end <blockEnd>` to get the complete block text (`--radius 0` for the hit only, `--radius n` for surrounding context, default 2). This matters because a sentence at the cut may be halved, and `passage` can't show you whether the author is stating their own view or paraphrasing someone else — `expand` can.
+- **`passage` is a ~500-token snippet** — the trailing `…` means truncation. Before quoting or treating it as evidence, call `expand --key <k> --block-start <blockStart> --block-end <blockEnd>` to get the full block text. Use `--radius 0` for just the hit; default is 2.
 - **`metadata` omits `abstract` by default** to keep bulk responses compact. Pass `--abstract` when you need it.
 - **`--key` accepts `itemKey` or `citationKey`**, with or without a leading `@` (so Pandoc `@citekey` pastes straight in). Every response returns both. Prefer `itemKey` when persisting a reference — `citationKey` can change if someone renames it in Zotero.
 - **Block indices are item-global.** When an item has multiple indexed attachments, indices run monotonically across them with `# Attachment: <name>` dividers. Pass `blockStart` from `search` straight into `blocks` / `expand`.
@@ -98,3 +98,5 @@ zotagent fulltext --key KG326EEI --clean
 ## Index freshness
 
 `search` / `search-in` / `blocks` / `expand` / `fulltext` read a local index. On `NO_INDEX` or "No indexed documents found", suggest `zotagent sync`. `metadata` / `add` / `s2` work without the index. After `add`, the new paper isn't full-text searchable until the next `sync`.
+
+If you need a command or flag not covered here, run `zotagent help`.
