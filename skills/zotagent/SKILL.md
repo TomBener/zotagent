@@ -116,7 +116,7 @@ When you quote or paraphrase material from `search` / `search-in` / `expand` / `
 - With locator: `[@itemKey, block N]` — single block or a range like `block 3-7`
 - Narrative reference without locator: `@itemKey`
 
-`N` is `blockStart` (or `blockIndex` in `expand` / `blocks`). A Pandoc filter (e.g. `itemkey-to-citekey.lua`) can rewrite `@itemKey` to a human-readable Better BibTeX key at render time if your pipeline supports it.
+`N` is `blockStart` (or `blockIndex` in `expand` / `blocks`).
 
 Examples (given `itemKey: "KG326EEI"`, `blockStart: 3`, `blockEnd: 7`):
 - `[@KG326EEI, block 3]`
