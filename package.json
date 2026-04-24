@@ -1,6 +1,6 @@
 {
   "name": "zotagent",
-  "version": "0.23.0",
+  "version": "0.24.0",
   "description": "Zotero literature search CLI for AI agents",
   "type": "module",
   "bin": {
