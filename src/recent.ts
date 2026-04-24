@@ -3,6 +3,8 @@ import type { AppConfig, ZoteroLibraryType } from "./types.js";
 
 type FetchLike = typeof fetch;
 const REQUEST_TIMEOUT_MS = 30000;
+const API_PAGE_SIZE = 100;
+const EXCLUDED_TOP_LEVEL_ITEM_TYPES = new Set(["attachment", "note"]);
 
 export type RecentSort = "dateAdded" | "dateModified";
 
@@ -115,17 +117,20 @@ function toRow(item: ZoteroItemResponse): RecentItemRow {
   };
 }
 
-export async function listRecentItems(
-  options: { limit: number; sort: RecentSort },
-  overrides: ConfigOverrides = {},
-  fetchImpl: FetchLike = fetch,
-): Promise<{ results: RecentItemRow[]; warnings?: string[] }> {
-  const config = resolveConfig(overrides);
-  const readConfig = getReadConfig(config);
+function isRegularBibliographicItem(item: ZoteroItemResponse): boolean {
+  return !EXCLUDED_TOP_LEVEL_ITEM_TYPES.has(item.data.itemType);
+}
+
+async function fetchRecentPage(
+  fetchImpl: FetchLike,
+  readConfig: ResolvedReadConfig,
+  options: { limit: number; sort: RecentSort; start: number },
+): Promise<ZoteroItemResponse[]> {
   const params = new URLSearchParams({
     sort: options.sort,
     direction: "desc",
     limit: String(options.limit),
+    start: String(options.start),
   });
   const url = `${libraryBaseUrl(readConfig)}/items/top?${params.toString()}`;
   const response = await fetchWithTimeout(fetchImpl, url, {
@@ -143,8 +148,38 @@ export async function listRecentItems(
   if (!text.trim()) {
     throw new Error(`Expected JSON response from ${url}`);
   }
-  const items = JSON.parse(text) as ZoteroItemResponse[];
-  const results = items.map(toRow);
+  return JSON.parse(text) as ZoteroItemResponse[];
+}
+
+export async function listRecentItems(
+  options: { limit: number; sort: RecentSort },
+  overrides: ConfigOverrides = {},
+  fetchImpl: FetchLike = fetch,
+): Promise<{ results: RecentItemRow[]; warnings?: string[] }> {
+  const config = resolveConfig(overrides);
+  const readConfig = getReadConfig(config);
+
+  const results: RecentItemRow[] = [];
+  const pageSize = Math.min(Math.max(options.limit, 1), API_PAGE_SIZE);
+  let start = 0;
+
+  while (results.length < options.limit) {
+    const page = await fetchRecentPage(fetchImpl, readConfig, {
+      limit: pageSize,
+      sort: options.sort,
+      start,
+    });
+
+    for (const item of page) {
+      if (!isRegularBibliographicItem(item)) continue;
+      results.push(toRow(item));
+      if (results.length >= options.limit) break;
+    }
+
+    if (page.length < pageSize) break;
+    start += pageSize;
+  }
+
   return {
     results,
     ...(config.warnings.length > 0 ? { warnings: config.warnings } : {}),

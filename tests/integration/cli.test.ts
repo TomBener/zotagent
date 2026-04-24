@@ -284,6 +284,7 @@ test("help summarizes current commands and keeps config-only overrides out of th
   assert.match(result.stdout, /^Add to Zotero$/m);
   assert.match(result.stdout, /add \[--doi <doi> \| --s2-paper-id <id>\] \[--title <text>\]/);
   assert.match(result.stdout, /s2 "<text>" \[--limit <n>\]/);
+  assert.match(result.stdout, /recent \[--limit <n>\] \[--sort added\|modified\]/);
   assert.match(result.stdout, /^Search$/m);
   assert.match(result.stdout, /search "<text>" \[--keyword \| --semantic\] \[--limit <n>\] \[--min-score <n>\]/);
   assert.match(
@@ -324,6 +325,8 @@ test("help summarizes current commands and keeps config-only overrides out of th
   assert.match(result.stdout, /--has-file\s+Keep only metadata results/);
   assert.match(result.stdout, /--abstract\s+Include the abstract in each result/);
   assert.match(result.stdout, /--clean\s+Apply heuristic cleanup/);
+  assert.match(result.stdout, /Skips\s+standalone notes and attachments/);
+  assert.match(result.stdout, /--sort added\|modified\s+Sort by dateAdded/);
 
   // Document selector is described once in its own block.
   assert.match(

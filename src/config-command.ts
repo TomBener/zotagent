@@ -39,7 +39,7 @@ const FIELDS: FieldSpec[] = [
   {
     key: "zoteroLibraryId",
     required: false,
-    help: "Numeric Zotero userID (personal) or group ID. Used by `add` and `s2`.",
+    help: "Numeric Zotero userID (personal) or group ID. Used by `add` and `recent`.",
   },
   {
     key: "zoteroLibraryType",
@@ -51,7 +51,7 @@ const FIELDS: FieldSpec[] = [
     key: "zoteroApiKey",
     required: false,
     secret: true,
-    help: "Zotero Web API key with write access. Required by `add`.",
+    help: "Zotero Web API key. Read access is enough for `recent`; write access is required by `add`.",
   },
   {
     key: "zoteroCollectionKey",

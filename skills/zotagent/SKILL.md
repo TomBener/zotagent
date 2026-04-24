@@ -83,7 +83,7 @@ zotagent recent
 zotagent recent --limit 20 --sort modified
 ```
 
-`recent` hits the Zotero Web API directly (no index required), so items just created with `add` show up immediately — useful for confirming an `add` landed, or for orienting yourself in the library. Returns top-level items only (no attachments or notes). Max `--limit` is 100.
+`recent` hits the Zotero Web API directly (no index required), so items just created with `add` show up immediately — useful for confirming an `add` landed, or for orienting yourself in the library. Returns regular top-level bibliography items only; standalone notes and attachments are skipped. Max `--limit` is 100.
 
 ### Look up a paper's metadata
 

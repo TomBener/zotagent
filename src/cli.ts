@@ -354,9 +354,10 @@ Add to Zotero
       Search Semantic Scholar; pass a returned paperId to \`add --s2-paper-id\`.
 
   recent [--limit <n>] [--sort added|modified]
-      List top-level Zotero items most recently added or modified. Fetches live
-      from the Zotero Web API; does not require a sync. Returns itemKey plus
-      title, authors, year, type, dateAdded, and dateModified.
+      List regular top-level Zotero items most recently added or modified.
+      Fetches live from the Zotero Web API; does not require a sync. Skips
+      standalone notes and attachments. Returns itemKey plus title, authors,
+      year, type, dateAdded, and dateModified.
         --limit <n>                 Return up to n items. Default: 10. Max: 100.
         --sort added|modified       Sort by dateAdded (default) or dateModified.
 `);

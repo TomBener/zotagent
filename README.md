@@ -29,7 +29,7 @@ All three address an item by `--key`, which accepts either `itemKey` or `citatio
 
 - `add` — create an item by DOI or basic fields and return the new `itemKey` immediately.
 - `s2` — search Semantic Scholar; pipe a returned `paperId` into `add --s2-paper-id`.
-- `recent` — list top-level items most recently added or modified, straight from the Zotero Web API (no local index needed). Useful for confirming an `add` landed or orienting an agent in the library.
+- `recent` — list regular top-level items most recently added or modified, straight from the Zotero Web API (no local index needed). Useful for confirming an `add` landed or orienting an agent in the library.
 
 All commands write JSON to stdout and are designed to be chained by AI agents.
 
@@ -77,7 +77,7 @@ Where each field comes from:
 
 - **`zoteroLibraryId`** and **`zoteroLibraryType`** — open [zotero.org/settings/security](https://www.zotero.org/settings/security); your numeric userID is shown at the top of the "Applications" section. Use `"user"` with that userID for a personal library, or `"group"` with the group ID (visible under Groups) for a shared library.
 
-- **`zoteroApiKey`** — required by `add` (and `add --s2-paper-id`). Create one at [zotero.org/settings/keys/new](https://www.zotero.org/settings/keys/new) with library read/write access for the target library.
+- **`zoteroApiKey`** — required by `recent`, `add`, and `add --s2-paper-id`. Create one at [zotero.org/settings/keys/new](https://www.zotero.org/settings/keys/new) with library read access for `recent`; grant write access too if you use `add`.
 
 - **`zoteroCollectionKey`** — optional. 8-character key of a collection that `add` will drop new items into. Open the collection in the Zotero web library (`zotero.org/<user>/collections/<key>`); the last segment is the key.
 
@@ -208,9 +208,10 @@ Add to Zotero
       Search Semantic Scholar; pass a returned paperId to `add --s2-paper-id`.
 
   recent [--limit <n>] [--sort added|modified]
-      List top-level Zotero items most recently added or modified. Fetches live
-      from the Zotero Web API; does not require a sync. Returns itemKey plus
-      title, authors, year, type, dateAdded, and dateModified.
+      List regular top-level Zotero items most recently added or modified.
+      Fetches live from the Zotero Web API; does not require a sync. Skips
+      standalone notes and attachments. Returns itemKey plus title, authors,
+      year, type, dateAdded, and dateModified.
         --limit <n>                 Return up to n items. Default: 10. Max: 100.
         --sort added|modified       Sort by dateAdded (default) or dateModified.
 ```
