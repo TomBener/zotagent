@@ -227,7 +227,11 @@ test("searchMetadata supports author variants and field filtering", async () => 
     },
     { fields: ["publisher"] },
   );
-  assert.deepEqual(thesisPublisher.results, []);
+  assert.deepEqual(
+    thesisPublisher.results.map((row) => row.itemKey),
+    ["ITEM3"],
+  );
+  assert.equal(thesisPublisher.results[0]?.publisher, "East University");
 
   const thesisTitle = await searchMetadata("Institutional Change in China", 10, {
     bibliographyJsonPath: bibliographyPath,
@@ -235,7 +239,7 @@ test("searchMetadata supports author variants and field filtering", async () => 
     dataDir,
   });
   assert.equal(thesisTitle.results.length, 1);
-  assert.equal("publisher" in thesisTitle.results[0]!, false);
+  assert.equal(thesisTitle.results[0]?.publisher, "East University");
 });
 
 test("searchMetadata field-filter flags AND across fields and allow empty query", async () => {
@@ -307,4 +311,67 @@ test("searchMetadata field-filter flags AND across fields and allow empty query"
     () => searchMetadata("", 10, overrides, {}),
     /requires a query or at least one field filter/,
   );
+});
+
+test("searchMetadata exposes publisher for thesis, report, and paper-conference items", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-metadata-publisher-types-"));
+  const { attachmentsRoot } = createFixturePaths(root);
+  const { bibliographyPath, dataDir } = writeBibliography(root, [
+    {
+      id: "thesisFixture",
+      title: "Land Reform in Western China",
+      author: [{ literal: "Lu Shenghua" }],
+      issued: { "date-parts": [[2022]] },
+      publisher: "Zhejiang University",
+      type: "thesis",
+      "zotero-item-key": "THESIS1",
+    },
+    {
+      id: "reportFixture",
+      title: "Working Paper on Urban Development",
+      author: [{ family: "Chen", given: "Wei" }],
+      issued: { "date-parts": [[2021]] },
+      publisher: "National Bureau of Economic Research",
+      type: "report",
+      "zotero-item-key": "REPORT1",
+    },
+    {
+      id: "confFixture",
+      title: "Distributed Systems at Scale",
+      author: [{ family: "Liu", given: "Yang" }],
+      issued: { "date-parts": [[2020]] },
+      publisher: "Association for Computing Machinery",
+      type: "paper-conference",
+      "zotero-item-key": "CONF1",
+    },
+  ]);
+
+  const overrides = { bibliographyJsonPath: bibliographyPath, attachmentsRoot, dataDir };
+
+  const thesisHit = await searchMetadata("Zhejiang University", 10, overrides, {
+    fields: ["publisher"],
+  });
+  assert.deepEqual(
+    thesisHit.results.map((row) => row.itemKey),
+    ["THESIS1"],
+  );
+  assert.equal(thesisHit.results[0]?.publisher, "Zhejiang University");
+
+  const reportHit = await searchMetadata("", 10, overrides, {
+    filters: { publisher: "National Bureau" },
+  });
+  assert.deepEqual(
+    reportHit.results.map((row) => row.itemKey),
+    ["REPORT1"],
+  );
+  assert.equal(reportHit.results[0]?.publisher, "National Bureau of Economic Research");
+
+  const confHit = await searchMetadata("", 10, overrides, {
+    filters: { publisher: "Association for Computing Machinery" },
+  });
+  assert.deepEqual(
+    confHit.results.map((row) => row.itemKey),
+    ["CONF1"],
+  );
+  assert.equal(confHit.results[0]?.publisher, "Association for Computing Machinery");
 });

@@ -31,7 +31,7 @@ export interface CatalogData {
 }
 
 const JOURNAL_TYPES = new Set(["article-journal", "article-magazine", "article-newspaper", "article"]);
-const PUBLISHER_TYPES = new Set(["book", "chapter"]);
+const PUBLISHER_TYPES = new Set(["book", "chapter", "thesis", "report", "paper-conference"]);
 
 function readBibliography(path: string): RawBibliographyItem[] {
   if (!existsSync(path)) {
