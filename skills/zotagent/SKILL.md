@@ -62,9 +62,16 @@ zotagent add --s2-paper-id <paperId>
 
 # Manual fallback — authors go in Zotero "Last, First" form; repeat --author for multiple
 zotagent add --title "Title of a paper" --author "Zhang, San" --year 2026 --publication "Journal of Important Studies"
+
+# Add a book — pass --item-type, otherwise manual adds default to journalArticle
+zotagent add --title "Fifty Years of Land Reform" --author "Hsiao, Cheng" --year 1980 --publication "China Land Policy Institute" --item-type book
 ```
 
+Other `add` flags not shown above: `--url, --url-date` (alias `--access-date`), `--collection-key`.
+
 `s2` results include `openAccessPdfUrl` when available — surface it to the user as a free PDF link alongside the `add` suggestion.
+
+**S2 rate limit**: 1 request/second, cumulative across Semantic Scholar endpoints (`s2` and `add --s2-paper-id`). Run these sequentially, never in parallel — parallel calls will 429. Spacing between separate tool calls is usually enough; no sleep needed.
 
 ### Look up a paper's metadata
 
