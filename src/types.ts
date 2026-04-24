@@ -150,7 +150,6 @@ export interface SyncStats extends CatalogCounts {
 
 export interface SearchResultRow {
   itemKey: string;
-  citationKey?: string;
   title: string;
   authors: string[];
   year?: string;
@@ -164,7 +163,6 @@ export type MetadataField = "title" | "author" | "year" | "abstract" | "journal"
 
 export interface MetadataSearchResultRow {
   itemKey: string;
-  citationKey?: string;
   type?: string;
   title: string;
   authors: string[];

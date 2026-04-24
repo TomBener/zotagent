@@ -56,7 +56,6 @@ function toMetadataSearchResultRow(
 
   return {
     itemKey: record.itemKey,
-    ...(record.citationKey ? { citationKey: record.citationKey } : {}),
     ...(record.type ? { type: record.type } : {}),
     title: record.title,
     authors: record.authors,

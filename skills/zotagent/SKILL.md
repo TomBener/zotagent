@@ -111,16 +111,16 @@ zotagent fulltext --key KG326EEI --clean
 
 ## Citing passages
 
-When you quote or paraphrase material from `search` / `search-in` / `expand` / `blocks` / `fulltext`, cite in **Pandoc source form** using the block index as locator:
+When you quote or paraphrase material from `search` / `search-in` / `expand` / `blocks` / `fulltext`, cite in **Pandoc source form** using the returned `itemKey` and the block index as locator:
 
-- With locator: `[@citationKey, block N]` — single block or a range like `block 3-7`
-- Narrative reference without locator: `@citationKey`
+- With locator: `[@itemKey, block N]` — single block or a range like `block 3-7`
+- Narrative reference without locator: `@itemKey`
 
-`N` is `blockStart` (or `blockIndex` in `expand` / `blocks`).
+`N` is `blockStart` (or `blockIndex` in `expand` / `blocks`). A Pandoc filter (e.g. `itemkey-to-citekey.lua`) can rewrite `@itemKey` to a human-readable Better BibTeX key at render time if your pipeline supports it.
 
-Examples (given `citationKey: "lilifeng2018"`, `blockStart: 3`, `blockEnd: 7`):
-- `[@lilifeng2018, block 3]`
-- `[@lilifeng2018, block 3-7]`
+Examples (given `itemKey: "KG326EEI"`, `blockStart: 3`, `blockEnd: 7`):
+- `[@KG326EEI, block 3]`
+- `[@KG326EEI, block 3-7]`
 
 Do not cite `pageStart` / `pageEnd`. They appear in `expand` / `blocks` output but are unreliable (PDF extraction drift; EPUB has none) — use the block index.
 
@@ -128,7 +128,7 @@ Do not cite `pageStart` / `pageEnd`. They appear in `expand` / `blocks` output b
 
 - **`passage` is a ~500-token snippet** — the trailing `…` means truncation. Before quoting or treating it as evidence, call `expand --key <k> --block-start <blockStart> --block-end <blockEnd>` to get the full block text. Use `--radius 0` for just the hit; default is 2.
 - **`metadata` omits `abstract` by default** to keep bulk responses compact. Pass `--abstract` when you need it.
-- **`--key` accepts `itemKey` or `citationKey`**, with or without a leading `@` (so Pandoc `@citekey` pastes straight in). Every response returns both. Prefer `itemKey` when persisting a reference — `citationKey` can change if someone renames it in Zotero.
+- **`--key` accepts `itemKey` or `citationKey`**, with or without a leading `@` (so Pandoc `@citekey` pastes straight in). Output always identifies items by `itemKey` only — `citationKey` is accepted as input but never emitted, so chain subsequent calls on `itemKey`.
 - **Block indices are item-global.** When an item has multiple indexed attachments, indices run monotonically across them with `# Attachment: <name>` dividers. Pass `blockStart` from `search` straight into `blocks` / `expand`.
 - **`search-in` on a chapter key may miss.** `SEARCH_IN_FAILED: No indexed attachment found` usually means the chapter's PDF is indexed only inside its parent volume. Look the parent up with `metadata`, then `search-in` against the parent's key and locate the chapter by its heading. Common for edited collections and proceedings.
 

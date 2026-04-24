@@ -1608,7 +1608,7 @@ test("fullTextDocument keeps boilerplate and references by default", () => {
   );
 
   assert.equal(fullText.itemKey, "ITEMA000");
-  assert.equal(fullText.citationKey, "lee2024agent");
+  assert.ok(!("citationKey" in fullText), "citationKey must not be emitted");
   assert.equal(fullText.format, "markdown");
   assert.equal(fullText.source, "normalized");
   assert.equal(fullText.keptBlocks, 6);
@@ -1822,7 +1822,7 @@ test("fullTextDocument merges multiple attachments for one itemKey", () => {
   );
 
   assert.deepEqual(merged.files, ["/tmp/multi-one.pdf", "/tmp/multi-two.pdf"]);
-  assert.equal(merged.citationKey, "lee2024multi");
+  assert.ok(!("citationKey" in merged), "citationKey must not be emitted");
   assert.match(merged.content, /Unique paragraph one\./);
   assert.match(merged.content, /Unique paragraph two\./);
   assert.match(merged.content, /# Attachment: multi-two\.pdf/);
@@ -1934,7 +1934,7 @@ test("resolveReadyEntries rejects citationKey collisions across different itemKe
 test("citationKey lookup resolves to itemKey first, then fetches every attachment for that item", () => {
   // Fixture: one item (ITEMP000) with two attachments; only the EPUB entry
   // carries citationKey, and the PDF sorts first. --key partial2024 should
-  // still return both attachments and emit the canonical citationKey.
+  // still return both attachments (input-only alias; output is itemKey only).
   const root = mkdtempSync(join(tmpdir(), "zotagent-partial-citekey-"));
   const dataDir = join(root, "data");
   const indexDir = join(dataDir, "index");
@@ -2043,7 +2043,7 @@ test("citationKey lookup resolves to itemKey first, then fetches every attachmen
   );
 
   assert.equal(merged.itemKey, "ITEMP000");
-  assert.equal(merged.citationKey, "partial2024");
+  assert.ok(!("citationKey" in merged), "citationKey must not be emitted");
   assert.deepEqual(merged.files, ["/tmp/partial-one.pdf", "/tmp/partial-two.epub"]);
   assert.match(merged.content, /PDF body\./);
   assert.match(merged.content, /EPUB body\./);

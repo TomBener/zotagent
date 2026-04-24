@@ -23,7 +23,7 @@ Search and retrieval are the core features. Both read from a local index that `s
 - `fulltext` — return the full normalized markdown for one item. `--clean` drops duplicate blocks and common boilerplate (citation notices, TOC lines).
 - `expand` — pull context around a block range, typically a search hit, with a configurable `--radius`.
 
-All three address an item by `--key`, which accepts either `itemKey` or `citationKey`. A leading `@` is stripped before dispatch, so Pandoc-style citations can be pasted directly. Values matching `[A-Z0-9]{8}` are dispatched as `itemKey`; anything else is treated as `citationKey`. When one item has multiple indexed attachments, they are merged into one logical document with monotonic block indices and `# Attachment: <name>` dividers. Both keys are emitted in every response.
+All three address an item by `--key`, which accepts either `itemKey` or `citationKey`. A leading `@` is stripped before dispatch, so Pandoc-style citations can be pasted directly. Values matching `[A-Z0-9]{8}` are dispatched as `itemKey`; anything else is treated as `citationKey`. When one item has multiple indexed attachments, they are merged into one logical document with monotonic block indices and `# Attachment: <name>` dividers. Output always identifies items by `itemKey` only — citationKey is accepted as input but never emitted, so downstream chaining stays on a single stable key.
 
 ### Add to Zotero
 
@@ -185,8 +185,8 @@ Retrieval
 Document selector (used by search-in, blocks, fulltext, expand)
   --key <key>                   Resolve an item by itemKey or citationKey. A leading @ is
                                 stripped before dispatch; values matching [A-Z0-9]{8} are
-                                itemKey, anything else is citationKey. Both forms are emitted
-                                in output alongside the stable itemKey.
+                                itemKey, anything else is citationKey. Output always
+                                identifies items by itemKey only.
 
 Add to Zotero
   add [--doi <doi> | --s2-paper-id <id>] [--title <text>] [--author <name>] [--year <text>]

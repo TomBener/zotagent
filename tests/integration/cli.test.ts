@@ -829,7 +829,7 @@ test("expand resolves a unique attachment by itemKey", async () => {
   assert.match(parsed.data.passage, /Party organization shapes firm governance\./);
 });
 
-test("blocks emits citationKey in the output when the manifest has one", async () => {
+test("blocks output identifies the item by itemKey only", async () => {
   const fixture = await createIndexedFixture();
 
   const result = runCli([
@@ -851,14 +851,13 @@ test("blocks emits citationKey in the output when the manifest has one", async (
     ok: boolean;
     data: {
       itemKey: string;
-      citationKey?: string;
       files: string[];
       blocks: Array<{ text: string }>;
     };
   };
   assert.equal(parsed.ok, true);
   assert.equal(parsed.data.itemKey, "ITEM9000");
-  assert.equal(parsed.data.citationKey, fixture.citationKey);
+  assert.ok(!("citationKey" in parsed.data), "citationKey must not be emitted");
   assert.deepEqual(parsed.data.files, [fixture.filePath]);
   assert.equal(parsed.data.blocks.length, 1);
   assert.match(parsed.data.blocks[0]!.text, /company party secretary/);
@@ -959,12 +958,12 @@ test("fulltext merges multiple attachments for one itemKey into one document", a
   assert.equal(result.status, 0);
   const parsed = JSON.parse(result.stdout) as {
     ok: boolean;
-    data: { itemKey: string; citationKey?: string; files: string[]; content: string };
+    data: { itemKey: string; files: string[]; content: string };
   };
 
   assert.equal(parsed.ok, true);
+  assert.ok(!("citationKey" in parsed.data), "citationKey must not be emitted");
   assert.deepEqual(parsed.data.files, fixture.filePaths);
-  assert.equal(parsed.data.citationKey, fixture.citationKey);
   assert.match(parsed.data.content, /Unique paragraph 1\./);
   assert.match(parsed.data.content, /Unique paragraph 2\./);
   assert.match(parsed.data.content, /# Attachment: /);
@@ -988,11 +987,11 @@ test("fulltext resolves by citationKey when --key is not in itemKey shape", asyn
   assert.equal(result.status, 0);
   const parsed = JSON.parse(result.stdout) as {
     ok: boolean;
-    data: { itemKey: string; citationKey?: string };
+    data: { itemKey: string };
   };
   assert.equal(parsed.ok, true);
   assert.equal(parsed.data.itemKey, "ITEM9000");
-  assert.equal(parsed.data.citationKey, fixture.citationKey);
+  assert.ok(!("citationKey" in parsed.data), "citationKey must not be emitted");
 });
 
 test("blocks reports misses with shape-specific error messages", async () => {
@@ -1047,11 +1046,11 @@ test("fulltext strips a leading @ from --key so Pandoc-style citations resolve",
   assert.equal(result.status, 0);
   const parsed = JSON.parse(result.stdout) as {
     ok: boolean;
-    data: { itemKey: string; citationKey?: string };
+    data: { itemKey: string };
   };
   assert.equal(parsed.ok, true);
   assert.equal(parsed.data.itemKey, "ITEM9000");
-  assert.equal(parsed.data.citationKey, fixture.citationKey);
+  assert.ok(!("citationKey" in parsed.data), "citationKey must not be emitted");
 });
 
 test("unknown flags are rejected with UNEXPECTED_ARGUMENT rather than silently ignored", () => {

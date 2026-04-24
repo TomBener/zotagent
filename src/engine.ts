@@ -29,17 +29,12 @@ type VerifiedSearchRow = SearchResultRow & { referenceOnly: boolean };
 
 const ITEM_KEY_RE = /^[A-Z0-9]{8}$/;
 
-interface ResolvedItemKey {
-  itemKey: string;
-  citationKey?: string;
-}
-
 // Resolve the --key argument to a Zotero itemKey. citationKey lookups
 // translate to itemKey first so downstream fetching can grab *every*
 // ready attachment for that item, even if citationKey is missing or
 // stale on some entries (e.g. a partial re-sync).
-function resolveKeyToItemKey(key: string, entries: CatalogEntry[]): ResolvedItemKey {
-  if (ITEM_KEY_RE.test(key)) return { itemKey: key };
+function resolveKeyToItemKey(key: string, entries: CatalogEntry[]): string {
+  if (ITEM_KEY_RE.test(key)) return key;
   const matches = entries.filter((entry) => entry.citationKey === key);
   if (matches.length === 0) {
     throw new Error(`No indexed attachment found for citationKey: ${key}`);
@@ -50,22 +45,21 @@ function resolveKeyToItemKey(key: string, entries: CatalogEntry[]): ResolvedItem
       `Multiple items share citationKey "${key}": itemKeys = ${[...itemKeys].sort().join(", ")}`,
     );
   }
-  return { itemKey: itemKeys.values().next().value as string, citationKey: key };
+  return itemKeys.values().next().value as string;
 }
 
 function resolveReadyEntries(key: string, entries: CatalogEntry[]): CatalogEntry[] {
   if (!key) {
     throw new Error("Provide --key <key>.");
   }
-  const resolved = resolveKeyToItemKey(key, entries);
+  const itemKey = resolveKeyToItemKey(key, entries);
   const matched = entries
-    .filter((entry) => entry.itemKey === resolved.itemKey)
+    .filter((entry) => entry.itemKey === itemKey)
     .sort((a, b) => a.filePath.localeCompare(b.filePath));
   if (matched.length === 0) {
-    throw new Error(`No indexed attachment found for itemKey: ${resolved.itemKey}`);
+    throw new Error(`No indexed attachment found for itemKey: ${itemKey}`);
   }
-  const citationKey = resolved.citationKey ?? matched.find((entry) => entry.citationKey)?.citationKey;
-  return citationKey ? matched.map((entry) => ({ ...entry, citationKey })) : matched;
+  return matched;
 }
 
 function groupReadyEntriesByItemKey(entries: CatalogEntry[]): Map<string, CatalogEntry[]> {
@@ -203,7 +197,6 @@ function buildSearchRow(
 
   return {
     itemKey: entry.itemKey,
-    ...(entry.citationKey ? { citationKey: entry.citationKey } : {}),
     title: entry.title,
     authors: entry.authors,
     ...(entry.year ? { year: entry.year } : {}),
@@ -222,7 +215,6 @@ function buildTitleSearchRow(
 ): VerifiedSearchRow {
   return {
     itemKey: entry.itemKey,
-    ...(entry.citationKey ? { citationKey: entry.citationKey } : {}),
     title: entry.title,
     authors: entry.authors,
     ...(entry.year ? { year: entry.year } : {}),
@@ -604,7 +596,6 @@ function countOccurrences(haystack: string, needle: string): number {
 
 type FullTextRow = {
   itemKey: string;
-  citationKey?: string;
   title: string;
   authors: string[];
   year?: string;
@@ -810,7 +801,6 @@ export function getDocumentBlocks(
   overrides: ConfigOverrides = {},
 ): {
   itemKey: string;
-  citationKey?: string;
   title: string;
   authors: string[];
   year?: string;
@@ -835,7 +825,6 @@ export function getDocumentBlocks(
   const blocks = manifest.blocks.slice(input.offsetBlock, input.offsetBlock + input.limitBlocks);
   return {
     itemKey: primary.itemKey,
-    ...(primary.citationKey ? { citationKey: primary.citationKey } : {}),
     title: primary.title,
     authors: primary.authors,
     ...(primary.year ? { year: primary.year } : {}),
@@ -891,7 +880,6 @@ function buildFullTextRow(
 
     return {
       itemKey: primary.itemKey,
-      ...(primary.citationKey ? { citationKey: primary.citationKey } : {}),
       title: primary.title,
       authors: primary.authors,
       ...(primary.year ? { year: primary.year } : {}),
@@ -945,7 +933,6 @@ function buildFullTextRow(
 
   return {
     itemKey: primary.itemKey,
-    ...(primary.citationKey ? { citationKey: primary.citationKey } : {}),
     title: primary.title,
     authors: primary.authors,
     ...(primary.year ? { year: primary.year } : {}),
@@ -977,7 +964,6 @@ export function expandDocument(
   overrides: ConfigOverrides = {},
 ): {
   itemKey: string;
-  citationKey?: string;
   title: string;
   authors: string[];
   year?: string;
@@ -1014,7 +1000,6 @@ export function expandDocument(
 
   return {
     itemKey: primary.itemKey,
-    ...(primary.citationKey ? { citationKey: primary.citationKey } : {}),
     title: primary.title,
     authors: primary.authors,
     ...(primary.year ? { year: primary.year } : {}),

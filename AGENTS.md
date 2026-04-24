@@ -4,7 +4,7 @@
 
 ## Core invariants
 
-- All document-selecting commands take `--key <value>`. Values matching `[A-Z0-9]{8}` are resolved as Zotero `itemKey`; anything else as Better BibTeX `citationKey`. Both keys appear in every output.
+- All document-selecting commands take `--key <value>`. Values matching `[A-Z0-9]{8}` are resolved as Zotero `itemKey`; anything else as Better BibTeX `citationKey`. Output always identifies items by `itemKey` only — `citationKey` is an accepted input alias but is never emitted.
 - `docKey = sha1(filePath)`, so renaming or moving an attachment looks like "old path removed + new path added".
 - `add` is speed-first and does not do Zotero-side duplicate checking; write responses should return `itemKey` immediately.
 - `blocks` and `expand` read local manifests directly; they do not depend on the search backend.

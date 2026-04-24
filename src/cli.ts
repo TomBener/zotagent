@@ -331,8 +331,8 @@ Retrieval
 Document selector (used by search-in, blocks, fulltext, expand)
   --key <key>                   Resolve an item by itemKey or citationKey. A leading @ is
                                 stripped before dispatch; values matching [A-Z0-9]{8} are
-                                itemKey, anything else is citationKey. Both forms are emitted
-                                in output alongside the stable itemKey.
+                                itemKey, anything else is citationKey. Output always
+                                identifies items by itemKey only.
 
 Add to Zotero
   add [--doi <doi> | --s2-paper-id <id>] [--title <text>] [--author <name>] [--year <text>]
