@@ -29,6 +29,7 @@ All three address an item by `--key`, which accepts either `itemKey` or `citatio
 
 - `add` — create an item by DOI or basic fields and return the new `itemKey` immediately.
 - `s2` — search Semantic Scholar; pipe a returned `paperId` into `add --s2-paper-id`.
+- `recent` — list top-level items most recently added or modified, straight from the Zotero Web API (no local index needed). Useful for confirming an `add` landed or orienting an agent in the library.
 
 All commands write JSON to stdout and are designed to be chained by AI agents.
 
@@ -205,6 +206,13 @@ Add to Zotero
 
   s2 "<text>" [--limit <n>]
       Search Semantic Scholar; pass a returned paperId to `add --s2-paper-id`.
+
+  recent [--limit <n>] [--sort added|modified]
+      List top-level Zotero items most recently added or modified. Fetches live
+      from the Zotero Web API; does not require a sync. Returns itemKey plus
+      title, authors, year, type, dateAdded, and dateModified.
+        --limit <n>                 Return up to n items. Default: 10. Max: 100.
+        --sort added|modified       Sort by dateAdded (default) or dateModified.
 ```
 
 A few behaviors worth knowing:

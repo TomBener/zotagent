@@ -73,6 +73,18 @@ Other `add` flags not shown above: `--url, --url-date` (alias `--access-date`), 
 
 **S2 rate limit**: 1 request/second, cumulative across Semantic Scholar endpoints (`s2` and `add --s2-paper-id`). Run these sequentially, never in parallel — parallel calls will 429. Spacing between separate tool calls is usually enough; no sleep needed.
 
+### List recently added or modified items
+
+```bash
+# Most recent 10 additions (default)
+zotagent recent
+
+# Top 20 most recently modified items
+zotagent recent --limit 20 --sort modified
+```
+
+`recent` hits the Zotero Web API directly (no index required), so items just created with `add` show up immediately — useful for confirming an `add` landed, or for orienting yourself in the library. Returns top-level items only (no attachments or notes). Max `--limit` is 100.
+
 ### Look up a paper's metadata
 
 ```bash

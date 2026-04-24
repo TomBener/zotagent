@@ -10,6 +10,7 @@ import { emitError, emitOk } from "./json.js";
 import { KeywordQuerySyntaxError } from "./keyword-db.js";
 import { searchMetadata } from "./metadata.js";
 import { openQmdClient } from "./qmd.js";
+import { listRecentItems, type RecentSort } from "./recent.js";
 import { searchSemanticScholar } from "./s2.js";
 import { runSync } from "./sync.js";
 import type { MetadataField } from "./types.js";
@@ -57,6 +58,7 @@ const COMMAND_FLAG_ALLOWLIST: Record<string, ReadonlyArray<string>> = {
     "item-type",
   ],
   s2: ["limit"],
+  recent: ["limit", "sort"],
   search: ["keyword", "semantic", "limit", "min-score"],
   "search-in": ["key", "limit"],
   metadata: ["limit", "field", "has-file", "abstract", "author", "year", "title", "journal", "publisher"],
@@ -350,6 +352,13 @@ Add to Zotero
 
   s2 "<text>" [--limit <n>]
       Search Semantic Scholar; pass a returned paperId to \`add --s2-paper-id\`.
+
+  recent [--limit <n>] [--sort added|modified]
+      List top-level Zotero items most recently added or modified. Fetches live
+      from the Zotero Web API; does not require a sync. Returns itemKey plus
+      title, authors, year, type, dateAdded, and dateModified.
+        --limit <n>                 Return up to n items. Default: 10. Max: 100.
+        --sort added|modified       Sort by dateAdded (default) or dateModified.
 `);
 }
 
@@ -560,6 +569,43 @@ async function main(): Promise<void> {
         const data = s2PaperId
           ? await addS2PaperToZotero(s2PaperId, sharedInput, overrides)
           : await addToZotero(sharedInput, overrides);
+        emitOk(data, { elapsedMs: Date.now() - startedAt });
+        return;
+      }
+
+      case "recent": {
+        if (parsed.positionals.length > 1) {
+          emitError("UNEXPECTED_ARGUMENT", "recent does not accept positional arguments.");
+          return;
+        }
+        const limitInput = parseNumericFlag(parsed.flags, "limit", {
+          requirement: "a positive integer",
+          constraint: "a positive integer between 1 and 100",
+          integer: true,
+          min: 1,
+        });
+        if (limitInput.error) {
+          emitError("INVALID_ARGUMENT", limitInput.error);
+          return;
+        }
+        const limit = limitInput.value ?? 10;
+        if (limit > 100) {
+          emitError("INVALID_ARGUMENT", "`--limit` for recent cannot exceed 100 (Zotero API page size).");
+          return;
+        }
+        if (parsed.flags.sort === true) {
+          emitError("INVALID_ARGUMENT", "`--sort` requires a value: `added` or `modified`.");
+          return;
+        }
+        const sortRaw = getStringFlag(parsed.flags, "sort") ?? "added";
+        let sort: RecentSort;
+        if (sortRaw === "added") sort = "dateAdded";
+        else if (sortRaw === "modified") sort = "dateModified";
+        else {
+          emitError("INVALID_ARGUMENT", "`--sort` must be `added` or `modified`.");
+          return;
+        }
+        const data = await listRecentItems({ limit, sort }, overrides);
         emitOk(data, { elapsedMs: Date.now() - startedAt });
         return;
       }
