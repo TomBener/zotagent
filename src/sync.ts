@@ -1465,7 +1465,9 @@ export async function runSync(
 
     for (const attachment of nonPdfAttachments) {
       try {
-        logger.info(`Extracting ${attachment.fileExt}: ${compactHomePath(attachment.filePath)}.`);
+        logger.info(`Extracting ${attachment.fileExt}: ${compactHomePath(attachment.filePath)}.`, {
+          console: true,
+        });
         const written = await extractNonPdfAttachment(attachment, paths.manifestsDir, paths.normalizedDir);
         await recordReadyAttachment(attachment, written);
       } catch (error) {
@@ -1557,7 +1559,7 @@ export async function runSync(
         console: true,
       });
       for (const attachment of batch) {
-        logger.info(`  - ${compactHomePath(attachment.filePath)}`);
+        logger.info(`  - ${compactHomePath(attachment.filePath)}`, { console: true });
       }
       try {
         const extracted = await extractBatchFn(
@@ -1600,7 +1602,9 @@ export async function runSync(
                 skippedAttachments: stats.skippedAttachments,
                 note: "retrying individually after batch failure",
               });
-              logger.info(`Retrying ${compactHomePath(attachment.filePath)} individually.`);
+              logger.info(`Retrying ${compactHomePath(attachment.filePath)} individually.`, {
+                console: true,
+              });
               const extracted = await extractBatchFn(
                 [attachment],
                 paths.tempDir,
@@ -1711,7 +1715,7 @@ export async function runSync(
       });
       for (const docKey of staleDocKeys) {
         const previous = previousByDocKey.get(docKey);
-        if (previous) logger.info(`  - ${compactHomePath(previous.filePath)}`);
+        if (previous) logger.info(`  - ${compactHomePath(previous.filePath)}`, { console: true });
       }
     }
     for (const docKey of staleDocKeys) {
