@@ -5,7 +5,7 @@
 ## Core invariants
 
 - All document-selecting commands take `--key <value>`. Values matching `[A-Z0-9]{8}` are resolved as Zotero `itemKey`; anything else as Better BibTeX `citationKey`. Output always identifies items by `itemKey` only — `citationKey` is an accepted input alias but is never emitted.
-- `docKey = sha1(filePath)`, so renaming or moving an attachment looks like "old path removed + new path added".
+- `docKey = sha1(relativePath)`. Renaming/moving an attachment inside `attachmentsRoot` is detected via `(itemKey, size, mtimeMs)` matching a previously-ready entry whose filePath has dropped out of the bibliography: the cached manifest + normalized markdown are migrated to the new docKey instead of re-extracting (qmd embeddings are still recomputed, since they key on docKey). If `size` or `mtimeMs` shifted (cross-volume copy, Finder drag-copy, iCloud metadata churn) or the triple collides within the candidate pool, the rename detection misses and sync falls back to "old path removed + new path added" — full re-extract.
 - `add` is speed-first and does not do Zotero-side duplicate checking; write responses should return `itemKey` immediately.
 - `blocks` and `expand` read local manifests directly; they do not depend on the search backend.
 - Long-lived indexes live in the iCloud-backed `dataDir`. Do not move persistent index files into `/tmp`.
