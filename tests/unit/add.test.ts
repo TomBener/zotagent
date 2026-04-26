@@ -1,7 +1,5 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 
 import { addJsonItemsToZotero, addS2PaperToZotero, addToZotero } from "../../src/add.js";
 import { mapLenientItem } from "../../src/json-input.js";
@@ -659,12 +657,21 @@ function stubZotero(options: StubbedZoteroOptions = {}): StubbedZotero {
   return { fetchMock, requests };
 }
 
-const FIXTURE_PATH = fileURLToPath(new URL("./fixtures/cnki-detail.json", import.meta.url));
-
-test("addJsonItemsToZotero creates a single item from a Zotero-shaped fixture", async () => {
+test("addJsonItemsToZotero creates a single item from a Zotero-shaped object", async () => {
   const { fetchMock, requests } = stubZotero({ itemKeys: ["FIX00001"] });
-  const raw = JSON.parse(readFileSync(FIXTURE_PATH, "utf8")) as Record<string, unknown>;
-  const input = mapLenientItem(raw);
+  const input = mapLenientItem({
+    itemType: "journalArticle",
+    title: "安汉与抗战时期西北垦殖运动",
+    authors: ["储竞争"],
+    publicationTitle: "农业考古",
+    year: "2023",
+    issue: "01",
+    DOI: "10.13568/j.cnki.test.2023.01.001",
+    abstractNote: "安汉，陕西南郑人，民国著名农学家、垦殖专家。抗战时期投身西北开发，其指导下的垦殖活动成绩位列全国垦区之冠。",
+    keywords: ["安汉", "西北垦殖", "抗战时期", "西北开发"],
+    url: "https://oversea.cnki.net/kcms2/article/abstract?v=test&uniplatform=OVERSEA&language=CHS",
+    extra: "CNKI exportId: TEST-EXPORT-ID-001",
+  });
 
   const results = await addJsonItemsToZotero(
     [input],
