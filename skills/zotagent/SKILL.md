@@ -65,9 +65,23 @@ zotagent add --title "Title of a paper" --author "Zhang, San" --year 2026 --publ
 
 # Add a book — pass --item-type, otherwise manual adds default to journalArticle
 zotagent add --title "Fifty Years of Land Reform" --author "Hsiao, Cheng" --year 1980 --publication "China Land Policy Institute" --item-type book
+
+# Add one or many items from pre-shaped JSON (best for CNKI / non-DOI sources)
+zotagent add --json paper.json
+zotagent add --json batch.json --collection-key COLL1234
+your-extractor | zotagent add --json -
 ```
 
 Other `add` flags not shown above: `--url, --url-date` (alias `--access-date`), `--collection-key`.
+
+**`--json` mode** is for sources whose DOI doesn't resolve via CrossRef (notably CNKI — its DOIs are unregistered) or for batches where building flag strings is awkward. The input is one JSON object or an array of objects (file or `-` for stdin) in a lenient Zotero schema:
+
+- `title` is required; `itemType` defaults to `journalArticle`
+- aliases: `authors[]` → `creators[]`, `keywords[]` → `tags[]`, `abstract` → `abstractNote`, `doi` → `DOI`, `publication`/`journal` → routed to the right container field, `year` → `date` (Zotero stores publication date in `date`, not `year`)
+- multi-collection arrays in `collections` pass through unchanged
+- any other Zotero-native field (`volume`, `issue`, `pages`, `ISSN`, `extra`, `language`, `university`, ...) passes through; unknown keys are dropped silently by template-gating
+
+`--json` is **mutually exclusive** with `--doi`, `--s2-paper-id`, and the manual flags (`--title`, `--author`, `--year`, `--publication`, `--url`, `--url-date`, `--access-date`, `--item-type`); only `--collection-key` may accompany it (forces a single collection for the whole batch). Output `data` is **always an array** of per-item results — successes match the regular `AddResult`, per-item failures appear in-place as `{ok: false, error: {code, message}, title?, itemType?}` and never abort the rest of the batch.
 
 `s2` results include `openAccessPdfUrl` when available — surface it to the user as a free PDF link alongside the `add` suggestion.
 
