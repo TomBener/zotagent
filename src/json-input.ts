@@ -48,6 +48,8 @@ const RESERVED_INPUT_KEYS = new Set([
   "accessedAt",
   "collections",
   "collectionKey",
+  "date",
+  "year",
 ]);
 
 class JsonInputError extends Error {
@@ -122,6 +124,8 @@ function normalizeKeywordsToTags(raw: unknown): { tags: { tag: string }[]; dropp
  *   publicationTitle | publication | journal → publicationTitle (re-routed to the right
  *                                              container field by applyPublicationField)
  *   accessDate | access-date | accessedAt → accessDate
+ *   date | year                        → date         (Zotero stores publication date in `date`,
+ *                                                       not `year`)
  *   collections (string|string[]) | collectionKey → collections[]
  *
  * Any other key passes through to `fields` unchanged. Template-gating in the
@@ -190,6 +194,9 @@ export function mapLenientItem(raw: unknown): AddJsonInput {
 
   const accessDate = pickString(raw, ["accessDate", "access-date", "accessedAt"]);
   if (accessDate) fields.accessDate = accessDate;
+
+  const date = pickString(raw, ["date", "year"]);
+  if (date) fields.date = date;
 
   let collections: string[] | undefined;
   if (Array.isArray(raw.collections)) {

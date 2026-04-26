@@ -699,6 +699,7 @@ test("addJsonItemsToZotero creates a single item from a Zotero-shaped object", a
   assert.equal(payload?.publicationTitle, "农业考古");
   assert.equal(payload?.DOI, "10.13568/j.cnki.test.2023.01.001");
   assert.equal(payload?.issue, "01");
+  assert.equal(payload?.date, "2023");
   assert.equal(payload?.abstractNote?.toString().startsWith("安汉，陕西南郑人"), true);
   assert.equal(payload?.url, "https://oversea.cnki.net/kcms2/article/abstract?v=test&uniplatform=OVERSEA&language=CHS");
   assert.equal(payload?.extra, "CNKI exportId: TEST-EXPORT-ID-001");
@@ -756,8 +757,47 @@ test("addJsonItemsToZotero processes a batch of mixed item types", async () => {
 
   const createRequests = requests.filter((r) => /\/items$/u.test(r.url));
   assert.equal(createRequests.length, 3);
+  const journalBody = JSON.parse(String(createRequests[0].init?.body)) as Array<Record<string, unknown>>;
+  assert.equal(journalBody[0]?.date, "2024", "year alias should land on Zotero date field");
   const thesisBody = JSON.parse(String(createRequests[1].init?.body)) as Array<Record<string, unknown>>;
   assert.equal(thesisBody[0]?.university, "Test University");
+  assert.equal(thesisBody[0]?.date, "2025");
+});
+
+test("addJsonItemsToZotero passes a multi-collection array through unchanged", async () => {
+  const { fetchMock, requests } = stubZotero({ itemKeys: ["M0001"] });
+  const input = mapLenientItem({
+    itemType: "journalArticle",
+    title: "Multi-collection routing",
+    collections: ["AAAAAAAA", "BBBBBBBB", "CCCCCCCC"],
+  });
+
+  await addJsonItemsToZotero(
+    [input],
+    {
+      zoteroLibraryId: "123456",
+      zoteroLibraryType: "user",
+      zoteroApiKey: "secret",
+    },
+    undefined,
+    fetchMock,
+  );
+
+  const createRequest = requests.find((r) => /\/items$/u.test(r.url));
+  const body = JSON.parse(String(createRequest?.init?.body)) as Array<Record<string, unknown>>;
+  assert.deepEqual(body[0]?.collections, ["AAAAAAAA", "BBBBBBBB", "CCCCCCCC"]);
+});
+
+test("mapLenientItem aliases the year field to Zotero's date", () => {
+  const fromYear = mapLenientItem({ title: "Y", year: "2024" });
+  assert.equal(fromYear.fields.date, "2024");
+  assert.equal(fromYear.fields.year, undefined);
+
+  const fromDate = mapLenientItem({ title: "D", date: "2024-07-15" });
+  assert.equal(fromDate.fields.date, "2024-07-15");
+
+  const both = mapLenientItem({ title: "B", date: "2024-07-15", year: "2024" });
+  assert.equal(both.fields.date, "2024-07-15", "explicit date should win over year alias");
 });
 
 test("addJsonItemsToZotero normalizes the authors[] alias into creators", () => {

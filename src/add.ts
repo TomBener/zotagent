@@ -650,14 +650,21 @@ export async function addJsonItemsToZotero(
         payload[key] = fields[key];
       }
 
-      const perItemCollectionKey =
-        input.collections && input.collections.length > 0 ? input.collections[0] : "";
-      const effectiveCollectionKey =
-        (cliCollectionKey && cliCollectionKey.length > 0 ? cliCollectionKey : "") ||
-        perItemCollectionKey ||
-        config.zoteroCollectionKey ||
-        "";
-      applyCollectionKey(payload, effectiveCollectionKey || undefined);
+      // Collection routing precedence: CLI --collection-key (single, applies
+      // to whole batch) > per-item collections (preserves multi-collection
+      // arrays from the input JSON) > config default. Don't reuse
+      // applyCollectionKey here because it forces a single-key shape.
+      let effectiveCollections: string[] | undefined;
+      if (cliCollectionKey && cliCollectionKey.length > 0) {
+        effectiveCollections = [cliCollectionKey];
+      } else if (input.collections && input.collections.length > 0) {
+        effectiveCollections = input.collections;
+      } else if (config.zoteroCollectionKey) {
+        effectiveCollections = [config.zoteroCollectionKey];
+      }
+      if (effectiveCollections && effectiveCollections.length > 0 && "collections" in payload) {
+        payload.collections = effectiveCollections;
+      }
 
       ensureAgentTag(payload);
 

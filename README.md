@@ -278,8 +278,9 @@ Every key below is optional except `title`. `itemType` defaults to `journalArtic
 | `DOI` / `doi` | `DOI` | Run through the same DOI cleaner the manual path uses. Invalid DOIs are dropped with a warning; the item is still created. |
 | `publicationTitle` / `publication` / `journal` | container field | Routed through `applyPublicationField` so book / conference / website item types pick the right container (`bookTitle`, `proceedingsTitle`, `websiteTitle`). |
 | `accessDate` / `access-date` / `accessedAt` | `accessDate` | First non-empty wins. |
+| `date` / `year` | `date` | First non-empty wins. Zotero stores the publication date in `date` (free-form string), not `year`; passing only `year` would be silently dropped without this alias. |
 | `university` | `university` | Pass-through (relevant for `itemType: "thesis"`). |
-| `collections` / `collectionKey` | `collections` | A string or string array. CLI `--collection-key` overrides this when set. |
+| `collections` / `collectionKey` | `collections` | A string or string array. **Multi-collection arrays pass through unchanged**, so an item can land in several collections at once. CLI `--collection-key` overrides per-item collections (forces a single key for the whole batch); when CLI is unset and no per-item value is provided, the configured `zoteroCollectionKey` default is used. |
 | Any other Zotero-native key | same key | `volume`, `issue`, `pages`, `ISSN`, `ISBN`, `extra`, `language`, `date`, `url`, `publisher`, `series`, `seriesNumber`, `shortTitle`, `libraryCatalog`, ... |
 
 Every created item is auto-tagged `Added by AI Agent`, matching the other `add` paths.
