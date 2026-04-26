@@ -2,11 +2,18 @@
 
 import { readFileSync } from "node:fs";
 
-import { addS2PaperToZotero, addToZotero } from "./add.js";
+import {
+  addJsonItemsToZotero,
+  addS2PaperToZotero,
+  addToZotero,
+  type AddJsonItemFailure,
+  type AddJsonItemResult,
+} from "./add.js";
 import { ConfigCommandError, runConfigCommand } from "./config-command.js";
 import { getDataPaths, resolveConfig, type ConfigOverrides } from "./config.js";
 import { expandDocument, fullTextDocument, getDocumentBlocks, getIndexStatus, searchLiterature, searchWithinDocuments } from "./engine.js";
 import { emitError, emitOk } from "./json.js";
+import { JsonInputError, mapLenientItem, readJsonInput, type AddJsonInput } from "./json-input.js";
 import { KeywordQuerySyntaxError } from "./keyword-db.js";
 import { searchMetadata } from "./metadata.js";
 import { openQmdClient } from "./qmd.js";
@@ -47,6 +54,7 @@ const COMMAND_FLAG_ALLOWLIST: Record<string, ReadonlyArray<string>> = {
   add: [
     "doi",
     "s2-paper-id",
+    "json",
     "title",
     "author",
     "year",
@@ -335,19 +343,28 @@ Document selector (used by search-in, blocks, fulltext, expand)
                                 identifies items by itemKey only.
 
 Add to Zotero
-  add [--doi <doi> | --s2-paper-id <id>] [--title <text>] [--author <name>] [--year <text>]
-      [--publication <text>] [--url <url>] [--url-date <date>] [--collection-key <key>] [--item-type <type>]
-      Create a Zotero item and return its itemKey. Prefer --doi when available.
+  add [--doi <doi> | --s2-paper-id <id> | --json <file|->] [--title <text>] [--author <name>]
+      [--year <text>] [--publication <text>] [--url <url>] [--url-date <date>]
+      [--collection-key <key>] [--item-type <type>]
+      Create one or many Zotero items and return their itemKeys. Prefer --doi when available.
       --s2-paper-id imports from Semantic Scholar (and still prefers DOI when present).
+      --json reads pre-shaped JSON metadata from a file or stdin and is best for batch
+      ingest from sources without working DOIs (e.g. CNKI). The JSON form is mutually
+      exclusive with all other input flags except --collection-key.
         --doi <doi>                 Import from DOI metadata when possible.
         --s2-paper-id <id>          Import a Semantic Scholar paper by paperId.
+        --json <file|->             Read one JSON object or an array of JSON objects from
+                                    a file or stdin (use '-'). Lenient Zotero schema:
+                                    accepts authors[]/keywords[]/abstract/doi aliases plus
+                                    direct Zotero field names. Always returns data: AddResult[].
         --title <text>              Set title for manual add or DOI fallback.
         --author <name>             Add an author. Repeat for multiple authors.
         --year <text>               Set the Zotero date field.
         --publication <text>        Set journal, website, or container title when supported.
         --url <url>                 Set the item URL.
         --url-date <date>           Set the access date for the URL. Alias: --access-date.
-        --collection-key <key>      Add the new item to a Zotero collection by collection key.
+        --collection-key <key>      Add the new item(s) to a Zotero collection by collection key.
+                                    With --json this overrides any per-item collections field.
         --item-type <type>          Override the Zotero item type. Default: journalArticle or webpage.
 
   s2 "<text>" [--limit <n>]
@@ -519,6 +536,7 @@ async function main(): Promise<void> {
         const missingValueFlags = [
           "doi",
           "s2-paper-id",
+          "json",
           "title",
           "author",
           "year",
@@ -536,6 +554,80 @@ async function main(): Promise<void> {
           );
           return;
         }
+        const jsonSource = getStringFlag(parsed.flags, "json");
+        if (jsonSource) {
+          const conflicting = [
+            "doi",
+            "s2-paper-id",
+            "title",
+            "author",
+            "year",
+            "publication",
+            "url",
+            "url-date",
+            "access-date",
+            "item-type",
+          ].filter((flag) => flag in parsed.flags);
+          if (conflicting.length > 0) {
+            emitError(
+              "UNEXPECTED_ARGUMENT",
+              `--json mode accepts only --collection-key alongside it. Remove: ${conflicting
+                .map((flag) => `--${flag}`)
+                .join(", ")}`,
+            );
+            return;
+          }
+          try {
+            const bundle = await readJsonInput(jsonSource);
+            type Stage =
+              | { kind: "ready"; input: AddJsonInput }
+              | { kind: "failed"; failure: AddJsonItemFailure };
+            const stages: Stage[] = [];
+            for (const raw of bundle.items) {
+              try {
+                stages.push({ kind: "ready", input: mapLenientItem(raw) });
+              } catch (mapError) {
+                if (mapError instanceof JsonInputError) {
+                  stages.push({
+                    kind: "failed",
+                    failure: {
+                      ok: false,
+                      error: { code: "INVALID_INPUT", message: mapError.message },
+                    },
+                  });
+                  continue;
+                }
+                throw mapError;
+              }
+            }
+            const readyInputs = stages
+              .filter((s): s is Extract<Stage, { kind: "ready" }> => s.kind === "ready")
+              .map((s) => s.input);
+            const cliCollectionKey = getStringFlag(parsed.flags, "collection-key");
+            const successResults = await addJsonItemsToZotero(
+              readyInputs,
+              overrides,
+              cliCollectionKey,
+            );
+            let resultCursor = 0;
+            const merged: AddJsonItemResult[] = stages.map((stage) =>
+              stage.kind === "ready" ? successResults[resultCursor++] : stage.failure,
+            );
+            emitOk(merged, { elapsedMs: Date.now() - startedAt });
+          } catch (error) {
+            if (error instanceof JsonInputError) {
+              emitError("INVALID_ARGUMENT", error.message, error.details, {
+                elapsedMs: Date.now() - startedAt,
+              });
+              return;
+            }
+            const message = error instanceof Error ? error.message : String(error);
+            emitError("ADD_JSON_FAILED", message, undefined, {
+              elapsedMs: Date.now() - startedAt,
+            });
+          }
+          return;
+        }
         const doi = getStringFlag(parsed.flags, "doi");
         const s2PaperId = getStringFlag(parsed.flags, "s2-paper-id");
         const title = getStringFlag(parsed.flags, "title");
@@ -544,7 +636,7 @@ async function main(): Promise<void> {
           return;
         }
         if (!doi && !s2PaperId && !title) {
-          emitError("MISSING_ARGUMENT", "Provide --doi <doi>, --s2-paper-id <id>, or --title <text> for add.");
+          emitError("MISSING_ARGUMENT", "Provide --doi <doi>, --s2-paper-id <id>, --json <file|->, or --title <text> for add.");
           return;
         }
         const authors = getStringListFlag(parsed.flags, "author");

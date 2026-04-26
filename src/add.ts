@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 
 import { resolveConfig, type ConfigOverrides } from "./config.js";
+import type { AddJsonInput } from "./json-input.js";
 import { getSemanticScholarPaper, inferSemanticScholarItemType } from "./s2.js";
 import type { AppConfig, ZoteroLibraryType } from "./types.js";
 
@@ -72,11 +73,20 @@ export interface AddResult {
   title: string;
   itemType: string;
   created: boolean;
-  source: "doi" | "manual" | "manual-fallback";
+  source: "doi" | "manual" | "manual-fallback" | "json";
   doi?: string;
   s2PaperId?: string;
   warnings: string[];
 }
+
+export interface AddJsonItemFailure {
+  ok: false;
+  error: { code: string; message: string };
+  title?: string;
+  itemType?: string;
+}
+
+export type AddJsonItemResult = AddResult | AddJsonItemFailure;
 
 interface ResolvedWriteConfig {
   apiKey: string;
@@ -92,7 +102,7 @@ function normalizeSpace(value: string): string {
   return value.replace(/\u00a0/gu, " ").replace(/\s+/gu, " ").trim();
 }
 
-function cleanDoi(rawDoi: string): string {
+export function cleanDoi(rawDoi: string): string {
   const cleaned = decodeURIComponent(rawDoi || "")
     .trim()
     .replace(DOI_URL_PREFIX_RE, "")
@@ -229,7 +239,7 @@ function parseAuthorName(rawAuthor: string): ZoteroCreator | null {
   };
 }
 
-function mapManualAuthors(authors: string[]): ZoteroCreator[] {
+export function mapManualAuthors(authors: string[]): ZoteroCreator[] {
   return authors.map(parseAuthorName).filter((value): value is ZoteroCreator => value !== null);
 }
 
@@ -579,4 +589,99 @@ export async function addS2PaperToZotero(
     ...result,
     s2PaperId: paper.paperId,
   };
+}
+
+function classifyJsonAddError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  // Zotero rejects an unknown itemType from /items/new with HTTP 4xx; the
+  // resulting error message includes the items/new URL and is the most useful
+  // signal for an agent caller to retry with a different itemType.
+  if (/items\/new\?itemType=/u.test(message)) {
+    return "INVALID_ITEM_TYPE";
+  }
+  return "JSON_ITEM_FAILED";
+}
+
+const JSON_INPUT_RESERVED_KEYS = new Set(["title", "itemType"]);
+
+/**
+ * Create one or more Zotero items from pre-shaped JSON input. Per-item failures
+ * are returned in-place (as `{ok: false, error, title?, itemType?}` entries),
+ * never abort the batch. Config / write errors throw and abort the whole call.
+ *
+ * Field merge precedence:
+ *   - `payload.title`       always set from `input.title`
+ *   - `publicationTitle`    routed via `applyPublicationField` (book / proceedings
+ *                           templates pick `bookTitle` / `proceedingsTitle` etc.)
+ *   - other `input.fields`  spread onto template, gated by `key in payload`
+ *   - collections           CLI override > per-item collections > config default
+ *   - tags                  always appended `{tag: "Added by AI Agent"}` via
+ *                           `ensureAgentTag`
+ */
+export async function addJsonItemsToZotero(
+  inputs: AddJsonInput[],
+  overrides: ConfigOverrides = {},
+  cliCollectionKey?: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<AddJsonItemResult[]> {
+  const config = resolveConfig(overrides);
+  const writeConfig = getWriteConfig(config);
+  const baseWarnings = config.warnings;
+
+  const results: AddJsonItemResult[] = [];
+
+  for (const input of inputs) {
+    try {
+      const template = await fetchTemplate(input.itemType, fetchImpl);
+      const payload = structuredClone(template);
+
+      payload.title = input.title;
+
+      const fields = { ...input.fields };
+
+      if (typeof fields.publicationTitle === "string") {
+        applyPublicationField(payload, fields.publicationTitle);
+        delete fields.publicationTitle;
+      }
+
+      for (const key of Object.keys(fields)) {
+        if (JSON_INPUT_RESERVED_KEYS.has(key)) continue;
+        if (!(key in payload)) continue;
+        payload[key] = fields[key];
+      }
+
+      const perItemCollectionKey =
+        input.collections && input.collections.length > 0 ? input.collections[0] : "";
+      const effectiveCollectionKey =
+        (cliCollectionKey && cliCollectionKey.length > 0 ? cliCollectionKey : "") ||
+        perItemCollectionKey ||
+        config.zoteroCollectionKey ||
+        "";
+      applyCollectionKey(payload, effectiveCollectionKey || undefined);
+
+      ensureAgentTag(payload);
+
+      const itemKey = await createItem(writeConfig, payload, fetchImpl);
+      results.push({
+        itemKey,
+        title: typeof payload.title === "string" ? payload.title : input.title,
+        itemType: typeof payload.itemType === "string" ? payload.itemType : input.itemType,
+        created: true,
+        source: "json",
+        warnings: [...baseWarnings, ...input.warnings],
+      });
+    } catch (error) {
+      results.push({
+        ok: false,
+        error: {
+          code: classifyJsonAddError(error),
+          message: error instanceof Error ? error.message : String(error),
+        },
+        title: input.title,
+        itemType: input.itemType,
+      });
+    }
+  }
+
+  return results;
 }

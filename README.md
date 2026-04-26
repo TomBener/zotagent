@@ -27,7 +27,7 @@ All three address an item by `--key`, which accepts either `itemKey` or `citatio
 
 ### Add to Zotero
 
-- `add` — create an item by DOI or basic fields and return the new `itemKey` immediately.
+- `add` — create an item by DOI, by basic fields, or by piping pre-shaped JSON via `--json` (single object or batch). Returns the new `itemKey` immediately.
 - `s2` — search Semantic Scholar; pipe a returned `paperId` into `add --s2-paper-id`.
 - `recent` — list regular top-level items most recently added or modified, straight from the Zotero Web API (no local index needed). Useful for confirming an `add` landed or orienting an agent in the library.
 
@@ -189,19 +189,28 @@ Document selector (used by search-in, blocks, fulltext, expand)
                                 identifies items by itemKey only.
 
 Add to Zotero
-  add [--doi <doi> | --s2-paper-id <id>] [--title <text>] [--author <name>] [--year <text>]
-      [--publication <text>] [--url <url>] [--url-date <date>] [--collection-key <key>] [--item-type <type>]
-      Create a Zotero item and return its itemKey. Prefer --doi when available.
+  add [--doi <doi> | --s2-paper-id <id> | --json <file|->] [--title <text>] [--author <name>]
+      [--year <text>] [--publication <text>] [--url <url>] [--url-date <date>]
+      [--collection-key <key>] [--item-type <type>]
+      Create one or many Zotero items and return their itemKeys. Prefer --doi when available.
       --s2-paper-id imports from Semantic Scholar (and still prefers DOI when present).
+      --json reads pre-shaped JSON metadata from a file or stdin and is best for batch
+      ingest from sources without working DOIs (e.g. CNKI). The JSON form is mutually
+      exclusive with all other input flags except --collection-key.
         --doi <doi>                 Import from DOI metadata when possible.
         --s2-paper-id <id>          Import a Semantic Scholar paper by paperId.
+        --json <file|->             Read one JSON object or an array of JSON objects from
+                                    a file or stdin (use '-'). Lenient Zotero schema:
+                                    accepts authors[]/keywords[]/abstract/doi aliases plus
+                                    direct Zotero field names. Always returns data: AddResult[].
         --title <text>              Set title for manual add or DOI fallback.
         --author <name>             Add an author. Repeat for multiple authors.
         --year <text>               Set the Zotero date field.
         --publication <text>        Set journal, website, or container title when supported.
         --url <url>                 Set the item URL.
         --url-date <date>           Set the access date for the URL. Alias: --access-date.
-        --collection-key <key>      Add the new item to a Zotero collection by collection key.
+        --collection-key <key>      Add the new item(s) to a Zotero collection by collection key.
+                                    With --json this overrides any per-item collections field.
         --item-type <type>          Override the Zotero item type. Default: journalArticle or webpage.
 
   s2 "<text>" [--limit <n>]
@@ -225,6 +234,55 @@ A few behaviors worth knowing:
 - `sync` detects attachments renamed or moved inside `attachmentsRoot` by matching `(itemKey, size, mtimeMs)` and migrates the cached `normalized/<docKey>.md` + `manifests/<docKey>.json.gz` to the new `docKey` — no re-extract, no re-embed.
 - `sync` is crash-safe across indexer-state changes: the progress catalog keeps the previous embed model and indexer signature until stored vectors have actually been cleared, so interrupting `sync` never leaves the index in a "claims fresh / is stale" state.
 - `search`, `blocks`, `fulltext`, and `expand` work entirely on the local index — run `sync` first when the library has changed.
+
+### Adding items from JSON (`add --json`)
+
+Use `add --json` when the source already produces structured metadata — for example a CNKI extractor that pulls title, abstract, keywords, and DOI out of a paper detail page. CNKI papers often carry CNKI-issued DOIs that don't resolve via CrossRef, so `add --doi` doesn't help; `add --json` lets the extractor hand the metadata over directly.
+
+Single object (file):
+
+```bash
+zotagent add --json paper.json
+```
+
+Batch (array in a file):
+
+```bash
+zotagent add --json papers.json --collection-key COLL1234
+```
+
+Stdin pipe:
+
+```bash
+cat papers.json | zotagent add --json -
+your-extractor | zotagent add --json -
+```
+
+`--json` is exclusive with `--doi`, `--s2-paper-id`, and the manual flags (`--title`, `--author`, `--year`, `--publication`, `--url`, `--url-date`, `--access-date`, `--item-type`). Only `--collection-key` may accompany `--json`; when set, it overrides any per-item `collections` field in the input.
+
+The output `data` is **always an array** of per-item results (even for a single-object input), so consumers don't need to branch on shape. Successful entries match the regular `AddResult` (`{itemKey, title, itemType, created, source: "json", warnings[]}`); failed entries are returned in-place as `{ok: false, error: {code, message}, title?, itemType?}` and never abort the rest of the batch. The whole envelope is `{ok: false}` only on parse failures, missing config, or empty input.
+
+#### Lenient input schema
+
+Every key below is optional except `title`. `itemType` defaults to `journalArticle`. Unknown Zotero-native keys (e.g. `extra`, `language`, `series`) pass through and are silently dropped if the resolved Zotero template doesn't expose them.
+
+| Input field | Maps to | Notes |
+|---|---|---|
+| `itemType` | `itemType` | Defaults to `"journalArticle"`. Validated by Zotero `/items/new`; an unknown type fails the single item with `INVALID_ITEM_TYPE`. |
+| `title` | `title` | **Required.** |
+| `creators` | `creators` (pass-through) | Array of `{creatorType, firstName?, lastName?, name?}`. |
+| `authors` | `creators` | Array of strings. `"Last, First"` and `"First Last"` are split; single tokens (incl. CJK like `"李华"`) become `{creatorType: "author", name: "<token>"}`. If both `creators` and `authors` are present, `creators` wins and a warning is added. |
+| `tags` | `tags` (pass-through) | Array of `{tag}` objects or plain strings. Strings are wrapped to `{tag}`. |
+| `keywords` | `tags` | Array of strings → `[{tag: "..."}]`. If both `tags` and `keywords` are present, `tags` wins and a warning is added. |
+| `abstractNote` / `abstract` | `abstractNote` | First non-empty wins. |
+| `DOI` / `doi` | `DOI` | Run through the same DOI cleaner the manual path uses. Invalid DOIs are dropped with a warning; the item is still created. |
+| `publicationTitle` / `publication` / `journal` | container field | Routed through `applyPublicationField` so book / conference / website item types pick the right container (`bookTitle`, `proceedingsTitle`, `websiteTitle`). |
+| `accessDate` / `access-date` / `accessedAt` | `accessDate` | First non-empty wins. |
+| `university` | `university` | Pass-through (relevant for `itemType: "thesis"`). |
+| `collections` / `collectionKey` | `collections` | A string or string array. CLI `--collection-key` overrides this when set. |
+| Any other Zotero-native key | same key | `volume`, `issue`, `pages`, `ISSN`, `ISBN`, `extra`, `language`, `date`, `url`, `publisher`, `series`, `seriesNumber`, `shortTitle`, `libraryCatalog`, ... |
+
+Every created item is auto-tagged `Added by AI Agent`, matching the other `add` paths.
 
 ## Development
 

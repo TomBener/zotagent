@@ -282,7 +282,7 @@ test("help summarizes current commands and keeps config-only overrides out of th
   );
   assert.match(result.stdout, /^\s+status$/m);
   assert.match(result.stdout, /^Add to Zotero$/m);
-  assert.match(result.stdout, /add \[--doi <doi> \| --s2-paper-id <id>\] \[--title <text>\]/);
+  assert.match(result.stdout, /add \[--doi <doi> \| --s2-paper-id <id> \| --json <file\|->\]/);
   assert.match(result.stdout, /s2 "<text>" \[--limit <n>\]/);
   assert.match(result.stdout, /recent \[--limit <n>\] \[--sort added\|modified\]/);
   assert.match(result.stdout, /^Search$/m);
@@ -314,7 +314,7 @@ test("help summarizes current commands and keeps config-only overrides out of th
   assert.match(result.stdout, /--pdf-batch-size <n>\s+Override the maximum number of PDFs per extraction batch\./);
   assert.match(result.stdout, /--doi <doi>\s+Import from DOI metadata when possible\./);
   assert.match(result.stdout, /--s2-paper-id <id>\s+Import a Semantic Scholar paper by paperId\./);
-  assert.match(result.stdout, /--collection-key <key>\s+Add the new item to a Zotero collection by collection key\./);
+  assert.match(result.stdout, /--collection-key <key>\s+Add the new item\(s\) to a Zotero collection by collection key\./);
   assert.match(result.stdout, /--item-type <type>\s+Override the Zotero item type\./);
   assert.match(
     result.stdout,
@@ -416,7 +416,7 @@ test("add requires doi or title", () => {
 
   assert.equal(result.status, 1);
   assert.match(result.stdout, /"code": "MISSING_ARGUMENT"/);
-  assert.match(result.stdout, /Provide --doi <doi>, --s2-paper-id <id>, or --title <text> for add\./);
+  assert.match(result.stdout, /Provide --doi <doi>, --s2-paper-id <id>, --json <file\|->, or --title <text> for add\./);
 });
 
 test("add rejects positional arguments", () => {
