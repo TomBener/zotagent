@@ -1,4 +1,7 @@
 import { randomBytes } from "node:crypto";
+import { existsSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, isAbsolute, resolve as resolvePath, sep } from "node:path";
 
 import { resolveConfig, type ConfigOverrides } from "./config.js";
 import type { AddJsonInput } from "./json-input.js";
@@ -66,6 +69,7 @@ interface AddInput {
   abstract?: string;
   collectionKey?: string;
   itemType?: string;
+  attachFile?: string;
 }
 
 export interface AddResult {
@@ -76,6 +80,7 @@ export interface AddResult {
   source: "doi" | "manual" | "manual-fallback" | "json";
   doi?: string;
   s2PaperId?: string;
+  attachmentItemKey?: string;
   warnings: string[];
 }
 
@@ -138,6 +143,74 @@ function formatIssuedDate(issuedValue: unknown): string {
 
 function currentAccessDate(): string {
   return new Date().toISOString().replace(/\.\d{3}Z$/u, "Z");
+}
+
+const MIME_BY_EXT: Record<string, string> = {
+  pdf: "application/pdf",
+  epub: "application/epub+zip",
+  html: "text/html",
+  htm: "text/html",
+  txt: "text/plain",
+};
+
+interface ResolvedAttachFile {
+  /** Absolute path on disk. Validated to exist. */
+  absolutePath: string;
+  /** File basename, also used as the Zotero `filename` field. */
+  basename: string;
+  /** MIME type inferred from extension; falls back to `application/octet-stream`. */
+  contentType: string;
+  /**
+   * The string Zotero stores in the attachment's `path` field. When the file
+   * lives under the configured `attachmentsRoot`, this is the cross-machine-
+   * portable `attachments:<rel>` form (Zotero resolves it via the
+   * "Linked Attachment Base Directory" setting). Otherwise the absolute path,
+   * which works on the current machine but won't follow the database to
+   * another device.
+   */
+  zoteroPath: string;
+}
+
+/**
+ * Validate `--attach-file <path>` and compute the form Zotero should store.
+ * Throws synchronously when the path is empty / missing / not a regular file —
+ * callers rely on this to abort *before* creating the parent item, so a bad
+ * path can't leave an orphan citation behind.
+ */
+export function resolveAttachFile(
+  rawPath: string,
+  attachmentsRoot: string | undefined,
+): ResolvedAttachFile {
+  const trimmed = rawPath.trim();
+  if (!trimmed) {
+    throw new Error("attach-file path is empty.");
+  }
+  const expanded = trimmed.startsWith("~/") || trimmed === "~"
+    ? resolvePath(homedir(), trimmed.slice(1).replace(/^\//u, ""))
+    : trimmed;
+  const absolute = isAbsolute(expanded) ? expanded : resolvePath(process.cwd(), expanded);
+  if (!existsSync(absolute)) {
+    throw new Error(`attach-file not found: ${absolute}`);
+  }
+  const stats = statSync(absolute);
+  if (!stats.isFile()) {
+    throw new Error(`attach-file is not a regular file: ${absolute}`);
+  }
+
+  const base = basename(absolute);
+  const ext = (base.split(".").pop() || "").toLowerCase();
+  const contentType = MIME_BY_EXT[ext] || "application/octet-stream";
+
+  let zoteroPath = absolute;
+  if (attachmentsRoot) {
+    const root = resolvePath(attachmentsRoot);
+    const rootWithSep = root.endsWith(sep) ? root : root + sep;
+    if (absolute.startsWith(rootWithSep)) {
+      zoteroPath = `attachments:${absolute.slice(rootWithSep.length)}`;
+    }
+  }
+
+  return { absolutePath: absolute, basename: base, contentType, zoteroPath };
 }
 
 function firstString(value: unknown): string {
@@ -270,7 +343,7 @@ function mapCslAuthors(cslJson: Record<string, unknown>): ZoteroCreator[] {
     .filter((value): value is ZoteroCreator => value !== null);
 }
 
-function normalizeInput(input: AddInput): Required<Omit<AddInput, "doi" | "itemType">> & Pick<AddInput, "doi" | "itemType"> {
+function normalizeInput(input: AddInput): Required<Omit<AddInput, "doi" | "itemType" | "attachFile">> & Pick<AddInput, "doi" | "itemType" | "attachFile"> {
   return {
     ...(input.doi ? { doi: normalizeSpace(input.doi) } : {}),
     title: normalizeSpace(input.title || ""),
@@ -282,6 +355,9 @@ function normalizeInput(input: AddInput): Required<Omit<AddInput, "doi" | "itemT
     abstract: normalizeSpace(input.abstract || ""),
     collectionKey: normalizeSpace(input.collectionKey || ""),
     ...(input.itemType ? { itemType: normalizeSpace(input.itemType) } : {}),
+    // Don't run attachFile through normalizeSpace — paths can legitimately
+    // contain runs of spaces and we resolve them verbatim.
+    ...(input.attachFile ? { attachFile: input.attachFile.trim() } : {}),
   };
 }
 
@@ -483,6 +559,66 @@ async function createItem(
   throw new Error(`Zotero item creation did not return an item key: ${JSON.stringify(data)}`);
 }
 
+async function fetchAttachmentTemplate(
+  linkMode: string,
+  fetchImpl: FetchLike,
+): Promise<EditableZoteroItem> {
+  const url = `https://api.zotero.org/items/new?itemType=attachment&linkMode=${encodeURIComponent(linkMode)}`;
+  const response = await fetchWithTimeout(fetchImpl, url, {
+    headers: buildHeaders(undefined, { Accept: "application/json" }),
+  });
+  return await readJsonResponse<EditableZoteroItem>(response, url);
+}
+
+/**
+ * Create a `linkMode: linked_file` child attachment under `parentKey`. Linked
+ * (not imported) so the file stays on disk and Zotero's storage quota is
+ * untouched — the user opens the parent item, clicks the attachment, and
+ * Zotero opens the local file directly. For cross-machine portability the
+ * caller passes a `zoteroPath` of the form `attachments:<rel>`, which Zotero
+ * resolves via the "Linked Attachment Base Directory" preference.
+ */
+async function createLinkedFileAttachment(
+  parentKey: string,
+  attach: ResolvedAttachFile,
+  config: ResolvedWriteConfig,
+  fetchImpl: FetchLike,
+): Promise<string> {
+  const template = await fetchAttachmentTemplate("linked_file", fetchImpl);
+  const payload = structuredClone(template);
+  payload.parentItem = parentKey;
+  payload.title = "Full Text PDF";
+  if ("path" in payload) payload.path = attach.zoteroPath;
+  if ("filename" in payload) payload.filename = attach.basename;
+  if ("contentType" in payload) payload.contentType = attach.contentType;
+  return await createItem(config, payload, fetchImpl);
+}
+
+/**
+ * After createItem returns the parent itemKey, try to attach the file as a
+ * linked_file child. Failures here don't abort — the parent item already
+ * exists in Zotero and is worth returning to the caller; we just record a
+ * warning so the user can re-attach manually. Validation of the path itself
+ * happens earlier (resolveAttachFile) so a bad path never creates an orphan.
+ */
+async function maybeCreateAttachment(
+  parentKey: string,
+  attach: ResolvedAttachFile | undefined,
+  config: ResolvedWriteConfig,
+  fetchImpl: FetchLike,
+  warnings: string[],
+): Promise<string | undefined> {
+  if (!attach) return undefined;
+  try {
+    return await createLinkedFileAttachment(parentKey, attach, config, fetchImpl);
+  } catch (error) {
+    warnings.push(
+      `Created parent item but attachment failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return undefined;
+  }
+}
+
 export async function addToZotero(
   input: AddInput,
   overrides: ConfigOverrides = {},
@@ -502,6 +638,12 @@ export async function addToZotero(
     throw new Error("Provide --doi <doi> or --title <text>.");
   }
 
+  // Validate attach-file *before* hitting Zotero, so a bad path can't leave
+  // an orphan parent item behind.
+  const attach = normalizedWithDefaults.attachFile
+    ? resolveAttachFile(normalizedWithDefaults.attachFile, config.attachmentsRoot)
+    : undefined;
+
   const manualItemType = inferManualItemType({
     itemType: normalizedWithDefaults.itemType,
     publication: normalizedWithDefaults.publication,
@@ -517,6 +659,13 @@ export async function addToZotero(
       const payload = buildItemFromCsl(template, cslJson, cleanedDoi);
       applyManualOverrides(payload, normalizedWithDefaults);
       const itemKey = await createItem(writeConfig, payload, fetchImpl);
+      const attachmentItemKey = await maybeCreateAttachment(
+        itemKey,
+        attach,
+        writeConfig,
+        fetchImpl,
+        warnings,
+      );
       return {
         itemKey,
         title: typeof payload.title === "string" ? payload.title : "",
@@ -524,6 +673,7 @@ export async function addToZotero(
         created: true,
         source: "doi",
         doi: cleanedDoi,
+        ...(attachmentItemKey ? { attachmentItemKey } : {}),
         warnings,
       };
     } catch (error) {
@@ -537,6 +687,13 @@ export async function addToZotero(
       const payload = buildManualItem(template, normalizedWithDefaults);
       if ("DOI" in payload) payload.DOI = cleanedDoi;
       const itemKey = await createItem(writeConfig, payload, fetchImpl);
+      const attachmentItemKey = await maybeCreateAttachment(
+        itemKey,
+        attach,
+        writeConfig,
+        fetchImpl,
+        warnings,
+      );
       return {
         itemKey,
         title: typeof payload.title === "string" ? payload.title : "",
@@ -544,6 +701,7 @@ export async function addToZotero(
         created: true,
         source: "manual-fallback",
         doi: cleanedDoi,
+        ...(attachmentItemKey ? { attachmentItemKey } : {}),
         warnings,
       };
     }
@@ -552,12 +710,20 @@ export async function addToZotero(
   const template = await fetchTemplate(manualItemType, fetchImpl);
   const payload = buildManualItem(template, normalizedWithDefaults);
   const itemKey = await createItem(writeConfig, payload, fetchImpl);
+  const attachmentItemKey = await maybeCreateAttachment(
+    itemKey,
+    attach,
+    writeConfig,
+    fetchImpl,
+    warnings,
+  );
   return {
     itemKey,
     title: typeof payload.title === "string" ? payload.title : "",
     itemType: payload.itemType,
     created: true,
     source: "manual",
+    ...(attachmentItemKey ? { attachmentItemKey } : {}),
     warnings,
   };
 }
@@ -593,6 +759,12 @@ export async function addS2PaperToZotero(
 
 function classifyJsonAddError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
+  // resolveAttachFile throws synchronously before we touch Zotero; surface
+  // these as a distinct code so callers can fix the path and retry without
+  // reasoning about Zotero's status codes.
+  if (/^attach-file /u.test(message)) {
+    return "INVALID_ATTACH_FILE";
+  }
   // Zotero rejects an unknown itemType from /items/new with HTTP 4xx; the
   // resulting error message includes the items/new URL and is the most useful
   // signal for an agent caller to retry with a different itemType.
@@ -632,6 +804,12 @@ export async function addJsonItemsToZotero(
 
   for (const input of inputs) {
     try {
+      // Validate attach-file before creating the parent so a bad path is
+      // surfaced as a per-item failure rather than leaving an orphan in Zotero.
+      const attach = input.attachFile
+        ? resolveAttachFile(input.attachFile, config.attachmentsRoot)
+        : undefined;
+
       const template = await fetchTemplate(input.itemType, fetchImpl);
       const payload = structuredClone(template);
 
@@ -669,13 +847,22 @@ export async function addJsonItemsToZotero(
       ensureAgentTag(payload);
 
       const itemKey = await createItem(writeConfig, payload, fetchImpl);
+      const itemWarnings = [...baseWarnings, ...input.warnings];
+      const attachmentItemKey = await maybeCreateAttachment(
+        itemKey,
+        attach,
+        writeConfig,
+        fetchImpl,
+        itemWarnings,
+      );
       results.push({
         itemKey,
         title: typeof payload.title === "string" ? payload.title : input.title,
         itemType: typeof payload.itemType === "string" ? payload.itemType : input.itemType,
         created: true,
         source: "json",
-        warnings: [...baseWarnings, ...input.warnings],
+        ...(attachmentItemKey ? { attachmentItemKey } : {}),
+        warnings: itemWarnings,
       });
     } catch (error) {
       results.push({

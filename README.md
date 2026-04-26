@@ -191,7 +191,7 @@ Document selector (used by search-in, blocks, fulltext, expand)
 Add to Zotero
   add [--doi <doi> | --s2-paper-id <id> | --json <file|->] [--title <text>] [--author <name>]
       [--year <text>] [--publication <text>] [--url <url>] [--url-date <date>]
-      [--collection-key <key>] [--item-type <type>]
+      [--collection-key <key>] [--item-type <type>] [--attach-file <path>]
       Create one or many Zotero items and return their itemKeys. Prefer --doi when available.
       --s2-paper-id imports from Semantic Scholar (and still prefers DOI when present).
       --json reads pre-shaped JSON metadata from a file or stdin and is best for batch
@@ -203,6 +203,8 @@ Add to Zotero
                                     a file or stdin (use '-'). Lenient Zotero schema:
                                     accepts authors[]/keywords[]/abstract/doi aliases plus
                                     direct Zotero field names. Always returns data: AddResult[].
+                                    Per-item attachFile / attach-file field attaches a local
+                                    file as a linked_file child (see --attach-file).
         --title <text>              Set title for manual add or DOI fallback.
         --author <name>             Add an author. Repeat for multiple authors.
         --year <text>               Set the Zotero date field.
@@ -212,6 +214,13 @@ Add to Zotero
         --collection-key <key>      Add the new item(s) to a Zotero collection by collection key.
                                     With --json this overrides any per-item collections field.
         --item-type <type>          Override the Zotero item type. Default: journalArticle or webpage.
+        --attach-file <path>        Attach a local file as a linkMode=linked_file child (file
+                                    stays on disk, no Zotero storage quota). When the path is
+                                    under attachmentsRoot, zotagent stores it as 'attachments:<rel>'
+                                    for cross-device portability; otherwise as an absolute path.
+                                    Mutually exclusive with --json (use the per-item attachFile
+                                    field there). Path is validated before the parent item is
+                                    created. AddResult exposes attachmentItemKey on success.
 
   s2 "<text>" [--limit <n>]
       Search Semantic Scholar; pass a returned paperId to `add --s2-paper-id`.
@@ -281,9 +290,25 @@ Every key below is optional except `title`. `itemType` defaults to `journalArtic
 | `date` / `year` | `date` | First non-empty wins. Zotero stores the publication date in `date` (free-form string), not `year`; passing only `year` would be silently dropped without this alias. |
 | `university` | `university` | Pass-through (relevant for `itemType: "thesis"`). |
 | `collections` / `collectionKey` | `collections` | A string or string array. **Multi-collection arrays pass through unchanged**, so an item can land in several collections at once. CLI `--collection-key` overrides per-item collections (forces a single key for the whole batch); when CLI is unset and no per-item value is provided, the configured `zoteroCollectionKey` default is used. |
+| `attachFile` / `attach-file` | linked_file child item | Path to a local file to attach as a `linkMode: "linked_file"` child of the new parent. See `--attach-file` below. Bad paths fail the single item with code `INVALID_ATTACH_FILE` *before* the parent is created (no orphans). |
 | Any other Zotero-native key | same key | `volume`, `issue`, `pages`, `ISSN`, `ISBN`, `extra`, `language`, `date`, `url`, `publisher`, `series`, `seriesNumber`, `shortTitle`, `libraryCatalog`, ... |
 
 Every created item is auto-tagged `Added by AI Agent`, matching the other `add` paths.
+
+### Attaching a local file (`--attach-file`)
+
+```bash
+zotagent add --title "Paper" --author "Doe, Jane" \
+  --attach-file ~/Downloads/foo.pdf
+```
+
+This creates the parent item, then creates a child attachment with `linkMode: "linked_file"`. The file stays on disk — Zotero stores only a path reference, so your sync storage quota is unaffected. `AddResult` exposes both keys (`itemKey` for the parent, `attachmentItemKey` for the attachment).
+
+For cross-device portability, set Zotero's *Linked Attachment Base Directory* (Settings → Files & Folders) to the same folder as `attachmentsRoot` in your zotagent config. When the attached path is under that root, zotagent stores it as `attachments:<rel>` (Zotero resolves it via the per-machine base directory) instead of an absolute path. Files outside the root are stored absolute and won't follow the database to another machine.
+
+`--attach-file` is mutually exclusive with `--json`; in JSON mode each item carries its own `attachFile` (or `attach-file`) field. Path validation happens before any Zotero write, so a bad path can't leave an orphan parent item; if the parent succeeds but the attachment POST fails, the parent itemKey is still returned and the failure is recorded as a warning.
+
+Supported `contentType` is inferred from the file extension (`pdf`, `epub`, `html`/`htm`, `txt`); unknown extensions fall through to `application/octet-stream` and Zotero handles them as generic attachments.
 
 ## Development
 

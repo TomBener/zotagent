@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { addJsonItemsToZotero, addS2PaperToZotero, addToZotero } from "../../src/add.js";
 import { mapLenientItem } from "../../src/json-input.js";
@@ -577,6 +580,36 @@ function journalArticleTemplate(): Record<string, unknown> {
   };
 }
 
+function attachmentTemplate(): Record<string, unknown> {
+  // Minimal stand-in for what /items/new?itemType=attachment&linkMode=linked_file
+  // returns. Field names match Zotero's real schema; values are blank because
+  // the consumer fills them in from the resolved attach-file info.
+  return {
+    itemType: "attachment",
+    linkMode: "linked_file",
+    title: "",
+    parentItem: "",
+    path: "",
+    filename: "",
+    contentType: "",
+    note: "",
+    tags: [],
+    relations: {},
+  };
+}
+
+function makeTempFile(contents = "%PDF-1.4 stub\n"): { dir: string; path: string; basename: string } {
+  const dir = mkdtempSync(join(tmpdir(), "zotagent-attach-"));
+  const basename = "test-paper.pdf";
+  const path = join(dir, basename);
+  writeFileSync(path, contents);
+  return { dir, path, basename };
+}
+
+function cleanupTempDir(dir: string): void {
+  try { rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
+}
+
 function thesisTemplate(): Record<string, unknown> {
   return {
     itemType: "thesis",
@@ -619,12 +652,15 @@ interface StubbedZotero {
 }
 
 function stubZotero(options: StubbedZoteroOptions = {}): StubbedZotero {
-  const templates = {
+  // Explicit Record typing so `templates[itemType]` (string indexing) is safe.
+  // Without it the literal type narrows to {journalArticle, thesis} and
+  // dynamic itemTypes from options.templates lose the index signature.
+  const templates: Record<string, Record<string, unknown>> = {
     journalArticle: journalArticleTemplate(),
     thesis: thesisTemplate(),
     ...options.templates,
   };
-  const templateStatus = options.templateStatus ?? {};
+  const templateStatus: Record<string, number> = options.templateStatus ?? {};
   const itemKeys = options.itemKeys ?? ["KEY00001", "KEY00002", "KEY00003", "KEY00004", "KEY00005"];
   let createCursor = 0;
   const requests: Array<{ url: string; init?: RequestInit }> = [];
@@ -950,4 +986,181 @@ test("addJsonItemsToZotero passes through volume / issue / pages / ISSN", async 
   assert.equal(body[0]?.issue, "3");
   assert.equal(body[0]?.pages, "45-67");
   assert.equal(body[0]?.ISSN, "1234-5678");
+});
+
+test("addToZotero with --attach-file creates a linked_file child after the parent item", async () => {
+  const { dir, path: attachPath, basename } = makeTempFile();
+  try {
+    const { fetchMock, requests } = stubZotero({
+      templates: { attachment: attachmentTemplate() },
+      itemKeys: ["PARENT01", "ATTACH01"],
+    });
+
+    const result = await addToZotero(
+      {
+        title: "Paper with attachment",
+        authors: ["Doe, Jane"],
+        attachFile: attachPath,
+      },
+      {
+        zoteroLibraryId: "123456",
+        zoteroLibraryType: "user",
+        zoteroApiKey: "secret",
+      },
+      fetchMock,
+    );
+
+    assert.equal(result.itemKey, "PARENT01");
+    assert.equal(result.attachmentItemKey, "ATTACH01");
+    assert.equal(result.warnings.length, 0);
+
+    // Two POSTs to /items: first the parent, then the attachment. Order matters
+    // because the attachment carries parentItem = the parent's itemKey.
+    const createRequests = requests.filter((r) => /\/items$/u.test(r.url));
+    assert.equal(createRequests.length, 2);
+
+    const parentBody = JSON.parse(String(createRequests[0].init?.body)) as Array<Record<string, unknown>>;
+    assert.equal(parentBody[0]?.title, "Paper with attachment");
+    assert.equal(parentBody[0]?.itemType, "journalArticle");
+
+    const attachBody = JSON.parse(String(createRequests[1].init?.body)) as Array<Record<string, unknown>>;
+    assert.equal(attachBody[0]?.itemType, "attachment");
+    assert.equal(attachBody[0]?.linkMode, "linked_file");
+    assert.equal(attachBody[0]?.parentItem, "PARENT01");
+    assert.equal(attachBody[0]?.title, "Full Text PDF");
+    assert.equal(attachBody[0]?.filename, basename);
+    assert.equal(attachBody[0]?.contentType, "application/pdf");
+    // No attachmentsRoot configured → absolute path passed through.
+    assert.equal(attachBody[0]?.path, attachPath);
+
+    const attachTemplateRequest = requests.find((r) =>
+      /\/items\/new\?itemType=attachment&linkMode=linked_file/u.test(r.url),
+    );
+    assert.ok(attachTemplateRequest, "expected a template fetch for attachment+linked_file");
+  } finally {
+    cleanupTempDir(dir);
+  }
+});
+
+test("addToZotero with --attach-file under attachmentsRoot uses the 'attachments:' prefix", async () => {
+  const { dir, path: attachPath, basename } = makeTempFile();
+  try {
+    const { fetchMock, requests } = stubZotero({
+      templates: { attachment: attachmentTemplate() },
+      itemKeys: ["PARENT02", "ATTACH02"],
+    });
+
+    const result = await addToZotero(
+      { title: "Portable attachment", attachFile: attachPath },
+      {
+        zoteroLibraryId: "123456",
+        zoteroLibraryType: "user",
+        zoteroApiKey: "secret",
+        attachmentsRoot: dir,
+      },
+      fetchMock,
+    );
+
+    assert.equal(result.attachmentItemKey, "ATTACH02");
+    const attachBody = JSON.parse(
+      String(requests.filter((r) => /\/items$/u.test(r.url)).at(-1)?.init?.body),
+    ) as Array<Record<string, unknown>>;
+    // File is directly in attachmentsRoot → relative form 'attachments:<basename>'
+    // for cross-machine portability via Zotero's Linked Attachment Base Directory.
+    assert.equal(attachBody[0]?.path, `attachments:${basename}`);
+  } finally {
+    cleanupTempDir(dir);
+  }
+});
+
+test("addToZotero throws before any POST when --attach-file path is missing", async () => {
+  const { fetchMock, requests } = stubZotero({});
+  await assert.rejects(
+    addToZotero(
+      { title: "Bad path", attachFile: "/this/path/does/not/exist.pdf" },
+      {
+        zoteroLibraryId: "123456",
+        zoteroLibraryType: "user",
+        zoteroApiKey: "secret",
+      },
+      fetchMock,
+    ),
+    /attach-file not found/u,
+  );
+  // Critical invariant: no POSTs happened, so we don't leave an orphan parent
+  // item in Zotero.
+  assert.equal(requests.filter((r) => /\/items$/u.test(r.url)).length, 0);
+});
+
+test("addJsonItemsToZotero attaches a linked_file per-item via the attachFile field", async () => {
+  const { dir, path: attachPath, basename } = makeTempFile();
+  try {
+    const { fetchMock, requests } = stubZotero({
+      templates: { attachment: attachmentTemplate() },
+      itemKeys: ["JPARENT1", "JATTACH1"],
+    });
+
+    const input = mapLenientItem({
+      itemType: "journalArticle",
+      title: "JSON-mode attach",
+      authors: ["李华"],
+      attachFile: attachPath,
+    });
+    assert.equal(input.attachFile, attachPath, "mapLenientItem should expose attachFile");
+
+    const results = await addJsonItemsToZotero(
+      [input],
+      {
+        zoteroLibraryId: "123456",
+        zoteroLibraryType: "user",
+        zoteroApiKey: "secret",
+      },
+      undefined,
+      fetchMock,
+    );
+
+    assert.equal(results.length, 1);
+    const result = results[0];
+    assert.ok("itemKey" in result, "expected success");
+    assert.equal(result.itemKey, "JPARENT1");
+    assert.equal(result.attachmentItemKey, "JATTACH1");
+
+    const attachBody = JSON.parse(
+      String(requests.filter((r) => /\/items$/u.test(r.url)).at(-1)?.init?.body),
+    ) as Array<Record<string, unknown>>;
+    assert.equal(attachBody[0]?.parentItem, "JPARENT1");
+    assert.equal(attachBody[0]?.filename, basename);
+  } finally {
+    cleanupTempDir(dir);
+  }
+});
+
+test("addJsonItemsToZotero records a per-item INVALID_ATTACH_FILE failure for a bad path", async () => {
+  const { fetchMock, requests } = stubZotero({});
+
+  const input = mapLenientItem({
+    itemType: "journalArticle",
+    title: "Bad-attach JSON item",
+    "attach-file": "/no/such/file.pdf",
+  });
+  assert.equal(input.attachFile, "/no/such/file.pdf", "kebab alias should map to attachFile");
+
+  const results = await addJsonItemsToZotero(
+    [input],
+    {
+      zoteroLibraryId: "123456",
+      zoteroLibraryType: "user",
+      zoteroApiKey: "secret",
+    },
+    undefined,
+    fetchMock,
+  );
+
+  assert.equal(results.length, 1);
+  const failure = results[0] as { ok: false; error: { code: string; message: string } };
+  assert.equal(failure.ok, false);
+  assert.equal(failure.error.code, "INVALID_ATTACH_FILE");
+  assert.match(failure.error.message, /attach-file not found/u);
+  // Bad path must abort before any Zotero write — no orphan parent item.
+  assert.equal(requests.filter((r) => /\/items$/u.test(r.url)).length, 0);
 });

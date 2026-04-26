@@ -64,6 +64,7 @@ const COMMAND_FLAG_ALLOWLIST: Record<string, ReadonlyArray<string>> = {
     "access-date",
     "collection-key",
     "item-type",
+    "attach-file",
   ],
   s2: ["limit"],
   recent: ["limit", "sort"],
@@ -345,7 +346,7 @@ Document selector (used by search-in, blocks, fulltext, expand)
 Add to Zotero
   add [--doi <doi> | --s2-paper-id <id> | --json <file|->] [--title <text>] [--author <name>]
       [--year <text>] [--publication <text>] [--url <url>] [--url-date <date>]
-      [--collection-key <key>] [--item-type <type>]
+      [--collection-key <key>] [--item-type <type>] [--attach-file <path>]
       Create one or many Zotero items and return their itemKeys. Prefer --doi when available.
       --s2-paper-id imports from Semantic Scholar (and still prefers DOI when present).
       --json reads pre-shaped JSON metadata from a file or stdin and is best for batch
@@ -357,6 +358,8 @@ Add to Zotero
                                     a file or stdin (use '-'). Lenient Zotero schema:
                                     accepts authors[]/keywords[]/abstract/doi aliases plus
                                     direct Zotero field names. Always returns data: AddResult[].
+                                    Per-item attachFile / attach-file field attaches a local
+                                    file as a linked_file child (see --attach-file).
         --title <text>              Set title for manual add or DOI fallback.
         --author <name>             Add an author. Repeat for multiple authors.
         --year <text>               Set the Zotero date field.
@@ -366,6 +369,15 @@ Add to Zotero
         --collection-key <key>      Add the new item(s) to a Zotero collection by collection key.
                                     With --json this overrides any per-item collections field.
         --item-type <type>          Override the Zotero item type. Default: journalArticle or webpage.
+        --attach-file <path>        Attach a local file to the new item as a linkMode=linked_file
+                                    child (file stays on disk, no Zotero storage quota used). When
+                                    the path is under the configured attachmentsRoot, zotagent
+                                    stores it as 'attachments:<rel>' for cross-device portability;
+                                    otherwise as an absolute path. Mutually exclusive with --json
+                                    (use the per-item attachFile field there). Path is validated
+                                    before the parent item is created, so a bad path can't leave
+                                    an orphan in Zotero. AddResult exposes attachmentItemKey on
+                                    success.
 
   s2 "<text>" [--limit <n>]
       Search Semantic Scholar; pass a returned paperId to \`add --s2-paper-id\`.
@@ -546,6 +558,7 @@ async function main(): Promise<void> {
           "access-date",
           "collection-key",
           "item-type",
+          "attach-file",
         ].filter((flag) => parsed.flags[flag] === true);
         if (missingValueFlags.length > 0) {
           emitError(
@@ -567,6 +580,7 @@ async function main(): Promise<void> {
             "url-date",
             "access-date",
             "item-type",
+            "attach-file",
           ].filter((flag) => flag in parsed.flags);
           if (conflicting.length > 0) {
             emitError(
@@ -657,6 +671,9 @@ async function main(): Promise<void> {
             : {}),
           ...(getStringFlag(parsed.flags, "item-type")
             ? { itemType: getStringFlag(parsed.flags, "item-type")! }
+            : {}),
+          ...(getStringFlag(parsed.flags, "attach-file")
+            ? { attachFile: getStringFlag(parsed.flags, "attach-file")! }
             : {}),
         };
         const data = s2PaperId

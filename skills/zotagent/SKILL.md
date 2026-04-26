@@ -70,7 +70,20 @@ zotagent add --title "Fifty Years of Land Reform" --author "Hsiao, Cheng" --year
 zotagent add --json paper.json
 zotagent add --json batch.json --collection-key COLL1234
 your-extractor | zotagent add --json -
+
+# Attach a local PDF as a linkMode=linked_file child (file stays on disk;
+# no Zotero storage quota used). When the path is under attachmentsRoot,
+# zotagent stores it as 'attachments:<rel>' for cross-device portability.
+zotagent add --title "Paper" --author "Doe, Jane" --attach-file ~/Downloads/foo.pdf
+# In --json mode, each item carries its own attachFile / attach-file field.
+echo '{"itemType":"journalArticle","title":"...","attachFile":"/path/to/foo.pdf"}' | zotagent add --json -
 ```
+
+`AddResult.attachmentItemKey` is set when an attachment was created. A bad
+`--attach-file` path fails *before* the parent item is written, so it cannot
+leave an orphan citation in Zotero (per-item failure code: `INVALID_ATTACH_FILE`).
+If the parent item creates but the attachment POST fails, the parent itemKey
+is still returned and the failure is surfaced as a warning.
 
 Other `add` flags not shown above: `--url, --url-date` (alias `--access-date`), `--collection-key`.
 

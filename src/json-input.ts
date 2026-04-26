@@ -17,6 +17,12 @@ export interface AddJsonInput {
   fields: Record<string, unknown>;
   /** Per-item collection routing. CLI --collection-key still wins if set. */
   collections?: string[];
+  /**
+   * Per-item linked-file attachment path. Consumer validates the path and
+   * creates a `linkMode: linked_file` child item under the parent. Bad paths
+   * abort the item before the parent is created (no orphans in Zotero).
+   */
+  attachFile?: string;
   /** Surfaced into AddResult.warnings for the corresponding item. */
   warnings: string[];
 }
@@ -50,6 +56,8 @@ const RESERVED_INPUT_KEYS = new Set([
   "collectionKey",
   "date",
   "year",
+  "attachFile",
+  "attach-file",
 ]);
 
 class JsonInputError extends Error {
@@ -210,13 +218,26 @@ export function mapLenientItem(raw: unknown): AddJsonInput {
     collections = [raw.collectionKey];
   }
 
+  // attachFile (preferred) | attach-file (kebab alias). Path validation lives
+  // in the consumer (resolveAttachFile in add.ts) so a bad path becomes a
+  // per-item failure with code INVALID_ATTACH_FILE rather than aborting the
+  // whole batch parse.
+  const attachFile = pickString(raw, ["attachFile", "attach-file"]);
+
   for (const key of Object.keys(raw)) {
     if (RESERVED_INPUT_KEYS.has(key)) continue;
     if (raw[key] === undefined) continue;
     fields[key] = raw[key];
   }
 
-  return { itemType, title, fields, collections, warnings };
+  return {
+    itemType,
+    title,
+    fields,
+    collections,
+    ...(attachFile ? { attachFile } : {}),
+    warnings,
+  };
 }
 
 async function readStdinText(): Promise<string> {

@@ -435,6 +435,18 @@ test("add rejects combining doi and s2-paper-id", () => {
   assert.match(result.stdout, /Use either --doi <doi> or --s2-paper-id <id>, not both\./);
 });
 
+test("add accepts attach-file as a known flag", () => {
+  const missingValue = runCli(["add", "--attach-file"]);
+  assert.equal(missingValue.status, 1);
+  assert.match(missingValue.stdout, /"code": "INVALID_ARGUMENT"/);
+  assert.match(missingValue.stdout, /Missing value for: --attach-file/);
+
+  const missingCitationInput = runCli(["add", "--attach-file", "/tmp/no-such-paper.pdf"]);
+  assert.equal(missingCitationInput.status, 1);
+  assert.match(missingCitationInput.stdout, /"code": "MISSING_ARGUMENT"/);
+  assert.doesNotMatch(missingCitationInput.stdout, /UNEXPECTED_ARGUMENT|Remove: --attach-file/);
+});
+
 test("search rejects combining keyword mode with semantic", () => {
   const result = runCli(["search", "--keyword", "--semantic", "dangwei shuji"]);
 
