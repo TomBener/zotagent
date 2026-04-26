@@ -588,15 +588,16 @@ async function createLinkedFileAttachment(
 ): Promise<string> {
   const template = await fetchAttachmentTemplate("linked_file", fetchImpl);
   const payload = structuredClone(template);
-  // Set fields directly without `if (X in payload)` template-gating: the
-  // linked_file template returned by Zotero's /items/new lacks `filename`,
-  // but the attachment item schema accepts it (and Zotero displays it as the
-  // attachment label). Gating would silently drop it.
+  // `parentItem` and `title` aren't on the empty template but the schema
+  // accepts them on POST, so set directly. `path` / `contentType` are gated
+  // through the template — both are present for linked_file. Don't try to
+  // set `filename`: Zotero's schema rejects it for linked_file with HTTP 400
+  // ("'filename' is valid only for imported and embedded-image attachments").
+  // For linked_file Zotero uses the basename of `path` as the display label.
   payload.parentItem = parentKey;
   payload.title = "Full Text PDF";
-  payload.path = attach.zoteroPath;
-  payload.filename = attach.basename;
-  payload.contentType = attach.contentType;
+  if ("path" in payload) payload.path = attach.zoteroPath;
+  if ("contentType" in payload) payload.contentType = attach.contentType;
   return await createItem(config, payload, fetchImpl);
 }
 

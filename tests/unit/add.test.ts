@@ -1030,10 +1030,15 @@ test("addToZotero with --attach-file creates a linked_file child after the paren
     assert.equal(attachBody[0]?.linkMode, "linked_file");
     assert.equal(attachBody[0]?.parentItem, "PARENT01");
     assert.equal(attachBody[0]?.title, "Full Text PDF");
-    assert.equal(attachBody[0]?.filename, basename);
     assert.equal(attachBody[0]?.contentType, "application/pdf");
     // No attachmentsRoot configured → absolute path passed through.
     assert.equal(attachBody[0]?.path, attachPath);
+    // `filename` is intentionally not sent: Zotero's schema rejects it on
+    // linked_file with HTTP 400 (it's only valid for imported / embedded-image).
+    // Zotero derives the display label from the basename of `path`.
+    assert.equal("filename" in attachBody[0]!, false);
+    // basename is referenced in the path so this is the expected source of truth.
+    assert.ok(String(attachBody[0]?.path).endsWith(basename));
 
     const attachTemplateRequest = requests.find((r) =>
       /\/items\/new\?itemType=attachment&linkMode=linked_file/u.test(r.url),
@@ -1131,7 +1136,7 @@ test("addJsonItemsToZotero attaches a linked_file per-item via the attachFile fi
       String(requests.filter((r) => /\/items$/u.test(r.url)).at(-1)?.init?.body),
     ) as Array<Record<string, unknown>>;
     assert.equal(attachBody[0]?.parentItem, "JPARENT1");
-    assert.equal(attachBody[0]?.filename, basename);
+    assert.ok(String(attachBody[0]?.path).endsWith(basename));
   } finally {
     cleanupTempDir(dir);
   }
