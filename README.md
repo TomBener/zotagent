@@ -269,7 +269,9 @@ your-extractor | zotagent add --json -
 
 `--json` is exclusive with `--doi`, `--s2-paper-id`, and the manual flags (`--title`, `--author`, `--year`, `--publication`, `--url`, `--url-date`, `--access-date`, `--item-type`). Only `--collection-key` may accompany `--json`; when set, it overrides any per-item `collections` field in the input.
 
-The output `data` is **always an array** of per-item results (even for a single-object input), so consumers don't need to branch on shape. Successful entries match the regular `AddResult` (`{itemKey, title, itemType, created, source: "json", warnings[]}`); failed entries are returned in-place as `{ok: false, error: {code, message}, title?, itemType?}` and never abort the rest of the batch. The whole envelope is `{ok: false}` only on parse failures, missing config, or empty input.
+The output `data` is **always an array** of per-item results (even for a single-object input), so consumers don't need to branch on shape. Successful entries match the regular `AddResult` (`{itemKey, title, itemType, created, source: "json", attachmentItemKey?, warnings?}`); failed entries are returned in-place as `{ok: false, error: {code, message}, title?, itemType?}` and never abort the rest of the batch. The whole envelope is `{ok: false}` only on parse failures, missing config, or empty input.
+
+`warnings` is **omitted when empty** (matching the `recent` / `metadata` output convention), so a clean run produces no `warnings` key at all. Consumers should treat the field as optional — `result.warnings?.length ?? 0` rather than `result.warnings.length`. Likewise `attachmentItemKey` is present only when an `attachFile` was provided and the linked attachment was created successfully.
 
 #### Lenient input schema
 
