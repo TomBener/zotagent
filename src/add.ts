@@ -81,7 +81,9 @@ export interface AddResult {
   doi?: string;
   s2PaperId?: string;
   attachmentItemKey?: string;
-  warnings: string[];
+  // Optional: omitted from the JSON envelope when empty so a clean run doesn't
+  // emit `"warnings": []`. Matches the pattern in recent.ts / metadata.ts.
+  warnings?: string[];
 }
 
 export interface AddJsonItemFailure {
@@ -586,11 +588,15 @@ async function createLinkedFileAttachment(
 ): Promise<string> {
   const template = await fetchAttachmentTemplate("linked_file", fetchImpl);
   const payload = structuredClone(template);
+  // Set fields directly without `if (X in payload)` template-gating: the
+  // linked_file template returned by Zotero's /items/new lacks `filename`,
+  // but the attachment item schema accepts it (and Zotero displays it as the
+  // attachment label). Gating would silently drop it.
   payload.parentItem = parentKey;
   payload.title = "Full Text PDF";
-  if ("path" in payload) payload.path = attach.zoteroPath;
-  if ("filename" in payload) payload.filename = attach.basename;
-  if ("contentType" in payload) payload.contentType = attach.contentType;
+  payload.path = attach.zoteroPath;
+  payload.filename = attach.basename;
+  payload.contentType = attach.contentType;
   return await createItem(config, payload, fetchImpl);
 }
 
@@ -674,7 +680,7 @@ export async function addToZotero(
         source: "doi",
         doi: cleanedDoi,
         ...(attachmentItemKey ? { attachmentItemKey } : {}),
-        warnings,
+        ...(warnings.length > 0 ? { warnings } : {}),
       };
     } catch (error) {
       if (!normalizedWithDefaults.title) {
@@ -702,7 +708,7 @@ export async function addToZotero(
         source: "manual-fallback",
         doi: cleanedDoi,
         ...(attachmentItemKey ? { attachmentItemKey } : {}),
-        warnings,
+        ...(warnings.length > 0 ? { warnings } : {}),
       };
     }
   }
@@ -724,7 +730,7 @@ export async function addToZotero(
     created: true,
     source: "manual",
     ...(attachmentItemKey ? { attachmentItemKey } : {}),
-    warnings,
+    ...(warnings.length > 0 ? { warnings } : {}),
   };
 }
 
@@ -862,7 +868,7 @@ export async function addJsonItemsToZotero(
         created: true,
         source: "json",
         ...(attachmentItemKey ? { attachmentItemKey } : {}),
-        warnings: itemWarnings,
+        ...(itemWarnings.length > 0 ? { warnings: itemWarnings } : {}),
       });
     } catch (error) {
       results.push({

@@ -71,8 +71,8 @@ test("addToZotero creates a manual item from basic fields", async () => {
     itemType: "journalArticle",
     created: true,
     source: "manual",
-    warnings: [],
   });
+  assert.equal("warnings" in result, false, "empty warnings should be omitted from the result");
 
   const createRequest = requests.at(-1);
   assert.ok(createRequest);
@@ -256,7 +256,7 @@ test("addToZotero falls back to manual fields when DOI lookup fails", async () =
   assert.equal(result.created, true);
   assert.equal(result.source, "manual-fallback");
   assert.equal(result.doi, "10.1000/missing");
-  assert.match(result.warnings[0] || "", /DOI import failed/);
+  assert.match(result.warnings?.[0] || "", /DOI import failed/);
   assert.deepEqual(requests, [
     "https://doi.org/10.1000/missing",
     "https://api.zotero.org/items/new?itemType=webpage",
@@ -321,7 +321,7 @@ test("addToZotero omits publisher for journal articles imported from DOI", async
 
   assert.equal(result.itemKey, "TIME1234");
   assert.equal(result.source, "doi");
-  assert.deepEqual(result.warnings, []);
+  assert.equal("warnings" in result, false, "empty warnings should be omitted from the result");
 
   const createRequest = requests.at(-1);
   assert.ok(createRequest);
@@ -581,20 +581,22 @@ function journalArticleTemplate(): Record<string, unknown> {
 }
 
 function attachmentTemplate(): Record<string, unknown> {
-  // Minimal stand-in for what /items/new?itemType=attachment&linkMode=linked_file
-  // returns. Field names match Zotero's real schema; values are blank because
-  // the consumer fills them in from the resolved attach-file info.
+  // Mirrors what /items/new?itemType=attachment&linkMode=linked_file actually
+  // returns from Zotero (verified against api.zotero.org). Notably *no*
+  // `parentItem` and *no* `filename` — the consumer adds those when posting,
+  // and the schema accepts them even though they aren't on the empty template.
   return {
     itemType: "attachment",
     linkMode: "linked_file",
     title: "",
-    parentItem: "",
-    path: "",
-    filename: "",
-    contentType: "",
+    accessDate: "",
     note: "",
     tags: [],
+    collections: [],
     relations: {},
+    contentType: "",
+    charset: "",
+    path: "",
   };
 }
 
@@ -1012,7 +1014,7 @@ test("addToZotero with --attach-file creates a linked_file child after the paren
 
     assert.equal(result.itemKey, "PARENT01");
     assert.equal(result.attachmentItemKey, "ATTACH01");
-    assert.equal(result.warnings.length, 0);
+    assert.equal("warnings" in result, false, "clean attach run should omit warnings");
 
     // Two POSTs to /items: first the parent, then the attachment. Order matters
     // because the attachment carries parentItem = the parent's itemKey.
