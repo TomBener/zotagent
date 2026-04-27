@@ -4,8 +4,10 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { addJsonItemsToZotero, addS2PaperToZotero, addToZotero } from "../../src/add.js";
+import { addJsonItemsToZotero, addS2PaperToZotero, addToZotero, deriveShortTitle } from "../../src/add.js";
 import { mapLenientItem } from "../../src/json-input.js";
+
+const ACCESS_DATE_LOCAL_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/u;
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -1140,6 +1142,272 @@ test("addJsonItemsToZotero attaches a linked_file per-item via the attachFile fi
   } finally {
     cleanupTempDir(dir);
   }
+});
+
+// --- Short title derivation & access date format -----------------------------
+
+test("deriveShortTitle splits on common subtitle separators", () => {
+  // English colon (whitespace after), fullwidth colon (lenient), em dash,
+  // en dash, " - " all produce the leading main title. The remainder has to
+  // be non-empty — we don't want shortTitle == fullTitle.
+  assert.equal(deriveShortTitle("Foo: Bar"), "Foo");
+  assert.equal(deriveShortTitle("深度学习：理论与实践"), "深度学习");
+  assert.equal(deriveShortTitle("AI — Future of Work"), "AI");
+  assert.equal(deriveShortTitle("AI – Future of Work"), "AI");
+  assert.equal(deriveShortTitle("AI - Future of Work"), "AI");
+  assert.equal(deriveShortTitle("  Foo : Bar  "), "Foo");
+});
+
+test("deriveShortTitle requires whitespace context for ASCII separators", () => {
+  // Bare ASCII separators inside a token must NOT split: medical / virology
+  // titles routinely embed ":" or en dash inside an identifier. Numeric
+  // ratios and times like "10:30" likewise have unspaced colons.
+  assert.equal(deriveShortTitle("E. coli O157:H7 outbreak"), undefined);
+  assert.equal(deriveShortTitle("AI–Future"), undefined);
+  assert.equal(deriveShortTitle("Long-term effects of caffeine"), undefined);
+  assert.equal(deriveShortTitle("Brain-computer interface"), undefined);
+  assert.equal(deriveShortTitle("Schedule at 10:30 PM"), undefined);
+  // Real subtitle separator after an unspaced en dash — the spaced colon
+  // wins, the en dash inside `COVID-19–related` is left alone.
+  assert.equal(
+    deriveShortTitle("COVID-19–related stress: a survey"),
+    "COVID-19–related stress",
+  );
+});
+
+test("deriveShortTitle skips degenerate cases", () => {
+  // No remainder, no separator at the start, empty input → undefined.
+  assert.equal(deriveShortTitle("Foo:"), undefined);
+  assert.equal(deriveShortTitle(": Bar"), undefined);
+  assert.equal(deriveShortTitle(""), undefined);
+  assert.equal(deriveShortTitle("Just a Title"), undefined);
+});
+
+test("addToZotero derives shortTitle from a manual --title that has a subtitle", async () => {
+  const { fetchMock, requests } = stubZotero({ itemKeys: ["SHORT001"] });
+
+  const result = await addToZotero(
+    {
+      title: "深度学习：理论与实践",
+      authors: ["李华"],
+    },
+    {
+      zoteroLibraryId: "123456",
+      zoteroLibraryType: "user",
+      zoteroApiKey: "secret",
+    },
+    fetchMock,
+  );
+
+  assert.equal(result.itemKey, "SHORT001");
+  const createRequest = requests.find((r) => /\/items$/u.test(r.url));
+  const body = JSON.parse(String(createRequest?.init?.body)) as Array<Record<string, unknown>>;
+  assert.equal(body[0]?.title, "深度学习：理论与实践");
+  assert.equal(body[0]?.shortTitle, "深度学习");
+});
+
+test("addToZotero leaves shortTitle empty when the manual title has no subtitle separator", async () => {
+  const { fetchMock, requests } = stubZotero({ itemKeys: ["SHORT002"] });
+
+  await addToZotero(
+    { title: "A perfectly ordinary title" },
+    {
+      zoteroLibraryId: "123456",
+      zoteroLibraryType: "user",
+      zoteroApiKey: "secret",
+    },
+    fetchMock,
+  );
+
+  const createRequest = requests.find((r) => /\/items$/u.test(r.url));
+  const body = JSON.parse(String(createRequest?.init?.body)) as Array<Record<string, unknown>>;
+  // Template default of "" should pass through untouched.
+  assert.equal(body[0]?.shortTitle, "");
+});
+
+test("addToZotero derives shortTitle from CSL title text when CSL has no subtitle field", async () => {
+  // Many CrossRef records bundle the subtitle into `title` ("Foo: Bar") and
+  // omit a separate `subtitle` field. The auto-derive pass covers that gap.
+  const fetchMock: typeof fetch = async (input) => {
+    const url = String(input);
+    if (url === "https://doi.org/10.1234/embedded.colon") {
+      return jsonResponse({
+        type: "article-journal",
+        title: "Embedded Colon: A Subtitle",
+        "container-title": ["Journal of Examples"],
+        issued: { "date-parts": [[2026, 4, 26]] },
+        author: [{ family: "Doe", given: "Jane" }],
+      });
+    }
+    if (url === "https://api.zotero.org/items/new?itemType=journalArticle") {
+      return jsonResponse(journalArticleTemplate());
+    }
+    if (url === "https://api.zotero.org/users/123456/items") {
+      return jsonResponse({ success: { "0": "DOI00001" } });
+    }
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+
+  const result = await addToZotero(
+    { doi: "10.1234/embedded.colon" },
+    {
+      zoteroLibraryId: "123456",
+      zoteroLibraryType: "user",
+      zoteroApiKey: "secret",
+    },
+    fetchMock,
+  );
+
+  assert.equal(result.itemKey, "DOI00001");
+  // Note: CSL gave us `title` only (no `subtitle`), so the existing extractTitle
+  // path wouldn't set shortTitle. The ensureShortTitle pass picks it up.
+  assert.equal(result.title, "Embedded Colon: A Subtitle");
+});
+
+test("addToZotero re-derives shortTitle when --title overrides DOI metadata", async () => {
+  // CSL gives "Original Title: Original Subtitle" with shortTitle "Original
+  // Title". The user passes --title "User Override: New Subtitle" — we must
+  // *not* leak the DOI-derived "Original Title" as the shortTitle.
+  const fetchMock: typeof fetch = async (input) => {
+    const url = String(input);
+    if (url === "https://doi.org/10.1234/override.case") {
+      return jsonResponse({
+        type: "article-journal",
+        title: "Original Title",
+        subtitle: "Original Subtitle",
+        "container-title": ["Journal of Examples"],
+        author: [{ family: "Doe", given: "Jane" }],
+      });
+    }
+    if (url === "https://api.zotero.org/items/new?itemType=journalArticle") {
+      return jsonResponse(journalArticleTemplate());
+    }
+    if (url === "https://api.zotero.org/users/123456/items") {
+      return jsonResponse({ success: { "0": "DOI00002" } });
+    }
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+
+  const requests: Array<{ url: string; init?: RequestInit }> = [];
+  const tracingFetch: typeof fetch = async (input, init) => {
+    requests.push({ url: String(input), init });
+    return fetchMock(input, init);
+  };
+
+  await addToZotero(
+    { doi: "10.1234/override.case", title: "User Override: New Subtitle" },
+    {
+      zoteroLibraryId: "123456",
+      zoteroLibraryType: "user",
+      zoteroApiKey: "secret",
+    },
+    tracingFetch,
+  );
+
+  const createRequest = requests.find((r) => /\/items$/u.test(r.url));
+  const body = JSON.parse(String(createRequest?.init?.body)) as Array<Record<string, unknown>>;
+  assert.equal(body[0]?.title, "User Override: New Subtitle");
+  assert.equal(body[0]?.shortTitle, "User Override");
+});
+
+test("addToZotero stamps DOI accessDate as local YYYY-MM-DD HH:MM:SS", async () => {
+  // CrossRef metadata includes a URL → the DOI builder auto-fills accessDate
+  // with currentAccessDate(). We assert the format, not a specific value.
+  const fetchMock: typeof fetch = async (input) => {
+    const url = String(input);
+    if (url === "https://doi.org/10.1234/access.date") {
+      return jsonResponse({
+        type: "article-journal",
+        title: "Whatever",
+        URL: "https://example.com/article",
+        "container-title": ["Some Journal"],
+        author: [{ family: "Doe", given: "Jane" }],
+      });
+    }
+    if (url === "https://api.zotero.org/items/new?itemType=journalArticle") {
+      return jsonResponse(journalArticleTemplate());
+    }
+    if (url === "https://api.zotero.org/users/123456/items") {
+      return jsonResponse({ success: { "0": "DOI00003" } });
+    }
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+
+  const requests: Array<{ url: string; init?: RequestInit }> = [];
+  const tracingFetch: typeof fetch = async (input, init) => {
+    requests.push({ url: String(input), init });
+    return fetchMock(input, init);
+  };
+
+  await addToZotero(
+    { doi: "10.1234/access.date" },
+    {
+      zoteroLibraryId: "123456",
+      zoteroLibraryType: "user",
+      zoteroApiKey: "secret",
+    },
+    tracingFetch,
+  );
+
+  const createRequest = requests.find((r) => /\/items$/u.test(r.url));
+  const body = JSON.parse(String(createRequest?.init?.body)) as Array<Record<string, unknown>>;
+  const accessDate = body[0]?.accessDate;
+  assert.equal(typeof accessDate, "string");
+  assert.match(String(accessDate), ACCESS_DATE_LOCAL_RE);
+  // No T, no Z — the SQL-style local form is what Zotero displays.
+  assert.equal(String(accessDate).includes("T"), false);
+  assert.equal(String(accessDate).endsWith("Z"), false);
+});
+
+test("addJsonItemsToZotero derives shortTitle from a JSON title with a subtitle", async () => {
+  const { fetchMock, requests } = stubZotero({ itemKeys: ["JSON0001"] });
+  const input = mapLenientItem({
+    itemType: "journalArticle",
+    title: "中国农业现代化研究：1949-2025",
+    authors: ["李华"],
+  });
+
+  await addJsonItemsToZotero(
+    [input],
+    {
+      zoteroLibraryId: "123456",
+      zoteroLibraryType: "user",
+      zoteroApiKey: "secret",
+    },
+    undefined,
+    fetchMock,
+  );
+
+  const createRequest = requests.find((r) => /\/items$/u.test(r.url));
+  const body = JSON.parse(String(createRequest?.init?.body)) as Array<Record<string, unknown>>;
+  assert.equal(body[0]?.shortTitle, "中国农业现代化研究");
+});
+
+test("addJsonItemsToZotero respects an explicit shortTitle in JSON input", async () => {
+  // Explicit shortTitle from the input must win over auto-derivation, otherwise
+  // a user who already curated the field by hand would silently see it
+  // overwritten by the first colon-prefix.
+  const { fetchMock, requests } = stubZotero({ itemKeys: ["JSON0002"] });
+  const input = mapLenientItem({
+    itemType: "journalArticle",
+    title: "Foo: A long-winded subtitle",
+    shortTitle: "Foo Custom",
+  });
+
+  await addJsonItemsToZotero(
+    [input],
+    {
+      zoteroLibraryId: "123456",
+      zoteroLibraryType: "user",
+      zoteroApiKey: "secret",
+    },
+    undefined,
+    fetchMock,
+  );
+
+  const createRequest = requests.find((r) => /\/items$/u.test(r.url));
+  const body = JSON.parse(String(createRequest?.init?.body)) as Array<Record<string, unknown>>;
+  assert.equal(body[0]?.shortTitle, "Foo Custom");
 });
 
 test("addJsonItemsToZotero records a per-item INVALID_ATTACH_FILE failure for a bad path", async () => {

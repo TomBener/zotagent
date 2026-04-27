@@ -143,8 +143,16 @@ function formatIssuedDate(issuedValue: unknown): string {
   return cleanedParts.join("-");
 }
 
+// Match Zotero's UI rendering: `YYYY-MM-DD HH:MM:SS` in *local* time. Zotero
+// converts ISO-8601 UTC to the user's local zone for display, so emitting the
+// SQL-style local form directly avoids the off-by-timezone surprise users see
+// when the API stamps a `Z` value for someone in UTC+8.
 function currentAccessDate(): string {
-  return new Date().toISOString().replace(/\.\d{3}Z$/u, "Z");
+  const now = new Date();
+  const pad = (n: number): string => String(n).padStart(2, "0");
+  const date = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  const time = `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+  return `${date} ${time}`;
 }
 
 const MIME_BY_EXT: Record<string, string> = {
@@ -244,6 +252,45 @@ function extractTitle(cslJson: Record<string, unknown>): { fullTitle: string; sh
     return { fullTitle, shortTitle: title };
   }
   return { fullTitle };
+}
+
+// Subtitle separator. Fullwidth `：` is lenient (Chinese titles routinely
+// write `标题：副标题` without spaces). Every ASCII separator (`:`, em dash
+// `—`, en dash `–`, hyphen `-`) requires whitespace on at least one side so
+// we don't slice up titles where the punctuation is part of a token —
+// `E. coli O157:H7`, `COVID-19–related`, `long-term`, `10:30`. Only the FIRST
+// match in the title is used.
+const SUBTITLE_SEP_RE = /\s*：\s*|\s+[:—–]\s*|\s*[:—–]\s+|\s+-\s+/u;
+
+/**
+ * Pull the leading "main title" out of a title that uses a subtitle separator
+ * (e.g. "Foo: Bar" → "Foo"). Returns undefined when there is no separator,
+ * the prefix is empty, or there is nothing after the separator — there's no
+ * point advertising a short title that's identical to the full title.
+ */
+export function deriveShortTitle(fullTitle: string): string | undefined {
+  const trimmed = (fullTitle || "").trim();
+  if (!trimmed) return undefined;
+  const match = SUBTITLE_SEP_RE.exec(trimmed);
+  if (!match || match.index === 0) return undefined;
+  const candidate = trimmed.slice(0, match.index).trim();
+  const remainder = trimmed.slice(match.index + match[0].length).trim();
+  if (!candidate || !remainder || candidate === trimmed) return undefined;
+  return candidate;
+}
+
+/**
+ * Auto-populate `shortTitle` from `title` when the template supports it and
+ * shortTitle isn't already set. Mirrors what Zotero users do by hand. No-op
+ * for templates without `shortTitle` (e.g. attachments).
+ */
+function ensureShortTitle(payload: EditableZoteroItem): void {
+  if (!("shortTitle" in payload)) return;
+  const existing = typeof payload.shortTitle === "string" ? payload.shortTitle.trim() : "";
+  if (existing) return;
+  const fullTitle = typeof payload.title === "string" ? payload.title : "";
+  const derived = deriveShortTitle(fullTitle);
+  if (derived) payload.shortTitle = derived;
 }
 
 function inferManualItemType(input: Required<Pick<AddInput, "url" | "publication">> & Pick<AddInput, "itemType">): string {
@@ -455,7 +502,14 @@ function applyManualOverrides(
   payload: EditableZoteroItem,
   input: ReturnType<typeof normalizeInput>,
 ): void {
-  if (input.title) payload.title = input.title;
+  if (input.title) {
+    payload.title = input.title;
+    // The new title invalidates any auto-derived shortTitle from earlier in
+    // the build (e.g. CSL metadata on the DOI path). Clear it so the
+    // ensureShortTitle pass that runs before createItem re-derives from the
+    // override rather than leaking the old DOI-derived prefix.
+    if ("shortTitle" in payload) payload.shortTitle = "";
+  }
   if (input.authors.length > 0) payload.creators = mapManualAuthors(input.authors);
   if (input.year && "date" in payload) payload.date = input.year;
   applyPublicationField(payload, input.publication || undefined);
@@ -519,6 +573,7 @@ function buildItemFromCsl(
   const creators = mapCslAuthors(cslJson);
   if (creators.length > 0) payload.creators = creators;
   ensureAgentTag(payload);
+  ensureShortTitle(payload);
 
   return payload;
 }
@@ -533,6 +588,7 @@ function buildManualItem(
   }
   applyManualOverrides(payload, input);
   ensureAgentTag(payload);
+  ensureShortTitle(payload);
   return payload;
 }
 
@@ -665,6 +721,7 @@ export async function addToZotero(
       const template = await fetchTemplate(itemType, fetchImpl);
       const payload = buildItemFromCsl(template, cslJson, cleanedDoi);
       applyManualOverrides(payload, normalizedWithDefaults);
+      ensureShortTitle(payload);
       const itemKey = await createItem(writeConfig, payload, fetchImpl);
       const attachmentItemKey = await maybeCreateAttachment(
         itemKey,
@@ -852,6 +909,7 @@ export async function addJsonItemsToZotero(
       }
 
       ensureAgentTag(payload);
+      ensureShortTitle(payload);
 
       const itemKey = await createItem(writeConfig, payload, fetchImpl);
       const itemWarnings = [...baseWarnings, ...input.warnings];
