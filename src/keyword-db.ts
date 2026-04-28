@@ -10,9 +10,14 @@ export interface KeywordSearchResult {
   score: number;
 }
 
+export interface KeywordSearchOptions {
+  docKeys?: string[];
+  bodyOnly?: boolean;
+}
+
 export interface KeywordIndexClient {
   rebuildIndex(readyEntries: CatalogEntry[]): Promise<void>;
-  search(query: string, limit: number, docKeys?: string[]): Promise<KeywordSearchResult[]>;
+  search(query: string, limit: number, options?: KeywordSearchOptions): Promise<KeywordSearchResult[]>;
   isEmpty(): Promise<boolean>;
   close(): Promise<void>;
 }
@@ -242,10 +247,12 @@ export async function openKeywordIndex(config: AppConfig): Promise<KeywordIndexC
       return row === undefined;
     },
 
-    search: async (query, limit, docKeys) => {
+    search: async (query, limit, options) => {
       if (query.trim().length === 0) {
         throw new Error("Search text cannot be empty.");
       }
+      const docKeys = options?.docKeys;
+      const bodyOnly = options?.bodyOnly ?? false;
 
       const docKeyFilter = docKeys && docKeys.length > 0
         ? `AND d.docKey IN (${docKeys.map(() => "?").join(",")})`
@@ -261,7 +268,12 @@ export async function openKeywordIndex(config: AppConfig): Promise<KeywordIndexC
       `;
       const docKeyParams = docKeys && docKeys.length > 0 ? docKeys : [];
 
-      const ftsQuery = buildFtsQuery(query);
+      // When bodyOnly is set, wrap the FTS5 expression in a body column filter
+      // so the title column does not participate in matching. Used by search-in
+      // where the user already pinned the document and only wants body matches.
+      const wrapBody = (q: string): string => bodyOnly ? `{body} : (${q})` : q;
+
+      const ftsQuery = wrapBody(buildFtsQuery(query));
       try {
         const rows = db.prepare(sql).all(ftsQuery, ...docKeyParams, limit) as Array<{ docKey: string; rank: number }>;
         return rows.map((row) => ({ docKey: row.docKey, score: -row.rank }));
@@ -273,7 +285,7 @@ export async function openKeywordIndex(config: AppConfig): Promise<KeywordIndexC
         if (sanitized.length === 0) {
           throw new Error("Search text cannot be empty.");
         }
-        const fallback = buildFtsQuery(sanitized);
+        const fallback = wrapBody(buildFtsQuery(sanitized));
         const rows = db.prepare(sql).all(fallback, ...docKeyParams, limit) as Array<{ docKey: string; rank: number }>;
         return rows.map((row) => ({ docKey: row.docKey, score: -row.rank }));
       }

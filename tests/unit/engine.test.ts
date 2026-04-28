@@ -1080,8 +1080,8 @@ test("searchWithinDocuments returns passages from the selected attachment", asyn
 
   const fakeKeywordFactory = async () => ({
     rebuildIndex: async () => {},
-    search: async (_query: string, _limit: number, docKeys?: string[]) =>
-      (docKeys ?? [docKey]).map((k) => ({ docKey: k, score: 1 })),
+    search: async (_query: string, _limit: number, options?: { docKeys?: string[] }) =>
+      (options?.docKeys ?? [docKey]).map((k) => ({ docKey: k, score: 1 })),
     isEmpty: async () => false,
     close: async () => {},
   });
@@ -1208,8 +1208,8 @@ test("searchWithinDocuments searches across multiple attachments for the same ke
 
   const fakeKeywordFactory = async () => ({
     rebuildIndex: async () => {},
-    search: async (_query: string, _limit: number, docKeys?: string[]) =>
-      (docKeys ?? [docOne, docTwo]).map((k) => ({ docKey: k, score: 1 })),
+    search: async (_query: string, _limit: number, options?: { docKeys?: string[] }) =>
+      (options?.docKeys ?? [docOne, docTwo]).map((k) => ({ docKey: k, score: 1 })),
     isEmpty: async () => false,
     close: async () => {},
   });
@@ -1312,6 +1312,171 @@ test("searchWithinDocuments honors NEAR/AND/OR operators via FTS", async () => {
     { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir },
   );
   assert.equal(orResult.results.length > 0, true);
+});
+
+test("searchWithinDocuments AND requires every term in each ranked block", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-search-in-and-"));
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docKey = "a".repeat(40);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
+
+  writeManifest(manifestPath, {
+    docKey,
+    itemKey: "ITEMA000",
+    title: "AND test",
+    authors: ["A"],
+    filePath: "/tmp/and.pdf",
+    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+    blocks: [
+      {
+        blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"],
+        text: "alpha alpha alpha alpha alpha repeats here without the other term.",
+        charStart: 0, charEnd: 65, lineStart: 1, lineEnd: 1, isReferenceLike: false,
+      },
+      {
+        blockIndex: 1, blockType: "paragraph", sectionPath: ["Body"],
+        text: "Here both alpha and beta appear together exactly once.",
+        charStart: 67, charEnd: 121, lineStart: 3, lineEnd: 3, isReferenceLike: false,
+      },
+    ],
+  });
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [{
+      docKey, itemKey: "ITEMA000", title: "AND test", authors: ["A"],
+      filePath: "/tmp/and.pdf", fileExt: "pdf", exists: true, supported: true,
+      extractStatus: "ready", size: 1, mtimeMs: 1, sourceHash: "hash-and",
+      lastIndexedAt: new Date().toISOString(),
+      normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+      manifestPath,
+    }],
+  });
+
+  const result = await searchWithinDocuments(
+    'alpha AND beta',
+    { key: "ITEMA000" },
+    10,
+    { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir },
+  );
+  // The all-alpha block must not appear; only the alpha+beta block should.
+  assert.equal(result.results.length, 1);
+  assert.equal(result.results[0]!.blockStart, 1);
+});
+
+test("searchWithinDocuments AND with quoted phrases requires every phrase token in each block", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-search-in-quoted-and-"));
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docKey = "q".repeat(40);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
+
+  writeManifest(manifestPath, {
+    docKey,
+    itemKey: "ITEMQ000",
+    title: "Quoted AND",
+    authors: ["A"],
+    filePath: "/tmp/qand.pdf",
+    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+    blocks: [
+      {
+        blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"],
+        text: "property rights are central to development without other framing.",
+        charStart: 0, charEnd: 64, lineStart: 1, lineEnd: 1, isReferenceLike: false,
+      },
+      {
+        blockIndex: 1, blockType: "paragraph", sectionPath: ["Body"],
+        text: "Credible commitment to property rights builds long-run institutions.",
+        charStart: 66, charEnd: 130, lineStart: 3, lineEnd: 3, isReferenceLike: false,
+      },
+    ],
+  });
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [{
+      docKey, itemKey: "ITEMQ000", title: "Quoted AND", authors: ["A"],
+      filePath: "/tmp/qand.pdf", fileExt: "pdf", exists: true, supported: true,
+      extractStatus: "ready", size: 1, mtimeMs: 1, sourceHash: "hash-qand",
+      lastIndexedAt: new Date().toISOString(),
+      normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+      manifestPath,
+    }],
+  });
+
+  const result = await searchWithinDocuments(
+    '"property rights" AND "credibility"',
+    { key: "ITEMQ000" },
+    10,
+    { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir },
+  );
+  // Only the second block has both "property rights" and a credibility-stem
+  // word ("credible"). The first block must not appear.
+  assert.equal(result.results.length, 1);
+  assert.equal(result.results[0]!.blockStart, 1);
+});
+
+test("searchWithinDocuments NOT does not gate on attachment title", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-search-in-not-"));
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docKey = "b".repeat(40);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
+
+  // Title contains "Beta" but body never mentions beta. With body-only FTS, the
+  // doc must still satisfy `alpha NOT beta` because the gate only inspects body.
+  writeManifest(manifestPath, {
+    docKey,
+    itemKey: "ITEMB000",
+    title: "Beta in the title only",
+    authors: ["A"],
+    filePath: "/tmp/not.pdf",
+    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+    blocks: [
+      {
+        blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"],
+        text: "alpha appears here without the other word anywhere.",
+        charStart: 0, charEnd: 51, lineStart: 1, lineEnd: 1, isReferenceLike: false,
+      },
+    ],
+  });
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [{
+      docKey, itemKey: "ITEMB000", title: "Beta in the title only", authors: ["A"],
+      filePath: "/tmp/not.pdf", fileExt: "pdf", exists: true, supported: true,
+      extractStatus: "ready", size: 1, mtimeMs: 1, sourceHash: "hash-not",
+      lastIndexedAt: new Date().toISOString(),
+      normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+      manifestPath,
+    }],
+  });
+
+  const result = await searchWithinDocuments(
+    'alpha NOT beta',
+    { key: "ITEMB000" },
+    10,
+    { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir },
+  );
+  assert.equal(result.results.length, 1);
+  assert.equal(result.results[0]!.blockStart, 0);
 });
 
 test("getDocumentBlocks merges multi-attachment itemKey and expandDocument uses item-global blocks", () => {

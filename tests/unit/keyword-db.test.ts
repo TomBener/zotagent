@@ -503,11 +503,11 @@ test("search filters to a single docKey when docKeys is provided", async () => {
     const all = await client.search("property", 10);
     assert.equal(all.length, 2);
 
-    const filtered = await client.search("property", 10, [docTwo]);
+    const filtered = await client.search("property", 10, { docKeys: [docTwo] });
     assert.equal(filtered.length, 1);
     assert.equal(filtered[0]!.docKey, docTwo);
 
-    const empty = await client.search("property", 10, []);
+    const empty = await client.search("property", 10, { docKeys: [] });
     assert.equal(empty.length, 2, "an empty docKeys array should not constrain results");
   } finally {
     await client.close();

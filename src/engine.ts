@@ -490,6 +490,105 @@ function scoreKeywordText(text: string, query: KeywordQueryProfile): number {
   );
 }
 
+interface SearchInConstraints {
+  requiredStems: Set<string>;
+  excludedStems: Set<string>;
+  requiredCjk: string[];
+  excludedCjk: string[];
+  hasOr: boolean;
+}
+
+/**
+ * Best-effort analysis of an FTS5 query for the search-in block-level gate.
+ * The FTS layer already validated that the doc satisfies the query; this only
+ * decides whether a given block must contain all positive terms (default AND,
+ * NEAR, NOT) or whether any positive term is enough (top-level OR). Mixed
+ * queries containing OR fall back to OR-mode — imperfect, but conservative:
+ * it never turns a true match into a miss, just lets a few extras through.
+ */
+function analyzeSearchInConstraints(query: string): SearchInConstraints {
+  const simplified = toSimplified(query);
+
+  // OR detection on masked view (quotes hide internal OR).
+  const { masked } = maskQuotedPhrases(simplified);
+  const hasOr = /\bOR\b/u.test(masked);
+
+  // Strip NEAR(...) and NEAR/N infix operators on the original (unquoted-aware)
+  // query, then walk units left-to-right. A unit is either a quoted phrase or a
+  // bare word. NOT applies to the next unit; words inside a NOT-phrase are all
+  // treated as excluded.
+  const stripped = simplified
+    .replace(/\bNEAR\s*\(\s*([^()]+?)\s*(?:,\s*\d+\s*)?\)/gi, " $1 ")
+    .replace(/\bNEAR(?:\/\d+)?\b/gi, " ")
+    .replace(/[()]/g, " ");
+
+  const positives: string[] = [];
+  const negatives: string[] = [];
+  let pendingNegative = false;
+  const unitRe = /"([^"]*)"|([\p{L}\p{N}]+)/giu;
+  let m: RegExpExecArray | null;
+  while ((m = unitRe.exec(stripped)) !== null) {
+    const phrase = m[1];
+    const word = m[2];
+    if (phrase !== undefined) {
+      const tokens = phrase.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
+      for (const t of tokens) (pendingNegative ? negatives : positives).push(t);
+      pendingNegative = false;
+      continue;
+    }
+    if (word) {
+      const upper = word.toUpperCase();
+      if (upper === "NOT") { pendingNegative = true; continue; }
+      if (upper === "AND" || upper === "OR") { pendingNegative = false; continue; }
+      (pendingNegative ? negatives : positives).push(word.toLowerCase());
+      pendingNegative = false;
+    }
+  }
+
+  const requiredStems = new Set<string>();
+  const requiredCjk: string[] = [];
+  for (const t of positives) {
+    if (CJK_CHAR_RE.test(t)) requiredCjk.push(t);
+    else requiredStems.add(stemKeywordToken(t));
+  }
+  const excludedStems = new Set<string>();
+  const excludedCjk: string[] = [];
+  for (const t of negatives) {
+    if (CJK_CHAR_RE.test(t)) excludedCjk.push(t);
+    else excludedStems.add(stemKeywordToken(t));
+  }
+
+  return { requiredStems, excludedStems, requiredCjk, excludedCjk, hasOr };
+}
+
+function blockSatisfiesConstraints(
+  blockText: string,
+  constraints: SearchInConstraints,
+): boolean {
+  if (constraints.hasOr) return true;
+
+  const stems = new Set<string>();
+  for (const tok of tokenizeKeywordText(blockText)) {
+    stems.add(stemKeywordToken(tok));
+  }
+  for (const req of constraints.requiredStems) {
+    if (!stems.has(req)) return false;
+  }
+  for (const exc of constraints.excludedStems) {
+    if (stems.has(exc)) return false;
+  }
+  if (constraints.requiredCjk.length > 0 || constraints.excludedCjk.length > 0) {
+    const normalized = normalizeExactText(blockText);
+    for (const req of constraints.requiredCjk) {
+      if (!normalized.includes(req)) return false;
+    }
+    for (const exc of constraints.excludedCjk) {
+      if (normalized.includes(exc)) return false;
+    }
+  }
+  return true;
+}
+
 function findBestBlockByTerms(
   manifest: AttachmentManifest,
   query: KeywordQueryProfile,
@@ -734,18 +833,20 @@ export async function searchWithinDocuments(
   const manifestCache = new Map<string, AttachmentManifest>();
   const mapped: VerifiedSearchRow[] = [];
 
+  const ftsOptions = { docKeys: targetDocKeys, bodyOnly: true };
   const keywordIndex = await keywordFactory(config);
   try {
-    let ftsResults = await keywordIndex.search(query, Math.max(targetDocKeys.length, 1), targetDocKeys);
+    let ftsResults = await keywordIndex.search(query, Math.max(targetDocKeys.length, 1), ftsOptions);
     if (ftsResults.length === 0 && readyEntries.length > 0 && (await keywordIndex.isEmpty())) {
       await keywordIndex.rebuildIndex(readyEntries);
-      ftsResults = await keywordIndex.search(query, Math.max(targetDocKeys.length, 1), targetDocKeys);
+      ftsResults = await keywordIndex.search(query, Math.max(targetDocKeys.length, 1), ftsOptions);
     }
     if (ftsResults.length === 0) {
       return { results: [], warnings: config.warnings };
     }
 
     const keywordQuery = buildKeywordQueryProfile(query);
+    const constraints = analyzeSearchInConstraints(query);
     const entryByDocKey = new Map(entries.map((entry) => [entry.docKey, entry]));
     const offsetByDocKey = new Map<string, number>();
     let runningOffset = 0;
@@ -775,8 +876,10 @@ export async function searchWithinDocuments(
       }
 
       for (const block of manifest.blocks) {
-        const baseScore = scoreKeywordText(`${block.sectionPath.join(" ")} ${block.text}`, keywordQuery);
+        const blockHaystack = `${block.sectionPath.join(" ")} ${block.text}`;
+        const baseScore = scoreKeywordText(blockHaystack, keywordQuery);
         if (baseScore <= 0) continue;
+        if (!blockSatisfiesConstraints(blockHaystack, constraints)) continue;
         const adjusted = baseScore + (block.blockType === "heading" ? 0.5 : 0);
         const existing = candidates.get(block.blockIndex);
         if (!existing || adjusted > existing.score) {
