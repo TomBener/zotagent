@@ -786,9 +786,7 @@ export function searchWithinDocuments(
     globalOffset += manifest.blocks.length + (i < entries.length - 1 ? 1 : 0);
   }
 
-  const substantive = mapped.filter((row) => !row.referenceOnly);
-  const references = mapped.filter((row) => row.referenceOnly);
-  const ordered = substantive.length > 0 ? [...substantive, ...references] : mapped;
+  const ordered = [...mapped].sort((a, b) => b.score - a.score);
 
   return {
     results: ordered.slice(0, limit).map(({ referenceOnly: _referenceOnly, ...row }) => row),
