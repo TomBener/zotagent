@@ -12,7 +12,7 @@ export interface KeywordSearchResult {
 
 export interface KeywordIndexClient {
   rebuildIndex(readyEntries: CatalogEntry[]): Promise<void>;
-  search(query: string, limit: number): Promise<KeywordSearchResult[]>;
+  search(query: string, limit: number, docKeys?: string[]): Promise<KeywordSearchResult[]>;
   isEmpty(): Promise<boolean>;
   close(): Promise<void>;
 }
@@ -242,23 +242,28 @@ export async function openKeywordIndex(config: AppConfig): Promise<KeywordIndexC
       return row === undefined;
     },
 
-    search: async (query, limit) => {
+    search: async (query, limit, docKeys) => {
       if (query.trim().length === 0) {
         throw new Error("Search text cannot be empty.");
       }
 
+      const docKeyFilter = docKeys && docKeys.length > 0
+        ? `AND d.docKey IN (${docKeys.map(() => "?").join(",")})`
+        : "";
       const sql = `
         SELECT d.docKey, f.rank
         FROM keyword_fts f
         JOIN keyword_docs d ON d.rowid = f.rowid
         WHERE keyword_fts MATCH ?
+        ${docKeyFilter}
         ORDER BY f.rank
         LIMIT ?
       `;
+      const docKeyParams = docKeys && docKeys.length > 0 ? docKeys : [];
 
       const ftsQuery = buildFtsQuery(query);
       try {
-        const rows = db.prepare(sql).all(ftsQuery, limit) as Array<{ docKey: string; rank: number }>;
+        const rows = db.prepare(sql).all(ftsQuery, ...docKeyParams, limit) as Array<{ docKey: string; rank: number }>;
         return rows.map((row) => ({ docKey: row.docKey, score: -row.rank }));
       } catch (error) {
         if (error instanceof KeywordQuerySyntaxError) {
@@ -269,7 +274,7 @@ export async function openKeywordIndex(config: AppConfig): Promise<KeywordIndexC
           throw new Error("Search text cannot be empty.");
         }
         const fallback = buildFtsQuery(sanitized);
-        const rows = db.prepare(sql).all(fallback, limit) as Array<{ docKey: string; rank: number }>;
+        const rows = db.prepare(sql).all(fallback, ...docKeyParams, limit) as Array<{ docKey: string; rank: number }>;
         return rows.map((row) => ({ docKey: row.docKey, score: -row.rank }));
       }
     },

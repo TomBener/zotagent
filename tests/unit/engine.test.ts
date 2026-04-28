@@ -997,7 +997,7 @@ test("searchLiterature does not rebuild the keyword index when empty results com
   assert.equal(result.results.length, 0);
 });
 
-test("searchWithinDocuments returns passages from the selected attachment", () => {
+test("searchWithinDocuments returns passages from the selected attachment", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-search-in-"));
   const dataDir = join(root, "data");
   const indexDir = join(dataDir, "index");
@@ -1078,7 +1078,15 @@ test("searchWithinDocuments returns passages from the selected attachment", () =
     ],
   });
 
-  const result = searchWithinDocuments(
+  const fakeKeywordFactory = async () => ({
+    rebuildIndex: async () => {},
+    search: async (_query: string, _limit: number, docKeys?: string[]) =>
+      (docKeys ?? [docKey]).map((k) => ({ docKey: k, score: 1 })),
+    isEmpty: async () => false,
+    close: async () => {},
+  });
+
+  const result = await searchWithinDocuments(
     "dangwei shuji",
     { key: "ITEMS000" },
     10,
@@ -1087,6 +1095,7 @@ test("searchWithinDocuments returns passages from the selected attachment", () =
       attachmentsRoot: root,
       dataDir,
     },
+    fakeKeywordFactory,
   );
 
   assert.equal(result.results.length > 0, true);
@@ -1096,7 +1105,7 @@ test("searchWithinDocuments returns passages from the selected attachment", () =
   assert.equal(result.results[0]!.blockEnd, 1);
 });
 
-test("searchWithinDocuments searches across multiple attachments for the same key", () => {
+test("searchWithinDocuments searches across multiple attachments for the same key", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-search-in-multi-"));
   const dataDir = join(root, "data");
   const indexDir = join(dataDir, "index");
@@ -1197,7 +1206,15 @@ test("searchWithinDocuments searches across multiple attachments for the same ke
     ],
   });
 
-  const result = searchWithinDocuments(
+  const fakeKeywordFactory = async () => ({
+    rebuildIndex: async () => {},
+    search: async (_query: string, _limit: number, docKeys?: string[]) =>
+      (docKeys ?? [docOne, docTwo]).map((k) => ({ docKey: k, score: 1 })),
+    isEmpty: async () => false,
+    close: async () => {},
+  });
+
+  const result = await searchWithinDocuments(
     "unique paragraph",
     { key: "ITEMS000" },
     10,
@@ -1206,6 +1223,7 @@ test("searchWithinDocuments searches across multiple attachments for the same ke
       attachmentsRoot: root,
       dataDir,
     },
+    fakeKeywordFactory,
   );
 
   assert.equal(result.results.length, 2);
@@ -1216,6 +1234,84 @@ test("searchWithinDocuments searches across multiple attachments for the same ke
     result.results[1]!.blockStart > result.results[0]!.blockStart,
     "second attachment's block index should sit past the merged separator",
   );
+});
+
+test("searchWithinDocuments honors NEAR/AND/OR operators via FTS", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-search-in-near-"));
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docKey = "n".repeat(40);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
+
+  writeManifest(manifestPath, {
+    docKey,
+    itemKey: "ITEMN000",
+    title: "NEAR Test Doc",
+    authors: ["A"],
+    filePath: "/tmp/near.pdf",
+    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+    blocks: [
+      {
+        blockIndex: 0,
+        blockType: "paragraph",
+        sectionPath: ["Body"],
+        text: "alpha and beta sit close together here.",
+        charStart: 0, charEnd: 39, lineStart: 1, lineEnd: 1, isReferenceLike: false,
+      },
+      {
+        blockIndex: 1,
+        blockType: "paragraph",
+        sectionPath: ["Body"],
+        text: "alpha appears here without beta nearby anywhere in this paragraph.",
+        charStart: 41, charEnd: 110, lineStart: 3, lineEnd: 3, isReferenceLike: false,
+      },
+    ],
+  });
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [{
+      docKey, itemKey: "ITEMN000", title: "NEAR Test Doc", authors: ["A"],
+      filePath: "/tmp/near.pdf", fileExt: "pdf", exists: true, supported: true,
+      extractStatus: "ready", size: 1, mtimeMs: 1, sourceHash: "hash-near",
+      lastIndexedAt: new Date().toISOString(),
+      normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+      manifestPath,
+    }],
+  });
+
+  // Real keyword index — exercises FTS NEAR end-to-end.
+  const proximate = await searchWithinDocuments(
+    'alpha NEAR/3 beta',
+    { key: "ITEMN000" },
+    10,
+    { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir },
+  );
+  assert.equal(proximate.results.length > 0, true, "NEAR/3 should match the doc");
+
+  // The doc has alpha+beta within proximity, so it should match. A NEAR/3 that
+  // a doc cannot satisfy at all returns zero results.
+  const impossibleNear = await searchWithinDocuments(
+    'gamma NEAR/3 delta',
+    { key: "ITEMN000" },
+    10,
+    { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir },
+  );
+  assert.equal(impossibleNear.results.length, 0);
+
+  // OR operator
+  const orResult = await searchWithinDocuments(
+    'alpha OR gamma',
+    { key: "ITEMN000" },
+    10,
+    { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir },
+  );
+  assert.equal(orResult.results.length > 0, true);
 });
 
 test("getDocumentBlocks merges multi-attachment itemKey and expandDocument uses item-global blocks", () => {

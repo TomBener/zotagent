@@ -468,6 +468,52 @@ test("isEmpty reports true for a fresh index and false once populated", async ()
   }
 });
 
+test("search filters to a single docKey when docKeys is provided", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-db-dockeys-"));
+  const dataDir = join(root, "data");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docOne = "1".repeat(40);
+  const docTwo = "2".repeat(40);
+  const manifestOne = join(manifestsDir, `${docOne}${MANIFEST_EXT}`);
+  const manifestTwo = join(manifestsDir, `${docTwo}${MANIFEST_EXT}`);
+
+  writeManifestFile(manifestOne, {
+    docKey: docOne, itemKey: "ITEM1", title: "Doc One", authors: ["A"],
+    filePath: "/tmp/one.pdf", normalizedPath: join(dataDir, "normalized", `${docOne}.md`),
+    blocks: [{ blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"],
+      text: "Property rights and rural land tenure.", charStart: 0, charEnd: 38, lineStart: 1, lineEnd: 1, isReferenceLike: false }],
+  });
+  writeManifestFile(manifestTwo, {
+    docKey: docTwo, itemKey: "ITEM2", title: "Doc Two", authors: ["B"],
+    filePath: "/tmp/two.pdf", normalizedPath: join(dataDir, "normalized", `${docTwo}.md`),
+    blocks: [{ blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"],
+      text: "Property rights also feature here.", charStart: 0, charEnd: 33, lineStart: 1, lineEnd: 1, isReferenceLike: false }],
+  });
+
+  const entries = [
+    readyEntry(dataDir, docOne, "ITEM1", "Doc One", "/tmp/one.pdf", manifestOne),
+    readyEntry(dataDir, docTwo, "ITEM2", "Doc Two", "/tmp/two.pdf", manifestTwo),
+  ];
+  const client = await openKeywordIndex(createConfig(dataDir));
+  try {
+    await client.rebuildIndex(entries);
+
+    const all = await client.search("property", 10);
+    assert.equal(all.length, 2);
+
+    const filtered = await client.search("property", 10, [docTwo]);
+    assert.equal(filtered.length, 1);
+    assert.equal(filtered[0]!.docKey, docTwo);
+
+    const empty = await client.search("property", 10, []);
+    assert.equal(empty.length, 2, "an empty docKeys array should not constrain results");
+  } finally {
+    await client.close();
+  }
+});
+
 test("search handles malformed FTS5 queries gracefully", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-db-malformed-"));
   const dataDir = join(root, "data");

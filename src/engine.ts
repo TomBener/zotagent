@@ -711,82 +711,91 @@ export async function searchLiterature(
   };
 }
 
-export function searchWithinDocuments(
+export async function searchWithinDocuments(
   query: string,
   input: { key: string },
   limit: number,
   overrides: ConfigOverrides = {},
-): {
+  keywordFactory: KeywordIndexFactory = openKeywordIndex,
+): Promise<{
   results: SearchResultRow[];
   warnings: string[];
-} {
-  const normalizedQuery = normalizeExactText(query);
-  if (!normalizedQuery) {
+}> {
+  if (!query || !query.trim()) {
     throw new Error("Missing search text. Use: zotagent search-in \"<text>\" --key <key>");
   }
 
-  const queryTerms = [...new Set(normalizedQuery.split(" ").filter((term) => term.length > 0))];
   const config = resolveConfig(overrides);
-  const catalog = readCatalogFile(getDataPaths(config.dataDir).catalogPath);
-  const entries = resolveReadyEntries(input.key, getReadyEntries(catalog));
+  const paths = getDataPaths(config.dataDir);
+  const catalog = readCatalogFile(paths.catalogPath);
+  const readyEntries = getReadyEntries(catalog);
+  const entries = resolveReadyEntries(input.key, readyEntries);
+  const targetDocKeys = entries.map((entry) => entry.docKey);
   const manifestCache = new Map<string, AttachmentManifest>();
-  const mapped: Array<SearchResultRow & { referenceOnly: boolean }> = [];
+  const mapped: VerifiedSearchRow[] = [];
 
-  let globalOffset = 0;
-  for (let i = 0; i < entries.length; i += 1) {
-    const entry = entries[i]!;
-    const manifest = readManifestCached(entry, manifestCache);
-    const candidates = new Map<string, { range: { blockStart: number; blockEnd: number }; score: number }>();
-    const exactRange = findExactPhraseBlockRange(manifest, query);
-    if (exactRange) {
-      candidates.set(`${exactRange.blockStart}:${exactRange.blockEnd}`, {
-        range: exactRange,
-        score: 100 - (exactRange.blockEnd - exactRange.blockStart),
-      });
+  const keywordIndex = await keywordFactory(config);
+  try {
+    let ftsResults = await keywordIndex.search(query, Math.max(targetDocKeys.length, 1), targetDocKeys);
+    if (ftsResults.length === 0 && readyEntries.length > 0 && (await keywordIndex.isEmpty())) {
+      await keywordIndex.rebuildIndex(readyEntries);
+      ftsResults = await keywordIndex.search(query, Math.max(targetDocKeys.length, 1), targetDocKeys);
+    }
+    if (ftsResults.length === 0) {
+      return { results: [], warnings: config.warnings };
     }
 
-    for (const block of manifest.blocks) {
-      const haystack = normalizeExactText(`${block.sectionPath.join(" ")} ${block.text}`);
-      if (!haystack) continue;
+    const keywordQuery = buildKeywordQueryProfile(query);
+    const entryByDocKey = new Map(entries.map((entry) => [entry.docKey, entry]));
+    const offsetByDocKey = new Map<string, number>();
+    let runningOffset = 0;
+    for (let i = 0; i < entries.length; i += 1) {
+      const entry = entries[i]!;
+      offsetByDocKey.set(entry.docKey, runningOffset);
+      const manifest = readManifestCached(entry, manifestCache);
+      runningOffset += manifest.blocks.length + (i < entries.length - 1 ? 1 : 0);
+    }
 
-      const phraseHits = countOccurrences(haystack, normalizedQuery);
-      let matchedTerms = 0;
-      let totalTermHits = 0;
-      for (const term of queryTerms) {
-        const hits = countOccurrences(haystack, term);
-        if (hits > 0) {
-          matchedTerms += 1;
-          totalTermHits += hits;
-        }
-      }
-      if (phraseHits === 0 && matchedTerms === 0) continue;
+    for (const ftsResult of ftsResults) {
+      const entry = entryByDocKey.get(ftsResult.docKey);
+      if (!entry) continue;
+      const manifest = readManifestCached(entry, manifestCache);
+      const offset = offsetByDocKey.get(entry.docKey) ?? 0;
 
-      const score =
-        phraseHits * 10
-        + (queryTerms.length > 0 ? (matchedTerms / queryTerms.length) * 4 : 0)
-        + Math.min(totalTermHits, 5)
-        + (block.blockType === "heading" ? 0.5 : 0);
-      const key = `${block.blockIndex}:${block.blockIndex}`;
-      const existing = candidates.get(key);
-      if (!existing || score > existing.score) {
-        candidates.set(key, {
-          range: { blockStart: block.blockIndex, blockEnd: block.blockIndex },
-          score,
+      const candidates = new Map<number, { range: { blockStart: number; blockEnd: number }; score: number }>();
+
+      const exactRange = keywordQuery.normalizedQuery
+        ? findExactPhraseBlockRange(manifest, keywordQuery.normalizedQuery)
+        : null;
+      if (exactRange) {
+        candidates.set(exactRange.blockStart, {
+          range: exactRange,
+          score: 100 - (exactRange.blockEnd - exactRange.blockStart),
         });
       }
+
+      for (const block of manifest.blocks) {
+        const baseScore = scoreKeywordText(`${block.sectionPath.join(" ")} ${block.text}`, keywordQuery);
+        if (baseScore <= 0) continue;
+        const adjusted = baseScore + (block.blockType === "heading" ? 0.5 : 0);
+        const existing = candidates.get(block.blockIndex);
+        if (!existing || adjusted > existing.score) {
+          candidates.set(block.blockIndex, {
+            range: { blockStart: block.blockIndex, blockEnd: block.blockIndex },
+            score: adjusted,
+          });
+        }
+      }
+
+      for (const candidate of candidates.values()) {
+        mapped.push(buildSearchRow(entry, manifest, candidate.range, offset, candidate.score));
+      }
     }
-
-    const offset = globalOffset;
-    mapped.push(
-      ...[...candidates.values()]
-        .sort((a, b) => b.score - a.score || a.range.blockStart - b.range.blockStart)
-        .map((candidate) => buildSearchRow(entry, manifest, candidate.range, offset, candidate.score)),
-    );
-
-    globalOffset += manifest.blocks.length + (i < entries.length - 1 ? 1 : 0);
+  } finally {
+    await keywordIndex.close();
   }
 
-  const ordered = [...mapped].sort((a, b) => b.score - a.score);
+  const ordered = [...mapped].sort((a, b) => b.score - a.score || a.blockStart - b.blockStart);
 
   return {
     results: ordered.slice(0, limit).map(({ referenceOnly: _referenceOnly, ...row }) => row),

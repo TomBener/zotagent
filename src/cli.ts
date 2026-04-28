@@ -297,7 +297,9 @@ Search
         --min-score <n>             Drop lower-scoring search hits before mapping.
 
   search-in "<text>" --key <key> [--limit <n>]
-      Search within one indexed item's attachments (exact phrase and term match).
+      Search within one indexed item's attachments. Uses the same FTS5 keyword
+      syntax as search: "exact phrase", OR, NOT, term NEAR/<n> term, prefix*.
+      Requires a populated keyword index (run zotagent sync first).
 
   metadata ["<text>"] [--limit <n>] [--field <field>] [--has-file] [--abstract]
            [--author <text>] [--year <text>] [--title <text>] [--journal <text>] [--publisher <text>]
@@ -805,7 +807,7 @@ async function main(): Promise<void> {
           return;
         }
         try {
-          const data = searchWithinDocuments(
+          const data = await searchWithinDocuments(
             query,
             { key },
             limitInput.value ?? 10,
