@@ -1652,6 +1652,148 @@ test("searchWithinDocuments returns a fallback when terms span block boundaries"
   assert.ok(result.results.length >= 1, "fallback should surface a candidate when terms span blocks");
 });
 
+test("searchWithinDocuments OR with phrase requires each branch to actually match", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-search-in-or-phrase-"));
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docKey = "o".repeat(40);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
+
+  writeManifest(manifestPath, {
+    docKey,
+    itemKey: "ITEMO000",
+    title: "OR phrase",
+    authors: ["A"],
+    filePath: "/tmp/orphrase.pdf",
+    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+    blocks: [
+      {
+        // Has alpha and beta scattered, no contiguous phrase, no gamma — must
+        // NOT satisfy `"alpha beta" OR gamma`.
+        blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"],
+        text: "alpha appears here and beta arrives later in the same paragraph.",
+        charStart: 0, charEnd: 65, lineStart: 1, lineEnd: 1, isReferenceLike: false,
+      },
+      {
+        // Contains gamma — must satisfy via the second OR branch.
+        blockIndex: 1, blockType: "paragraph", sectionPath: ["Body"],
+        text: "gamma is the focus of this distinct paragraph.",
+        charStart: 67, charEnd: 113, lineStart: 3, lineEnd: 3, isReferenceLike: false,
+      },
+      {
+        // Contains the literal phrase "alpha beta" — must satisfy via first
+        // OR branch.
+        blockIndex: 2, blockType: "paragraph", sectionPath: ["Body"],
+        text: "Here the literal alpha beta phrase appears once.",
+        charStart: 115, charEnd: 162, lineStart: 5, lineEnd: 5, isReferenceLike: false,
+      },
+    ],
+  });
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [{
+      docKey, itemKey: "ITEMO000", title: "OR phrase", authors: ["A"],
+      filePath: "/tmp/orphrase.pdf", fileExt: "pdf", exists: true, supported: true,
+      extractStatus: "ready", size: 1, mtimeMs: 1, sourceHash: "hash-orphrase",
+      lastIndexedAt: new Date().toISOString(),
+      normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+      manifestPath,
+    }],
+  });
+
+  const result = await searchWithinDocuments(
+    '"alpha beta" OR gamma',
+    { key: "ITEMO000" },
+    10,
+    { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir },
+  );
+  // Block 0 (scattered alpha/beta, no gamma) must not appear. Blocks 1 and 2
+  // both satisfy a branch and should appear.
+  const blockIndices = new Set(result.results.map((r) => r.blockStart));
+  assert.equal(blockIndices.has(0), false, "scattered alpha/beta block must be excluded");
+  assert.equal(blockIndices.has(1), true);
+  assert.equal(blockIndices.has(2), true);
+});
+
+test("searchWithinDocuments OR+NOT enforces NOT inside each branch", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-search-in-or-not-"));
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docKey = "y".repeat(40);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
+
+  // Each block tests one branch of `alpha NOT delta OR beta`:
+  //  - block 0: alpha + delta → first branch fails (delta excluded), no beta
+  //  - block 1: alpha alone → first branch passes
+  //  - block 2: beta alone → second branch passes
+  //  - block 3: only delta → both branches fail
+  writeManifest(manifestPath, {
+    docKey,
+    itemKey: "ITEMY000",
+    title: "OR NOT",
+    authors: ["A"],
+    filePath: "/tmp/ornot.pdf",
+    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+    blocks: [
+      {
+        blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"],
+        text: "alpha and delta show up together here without the third word.",
+        charStart: 0, charEnd: 60, lineStart: 1, lineEnd: 1, isReferenceLike: false,
+      },
+      {
+        blockIndex: 1, blockType: "paragraph", sectionPath: ["Body"],
+        text: "alpha appears alone in this paragraph as the sole keyword.",
+        charStart: 62, charEnd: 120, lineStart: 3, lineEnd: 3, isReferenceLike: false,
+      },
+      {
+        blockIndex: 2, blockType: "paragraph", sectionPath: ["Body"],
+        text: "beta is the only relevant token in this entire paragraph here.",
+        charStart: 122, charEnd: 184, lineStart: 5, lineEnd: 5, isReferenceLike: false,
+      },
+      {
+        blockIndex: 3, blockType: "paragraph", sectionPath: ["Body"],
+        text: "delta exists here in isolation with no other related keywords.",
+        charStart: 186, charEnd: 248, lineStart: 7, lineEnd: 7, isReferenceLike: false,
+      },
+    ],
+  });
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [{
+      docKey, itemKey: "ITEMY000", title: "OR NOT", authors: ["A"],
+      filePath: "/tmp/ornot.pdf", fileExt: "pdf", exists: true, supported: true,
+      extractStatus: "ready", size: 1, mtimeMs: 1, sourceHash: "hash-ornot",
+      lastIndexedAt: new Date().toISOString(),
+      normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+      manifestPath,
+    }],
+  });
+
+  const result = await searchWithinDocuments(
+    'alpha NOT delta OR beta',
+    { key: "ITEMY000" },
+    10,
+    { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir },
+  );
+  const blockIndices = new Set(result.results.map((r) => r.blockStart));
+  assert.equal(blockIndices.has(1), true, "alpha-only block satisfies first branch");
+  assert.equal(blockIndices.has(2), true, "beta-only block satisfies second branch");
+  assert.equal(blockIndices.has(0), false, "alpha+delta block must be excluded by NOT");
+  assert.equal(blockIndices.has(3), false, "delta-only block satisfies neither branch");
+});
+
 test("getDocumentBlocks merges multi-attachment itemKey and expandDocument uses item-global blocks", () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-blocks-"));
   const dataDir = join(root, "data");

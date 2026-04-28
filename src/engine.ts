@@ -490,7 +490,7 @@ function scoreKeywordText(text: string, query: KeywordQueryProfile): number {
   );
 }
 
-interface SearchInConstraints {
+interface SearchInBranch {
   requiredStems: Set<string>;
   excludedStems: Set<string>;
   /** Multi-token quoted phrases stored as normalized substring checks. */
@@ -498,32 +498,68 @@ interface SearchInConstraints {
   excludedPhrases: string[];
   requiredCjk: string[];
   excludedCjk: string[];
-  hasOr: boolean;
+}
+
+interface SearchInConstraints {
+  /**
+   * One entry per top-level OR alternative. A null entry means the branch
+   * still contained nested OR (e.g. inside parens) and could not be analyzed,
+   * so any block matching the FTS gate satisfies it.
+   */
+  branches: Array<SearchInBranch | null>;
 }
 
 /**
- * Best-effort analysis of an FTS5 query for the search-in block-level gate.
- * The FTS layer already validated that the doc satisfies the query; this only
- * decides whether a given block must contain all positive terms/phrases
- * (default AND, NEAR, NOT) or whether any positive term is enough (top-level
- * OR). Mixed queries containing OR fall back to OR-mode — imperfect, but
- * conservative: it never turns a true match into a miss.
- *
- * Quoted multi-word phrases are kept as composite units, not decomposed into
- * stems — otherwise `alpha NOT "beta gamma"` would wrongly exclude any block
- * mentioning beta in isolation, and `"alpha beta"` would wrongly accept blocks
- * that contain those words far apart.
+ * Split a query on top-level OR boundaries, ignoring OR tokens that appear
+ * inside parentheses or quoted phrases. Returns the original query as a
+ * single-element array when no top-level OR is present.
  */
-function analyzeSearchInConstraints(query: string): SearchInConstraints {
-  const simplified = toSimplified(query);
+function splitTopLevelOr(query: string): string[] {
+  const { masked, phrases } = maskQuotedPhrases(query);
+  const positions: number[] = [];
+  let depth = 0;
+  for (let i = 0; i < masked.length; i += 1) {
+    const ch = masked[i]!;
+    if (ch === "(") { depth += 1; continue; }
+    if (ch === ")") { if (depth > 0) depth -= 1; continue; }
+    if (depth !== 0) continue;
+    if ((ch === "O" || ch === "o")
+        && i + 1 < masked.length
+        && (masked[i + 1] === "R" || masked[i + 1] === "r")) {
+      const prevCh = i > 0 ? masked[i - 1]! : " ";
+      const nextCh = i + 2 < masked.length ? masked[i + 2]! : " ";
+      if (!/[A-Za-z0-9_]/u.test(prevCh) && !/[A-Za-z0-9_]/u.test(nextCh)) {
+        positions.push(i);
+      }
+    }
+  }
+  if (positions.length === 0) return [query];
+  const branches: string[] = [];
+  let prev = 0;
+  for (const pos of positions) {
+    branches.push(unmaskQuotedPhrases(masked.slice(prev, pos), phrases).trim());
+    prev = pos + 2;
+  }
+  branches.push(unmaskQuotedPhrases(masked.slice(prev), phrases).trim());
+  return branches.filter((s) => s.length > 0);
+}
 
-  // OR detection on masked view (quotes hide internal OR).
+/**
+ * Analyze a single OR branch (a sub-query with no top-level OR) into the
+ * required/excluded stem and phrase sets used by the per-block gate. Returns
+ * null when the branch still contains OR (e.g. nested inside parens), in
+ * which case the caller treats the branch as "any block matches".
+ *
+ * Quoted multi-word phrases are kept as composite units rather than decomposed
+ * into stems — otherwise `alpha NOT "beta gamma"` would wrongly exclude any
+ * block mentioning beta in isolation, and `"alpha beta"` would wrongly accept
+ * blocks containing those words far apart.
+ */
+function analyzeSearchInBranch(branchQuery: string): SearchInBranch | null {
+  const simplified = toSimplified(branchQuery);
   const { masked } = maskQuotedPhrases(simplified);
-  const hasOr = /\bOR\b/u.test(masked);
+  if (/\bOR\b/u.test(masked)) return null;
 
-  // Strip NEAR(...) and NEAR/N infix operators on the original (quote-aware)
-  // query, then walk units left-to-right. A unit is either a quoted phrase or
-  // a bare word. NOT applies to the next unit (whole phrase or word).
   const stripped = simplified
     .replace(/\bNEAR\s*\(\s*([^()]+?)\s*(?:,\s*\d+\s*)?\)/gi, " $1 ")
     .replace(/\bNEAR(?:\/\d+)?\b/gi, " ")
@@ -559,8 +595,7 @@ function analyzeSearchInConstraints(query: string): SearchInConstraints {
       if (tokens.length === 1) {
         addToken(tokens[0]!, pendingNegative);
       } else {
-        const normalized = tokens.join(" ");
-        (pendingNegative ? excludedPhrases : requiredPhrases).push(normalized);
+        (pendingNegative ? excludedPhrases : requiredPhrases).push(tokens.join(" "));
       }
       pendingNegative = false;
       continue;
@@ -568,58 +603,63 @@ function analyzeSearchInConstraints(query: string): SearchInConstraints {
     if (word) {
       const upper = word.toUpperCase();
       if (upper === "NOT") { pendingNegative = true; continue; }
-      if (upper === "AND" || upper === "OR") { pendingNegative = false; continue; }
+      if (upper === "AND") { pendingNegative = false; continue; }
       addToken(word.toLowerCase(), pendingNegative);
       pendingNegative = false;
     }
   }
 
-  return {
-    requiredStems, excludedStems,
-    requiredPhrases, excludedPhrases,
-    requiredCjk, excludedCjk,
-    hasOr,
-  };
+  return { requiredStems, excludedStems, requiredPhrases, excludedPhrases, requiredCjk, excludedCjk };
 }
 
-function blockSatisfiesConstraints(
-  blockText: string,
-  constraints: SearchInConstraints,
-): boolean {
-  if (constraints.hasOr) return true;
+function analyzeSearchInConstraints(query: string): SearchInConstraints {
+  const branchQueries = splitTopLevelOr(query);
+  return { branches: branchQueries.map(analyzeSearchInBranch) };
+}
+
+function branchSatisfied(blockText: string, branch: SearchInBranch | null): boolean {
+  if (branch === null) return true;
 
   const stems = new Set<string>();
   for (const tok of tokenizeKeywordText(blockText)) {
     stems.add(stemKeywordToken(tok));
   }
-  for (const req of constraints.requiredStems) {
+  for (const req of branch.requiredStems) {
     if (!stems.has(req)) return false;
   }
-  for (const exc of constraints.excludedStems) {
+  for (const exc of branch.excludedStems) {
     if (stems.has(exc)) return false;
   }
 
   const needsNormalized =
-    constraints.requiredPhrases.length > 0
-    || constraints.excludedPhrases.length > 0
-    || constraints.requiredCjk.length > 0
-    || constraints.excludedCjk.length > 0;
+    branch.requiredPhrases.length > 0
+    || branch.excludedPhrases.length > 0
+    || branch.requiredCjk.length > 0
+    || branch.excludedCjk.length > 0;
   if (needsNormalized) {
     const normalized = normalizeExactText(blockText);
-    for (const req of constraints.requiredPhrases) {
+    for (const req of branch.requiredPhrases) {
       if (!normalized.includes(req)) return false;
     }
-    for (const exc of constraints.excludedPhrases) {
+    for (const exc of branch.excludedPhrases) {
       if (normalized.includes(exc)) return false;
     }
-    for (const req of constraints.requiredCjk) {
+    for (const req of branch.requiredCjk) {
       if (!normalized.includes(req)) return false;
     }
-    for (const exc of constraints.excludedCjk) {
+    for (const exc of branch.excludedCjk) {
       if (normalized.includes(exc)) return false;
     }
   }
   return true;
+}
+
+function blockSatisfiesConstraints(blockText: string, constraints: SearchInConstraints): boolean {
+  if (constraints.branches.length === 0) return true;
+  for (const branch of constraints.branches) {
+    if (branchSatisfied(blockText, branch)) return true;
+  }
+  return false;
 }
 
 function findBestBlockByTerms(
