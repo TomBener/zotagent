@@ -493,6 +493,9 @@ function scoreKeywordText(text: string, query: KeywordQueryProfile): number {
 interface SearchInConstraints {
   requiredStems: Set<string>;
   excludedStems: Set<string>;
+  /** Multi-token quoted phrases stored as normalized substring checks. */
+  requiredPhrases: string[];
+  excludedPhrases: string[];
   requiredCjk: string[];
   excludedCjk: string[];
   hasOr: boolean;
@@ -501,10 +504,15 @@ interface SearchInConstraints {
 /**
  * Best-effort analysis of an FTS5 query for the search-in block-level gate.
  * The FTS layer already validated that the doc satisfies the query; this only
- * decides whether a given block must contain all positive terms (default AND,
- * NEAR, NOT) or whether any positive term is enough (top-level OR). Mixed
- * queries containing OR fall back to OR-mode — imperfect, but conservative:
- * it never turns a true match into a miss, just lets a few extras through.
+ * decides whether a given block must contain all positive terms/phrases
+ * (default AND, NEAR, NOT) or whether any positive term is enough (top-level
+ * OR). Mixed queries containing OR fall back to OR-mode — imperfect, but
+ * conservative: it never turns a true match into a miss.
+ *
+ * Quoted multi-word phrases are kept as composite units, not decomposed into
+ * stems — otherwise `alpha NOT "beta gamma"` would wrongly exclude any block
+ * mentioning beta in isolation, and `"alpha beta"` would wrongly accept blocks
+ * that contain those words far apart.
  */
 function analyzeSearchInConstraints(query: string): SearchInConstraints {
   const simplified = toSimplified(query);
@@ -513,17 +521,29 @@ function analyzeSearchInConstraints(query: string): SearchInConstraints {
   const { masked } = maskQuotedPhrases(simplified);
   const hasOr = /\bOR\b/u.test(masked);
 
-  // Strip NEAR(...) and NEAR/N infix operators on the original (unquoted-aware)
-  // query, then walk units left-to-right. A unit is either a quoted phrase or a
-  // bare word. NOT applies to the next unit; words inside a NOT-phrase are all
-  // treated as excluded.
+  // Strip NEAR(...) and NEAR/N infix operators on the original (quote-aware)
+  // query, then walk units left-to-right. A unit is either a quoted phrase or
+  // a bare word. NOT applies to the next unit (whole phrase or word).
   const stripped = simplified
     .replace(/\bNEAR\s*\(\s*([^()]+?)\s*(?:,\s*\d+\s*)?\)/gi, " $1 ")
     .replace(/\bNEAR(?:\/\d+)?\b/gi, " ")
     .replace(/[()]/g, " ");
 
-  const positives: string[] = [];
-  const negatives: string[] = [];
+  const requiredStems = new Set<string>();
+  const excludedStems = new Set<string>();
+  const requiredPhrases: string[] = [];
+  const excludedPhrases: string[] = [];
+  const requiredCjk: string[] = [];
+  const excludedCjk: string[] = [];
+
+  const addToken = (token: string, negative: boolean): void => {
+    if (CJK_CHAR_RE.test(token)) {
+      (negative ? excludedCjk : requiredCjk).push(token);
+    } else {
+      (negative ? excludedStems : requiredStems).add(stemKeywordToken(token));
+    }
+  };
+
   let pendingNegative = false;
   const unitRe = /"([^"]*)"|([\p{L}\p{N}]+)/giu;
   let m: RegExpExecArray | null;
@@ -532,7 +552,16 @@ function analyzeSearchInConstraints(query: string): SearchInConstraints {
     const word = m[2];
     if (phrase !== undefined) {
       const tokens = phrase.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
-      for (const t of tokens) (pendingNegative ? negatives : positives).push(t);
+      if (tokens.length === 0) {
+        pendingNegative = false;
+        continue;
+      }
+      if (tokens.length === 1) {
+        addToken(tokens[0]!, pendingNegative);
+      } else {
+        const normalized = tokens.join(" ");
+        (pendingNegative ? excludedPhrases : requiredPhrases).push(normalized);
+      }
       pendingNegative = false;
       continue;
     }
@@ -540,25 +569,17 @@ function analyzeSearchInConstraints(query: string): SearchInConstraints {
       const upper = word.toUpperCase();
       if (upper === "NOT") { pendingNegative = true; continue; }
       if (upper === "AND" || upper === "OR") { pendingNegative = false; continue; }
-      (pendingNegative ? negatives : positives).push(word.toLowerCase());
+      addToken(word.toLowerCase(), pendingNegative);
       pendingNegative = false;
     }
   }
 
-  const requiredStems = new Set<string>();
-  const requiredCjk: string[] = [];
-  for (const t of positives) {
-    if (CJK_CHAR_RE.test(t)) requiredCjk.push(t);
-    else requiredStems.add(stemKeywordToken(t));
-  }
-  const excludedStems = new Set<string>();
-  const excludedCjk: string[] = [];
-  for (const t of negatives) {
-    if (CJK_CHAR_RE.test(t)) excludedCjk.push(t);
-    else excludedStems.add(stemKeywordToken(t));
-  }
-
-  return { requiredStems, excludedStems, requiredCjk, excludedCjk, hasOr };
+  return {
+    requiredStems, excludedStems,
+    requiredPhrases, excludedPhrases,
+    requiredCjk, excludedCjk,
+    hasOr,
+  };
 }
 
 function blockSatisfiesConstraints(
@@ -577,8 +598,20 @@ function blockSatisfiesConstraints(
   for (const exc of constraints.excludedStems) {
     if (stems.has(exc)) return false;
   }
-  if (constraints.requiredCjk.length > 0 || constraints.excludedCjk.length > 0) {
+
+  const needsNormalized =
+    constraints.requiredPhrases.length > 0
+    || constraints.excludedPhrases.length > 0
+    || constraints.requiredCjk.length > 0
+    || constraints.excludedCjk.length > 0;
+  if (needsNormalized) {
     const normalized = normalizeExactText(blockText);
+    for (const req of constraints.requiredPhrases) {
+      if (!normalized.includes(req)) return false;
+    }
+    for (const exc of constraints.excludedPhrases) {
+      if (normalized.includes(exc)) return false;
+    }
     for (const req of constraints.requiredCjk) {
       if (!normalized.includes(req)) return false;
     }
@@ -863,7 +896,9 @@ export async function searchWithinDocuments(
       const manifest = readManifestCached(entry, manifestCache);
       const offset = offsetByDocKey.get(entry.docKey) ?? 0;
 
-      const candidates = new Map<number, { range: { blockStart: number; blockEnd: number }; score: number }>();
+      type Candidate = { range: { blockStart: number; blockEnd: number }; score: number };
+      const candidates = new Map<number, Candidate>();
+      let crossBlockFallback: Candidate | null = null;
 
       const exactRange = keywordQuery.normalizedQuery
         ? findExactPhraseBlockRange(manifest, keywordQuery.normalizedQuery)
@@ -879,15 +914,34 @@ export async function searchWithinDocuments(
         const blockHaystack = `${block.sectionPath.join(" ")} ${block.text}`;
         const baseScore = scoreKeywordText(blockHaystack, keywordQuery);
         if (baseScore <= 0) continue;
-        if (!blockSatisfiesConstraints(blockHaystack, constraints)) continue;
         const adjusted = baseScore + (block.blockType === "heading" ? 0.5 : 0);
-        const existing = candidates.get(block.blockIndex);
-        if (!existing || adjusted > existing.score) {
-          candidates.set(block.blockIndex, {
+        if (blockSatisfiesConstraints(blockHaystack, constraints)) {
+          // Boost so strict matches always outrank the cross-block fallback.
+          const boosted = adjusted + 50;
+          const existing = candidates.get(block.blockIndex);
+          if (!existing || boosted > existing.score) {
+            candidates.set(block.blockIndex, {
+              range: { blockStart: block.blockIndex, blockEnd: block.blockIndex },
+              score: boosted,
+            });
+          }
+        } else if (!crossBlockFallback || adjusted > crossBlockFallback.score) {
+          crossBlockFallback = {
             range: { blockStart: block.blockIndex, blockEnd: block.blockIndex },
             score: adjusted,
-          });
+          };
         }
+      }
+
+      // FTS already accepted this doc, so always surface something. If no block
+      // satisfied the strict constraint and no exact-phrase candidate fired
+      // (e.g. NEAR/N matched across block boundaries), fall back to the best
+      // partial-match block at half score so it ranks below true matches.
+      if (candidates.size === 0 && crossBlockFallback) {
+        candidates.set(crossBlockFallback.range.blockStart, {
+          range: crossBlockFallback.range,
+          score: crossBlockFallback.score * 0.5,
+        });
       }
 
       for (const candidate of candidates.values()) {

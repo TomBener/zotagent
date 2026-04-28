@@ -1479,6 +1479,179 @@ test("searchWithinDocuments NOT does not gate on attachment title", async () => 
   assert.equal(result.results[0]!.blockStart, 0);
 });
 
+test("searchWithinDocuments NOT phrase keeps blocks that contain only one of the phrase tokens", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-search-in-not-phrase-"));
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docKey = "p".repeat(40);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
+
+  // Single-block body so the FTS-level NOT doesn't reject the whole doc on
+  // unrelated grounds. The block itself contains alpha and beta but never the
+  // adjacent phrase "beta gamma" — the constraint analyzer must treat the
+  // negative phrase as a unit (substring check), not as decomposed stems.
+  writeManifest(manifestPath, {
+    docKey,
+    itemKey: "ITEMP000",
+    title: "NOT phrase",
+    authors: ["A"],
+    filePath: "/tmp/notphrase.pdf",
+    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+    blocks: [
+      {
+        blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"],
+        text: "alpha and beta are mentioned together without the third word.",
+        charStart: 0, charEnd: 60, lineStart: 1, lineEnd: 1, isReferenceLike: false,
+      },
+    ],
+  });
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [{
+      docKey, itemKey: "ITEMP000", title: "NOT phrase", authors: ["A"],
+      filePath: "/tmp/notphrase.pdf", fileExt: "pdf", exists: true, supported: true,
+      extractStatus: "ready", size: 1, mtimeMs: 1, sourceHash: "hash-notphrase",
+      lastIndexedAt: new Date().toISOString(),
+      normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+      manifestPath,
+    }],
+  });
+
+  const result = await searchWithinDocuments(
+    'alpha NOT "beta gamma"',
+    { key: "ITEMP000" },
+    10,
+    { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir },
+  );
+  // Block 0 must survive (no "beta gamma" phrase). Block 1 must be excluded.
+  assert.equal(result.results.length, 1);
+  assert.equal(result.results[0]!.blockStart, 0);
+});
+
+test("searchWithinDocuments positive phrase requires the literal phrase, not its tokens scattered", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-search-in-pos-phrase-"));
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docKey = "r".repeat(40);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
+
+  writeManifest(manifestPath, {
+    docKey,
+    itemKey: "ITEMR000",
+    title: "Positive phrase",
+    authors: ["A"],
+    filePath: "/tmp/posphrase.pdf",
+    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+    blocks: [
+      {
+        // Contains alpha and beta separated by other words — must NOT match
+        // `"alpha beta"`.
+        blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"],
+        text: "alpha foo bar baz quux beta scattered across the sentence.",
+        charStart: 0, charEnd: 58, lineStart: 1, lineEnd: 1, isReferenceLike: false,
+      },
+      {
+        // Contains the exact substring "alpha beta" — must match.
+        blockIndex: 1, blockType: "paragraph", sectionPath: ["Body"],
+        text: "Here the literal phrase alpha beta appears together.",
+        charStart: 60, charEnd: 110, lineStart: 3, lineEnd: 3, isReferenceLike: false,
+      },
+    ],
+  });
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [{
+      docKey, itemKey: "ITEMR000", title: "Positive phrase", authors: ["A"],
+      filePath: "/tmp/posphrase.pdf", fileExt: "pdf", exists: true, supported: true,
+      extractStatus: "ready", size: 1, mtimeMs: 1, sourceHash: "hash-posphrase",
+      lastIndexedAt: new Date().toISOString(),
+      normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+      manifestPath,
+    }],
+  });
+
+  const result = await searchWithinDocuments(
+    '"alpha beta"',
+    { key: "ITEMR000" },
+    10,
+    { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir },
+  );
+  assert.ok(result.results.length >= 1);
+  assert.equal(result.results[0]!.blockStart, 1);
+});
+
+test("searchWithinDocuments returns a fallback when terms span block boundaries", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-search-in-cross-"));
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docKey = "x".repeat(40);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
+
+  // alpha is in block 0, beta in block 1, neither block has both. The
+  // (real) FTS gate accepts the doc on `alpha NEAR/10 beta`; the per-block
+  // gate strictly rejects each individual block. We must still surface
+  // something — the fallback candidate.
+  writeManifest(manifestPath, {
+    docKey,
+    itemKey: "ITEMX000",
+    title: "Cross-block",
+    authors: ["A"],
+    filePath: "/tmp/cross.pdf",
+    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+    blocks: [
+      {
+        blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"],
+        text: "Discussion of alpha as a topic in this paragraph only.",
+        charStart: 0, charEnd: 54, lineStart: 1, lineEnd: 1, isReferenceLike: false,
+      },
+      {
+        blockIndex: 1, blockType: "paragraph", sectionPath: ["Body"],
+        text: "Now beta becomes the focus in a new paragraph.",
+        charStart: 56, charEnd: 102, lineStart: 3, lineEnd: 3, isReferenceLike: false,
+      },
+    ],
+  });
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [{
+      docKey, itemKey: "ITEMX000", title: "Cross-block", authors: ["A"],
+      filePath: "/tmp/cross.pdf", fileExt: "pdf", exists: true, supported: true,
+      extractStatus: "ready", size: 1, mtimeMs: 1, sourceHash: "hash-cross",
+      lastIndexedAt: new Date().toISOString(),
+      normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+      manifestPath,
+    }],
+  });
+
+  const result = await searchWithinDocuments(
+    'alpha NEAR/10 beta',
+    { key: "ITEMX000" },
+    10,
+    { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir },
+  );
+  // FTS matched the doc, no block satisfied strict constraints — fallback
+  // must surface at least one block instead of returning empty.
+  assert.ok(result.results.length >= 1, "fallback should surface a candidate when terms span blocks");
+});
+
 test("getDocumentBlocks merges multi-attachment itemKey and expandDocument uses item-global blocks", () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-blocks-"));
   const dataDir = join(root, "data");
