@@ -46,18 +46,19 @@ Chinese trad/simp folding: keyword `search`, `search-in`, and `metadata` match a
 
 ## Citing passages
 
-When you quote or paraphrase material from `search` / `search-in` / `expand` / `blocks` / `fulltext`, cite in **Pandoc source form** using the returned `itemKey` and the block index as locator:
+Paraphrase by default and cite in **Pandoc source form** using the returned `itemKey` with `pageStart` / `pageEnd` as the locator. Reach for a verbatim quote only when the exact wording matters (a distinctive phrase, primary-source quotation, or a definition) — quoting indiscriminately turns the document into a transcript.
 
-- With locator: `[@itemKey, block N]` — single block or a range like `block 3-7`
-- Narrative reference without locator: `@itemKey`
+- Paraphrase + locator: `[@itemKey, p. 23]`
+- Page range: `[@itemKey, pp. 23–25]`
+- No page available: `[@itemKey]` (EPUB and some scans never set page numbers)
+- Verbatim phrase when wording is load-bearing: `... a "non-trivial role" [@itemKey, p. 137]`
+- Narrative reference: `@itemKey says ...`
 
-`N` is `blockStart` (or `blockIndex` in `expand` / `blocks`).
+Page numbers come from PDF extraction and may drift by 1–2 pages on scanned books with unnumbered front matter. If the cited page doesn't contain the quoted concept, scan adjacent pages.
 
-Examples (given `itemKey: "KG326EEI"`, `blockStart: 3`, `blockEnd: 7`):
-- `[@KG326EEI, block 3]`
-- `[@KG326EEI, block 3-7]`
+Do not cite `charOffset` or block indices in user-facing prose. `charOffset` is what you pass to `expand` to fetch more context; block indices appear in `blocks` output but no PDF/EPUB reader navigates by them.
 
-Do not cite `pageStart` / `pageEnd`. They appear in `expand` / `blocks` output but are unreliable (PDF extraction drift; EPUB has none) — use the block index.
+Don't invent quotes. If the returned `passage` looks truncated (`…` markers) or garbled (OCR noise, mid-word cuts), call `expand` to fetch a clean slice before quoting.
 
 ## Typical workflows
 
@@ -72,10 +73,11 @@ zotagent search "informal political networks in contemporary China" --semantic -
 # Robinson 2012" and bibliography "Acemoglu, Daron. 2012".
 zotagent search-in 'Acemoglu' --key CMJ3N8TL
 
-# Expand around a returned hit, or read the full document / page through blocks
-zotagent expand --key KG326EEI --block-start 134 --radius 2
+# Expand around a returned hit. `--offset` is the `charOffset` from a search
+# result; `--radius` is the half-window in characters (default 1000). Increase
+# the radius when the search passage looks truncated or you need more context.
+zotagent expand --key KG326EEI --offset 18432 --radius 1500
 zotagent fulltext --key KG326EEI --clean
-zotagent blocks --key KG326EEI --offset-block 120 --limit-blocks 30
 ```
 
 ### Look up a paper's metadata
@@ -98,8 +100,8 @@ zotagent metadata "dangwei shuji" --has-file
 zotagent metadata "aging in China" --abstract
 
 # Use a returned key with retrieval commands
-zotagent blocks --key KG326EEI --limit-blocks 40
 zotagent fulltext --key KG326EEI --clean
+zotagent blocks --key KG326EEI --limit-blocks 40    # paginated structured view; rarely needed
 ```
 
 ### Add a paper to Zotero
@@ -157,12 +159,13 @@ zotagent recent --limit 20 --sort modified
 
 ## Output-shape gotchas
 
-- **`passage` is a ~500-token snippet** — the trailing `…` means truncation. Before quoting or treating it as evidence, call `expand --key <k> --block-start <blockStart> --block-end <blockEnd>` to get the full block text. Use `--radius 0` for just the hit; default is 2.
+- **`passage` is a ~500-character window centered on the hit**, capped at ~500 tokens. Trailing `…` means it touches the document boundary or hit the token cap; in either case, call `expand --key <k> --offset <charOffset>` (with a bigger `--radius`) to fetch a longer slice.
+- **`charOffset` is item-global, not per-attachment.** When an item has multiple indexed PDFs, offsets run monotonically across them with `# Attachment: <name>` dividers in the merged markdown. Feed `charOffset` from any search result straight into `expand`.
+- **`pageStart` / `pageEnd` may be absent** (EPUB, some old scans, multi-attachment items where the hit lives near a separator). Fall back to `[@itemKey]` without a locator in that case.
 - **`metadata` omits `abstract` by default** to keep bulk responses compact. Pass `--abstract` when you need it.
 - **`--key` accepts `itemKey` or `citationKey`**, with or without a leading `@` (so Pandoc `@citekey` pastes straight in). Output always identifies items by `itemKey` only — `citationKey` is accepted as input but never emitted, so chain subsequent calls on `itemKey`.
-- **Block indices are item-global.** When an item has multiple indexed attachments, indices run monotonically across them with `# Attachment: <name>` dividers. Pass `blockStart` from `search` straight into `blocks` / `expand`.
 - **`search-in` on a chapter key may miss.** `SEARCH_IN_FAILED: No indexed attachment found` usually means the chapter's PDF is indexed only inside its parent volume. Look the parent up with `metadata`, then `search-in` against the parent's key and locate the chapter by its heading. Common for edited collections and proceedings.
-- **`search-in` returns block-level matches; `search` returns one passage per item.** A `search-in` row is a single block satisfying the query (operators always evaluate per block); a single quoted phrase that wraps across paragraphs — e.g. a citation breaking mid-line — may surface as a contiguous block range with `blockEnd > blockStart`. A `search` result means *this document* matches and here is one representative passage. When the user asks "does this paper say X" or "where in this paper does Y appear", reach for `search-in`.
+- **`search-in` returns block-level matches; `search` returns one passage per item.** A `search-in` row is a single block satisfying the query (operators always evaluate per block); a single quoted phrase that wraps across paragraphs — e.g. a citation breaking mid-line — naturally appears in the windowed passage of one row. A `search` result means *this document* matches and here is one representative passage. When the user asks "does this paper say X" or "where in this paper does Y appear", reach for `search-in`.
 - **`search-in --limit` truncates the result list, not the FTS search itself.** Default 10 is usually enough — you're already scoped to one document. Re-running with a bigger limit can never reveal hits the first call missed; change the query, not the limit.
 
 ## Index freshness

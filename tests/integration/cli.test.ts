@@ -304,7 +304,7 @@ test("help summarizes current commands and keeps config-only overrides out of th
   );
   assert.match(
     result.stdout,
-    /expand --key <key> --block-start <n> \[--block-end <n>\] \[--radius <n>\]/,
+    /expand --key <key> --offset <n> \[--radius <n>\]/,
   );
 
   // Per-command flag descriptions live near their command, not in a global Options block.
@@ -539,17 +539,20 @@ test("blocks requires --key and rejects invalid numeric values", () => {
   assert.match(invalidOffset.stdout, /`--offset-block` must be a non-negative integer\./);
 });
 
-test("expand requires --key and rejects invalid numeric values", () => {
-  const missing = runCli(["expand", "--block-start", "1"]);
+test("expand requires --key and --offset", () => {
+  const missing = runCli(["expand", "--offset", "10"]);
   assert.equal(missing.status, 1);
   assert.match(missing.stdout, /"code": "MISSING_ARGUMENT"/);
-  assert.match(missing.stdout, /Provide --key <key> and --block-start <n> for expand\./);
+  assert.match(missing.stdout, /Provide --key <key> and --offset <n> for expand\./);
 
-  const invalidRange = runCli(["expand", "--key", "ITEM1000", "--block-start", "2", "--block-end", "1"]);
+  const missingOffset = runCli(["expand", "--key", "ITEM1000"]);
+  assert.equal(missingOffset.status, 1);
+  assert.match(missingOffset.stdout, /"code": "MISSING_ARGUMENT"/);
 
-  assert.equal(invalidRange.status, 1);
-  assert.match(invalidRange.stdout, /"code": "INVALID_ARGUMENT"/);
-  assert.match(invalidRange.stdout, /`--block-end` must be greater than or equal to `--block-start`\./);
+  const invalidOffset = runCli(["expand", "--key", "ITEM1000", "--offset", "-1"]);
+  assert.equal(invalidOffset.status, 1);
+  assert.match(invalidOffset.stdout, /"code": "INVALID_ARGUMENT"/);
+  assert.match(invalidOffset.stdout, /`--offset` must be a non-negative integer\./);
 });
 
 test("fulltext requires --key", () => {
@@ -788,8 +791,7 @@ test("search-in returns passages within a selected document", async () => {
       results: Array<{
         itemKey: string;
         passage: string;
-        blockStart: number;
-        blockEnd: number;
+        charOffset: number;
       }>;
     };
     meta?: { elapsedMs?: number };
@@ -799,8 +801,7 @@ test("search-in returns passages within a selected document", async () => {
   assert.equal(parsed.data.results[0]!.itemKey, "ITEM9000");
   assert.equal("file" in parsed.data.results[0]!, false);
   assert.match(parsed.data.results[0]!.passage, /dangwei shuji/i);
-  assert.equal(parsed.data.results[0]!.blockStart, 0);
-  assert.equal(parsed.data.results[0]!.blockEnd, 0);
+  assert.equal(typeof parsed.data.results[0]!.charOffset, "number");
   assert.equal(typeof parsed.meta?.elapsedMs, "number");
 });
 
@@ -826,7 +827,7 @@ test("search-in searches across all attachments when one key maps to multiple PD
   const parsed = JSON.parse(result.stdout) as {
     ok: boolean;
     data: {
-      results: Array<{ passage: string; blockStart: number; blockEnd: number }>;
+      results: Array<{ passage: string; charOffset: number }>;
     };
   };
   assert.equal(parsed.ok, true);
@@ -837,22 +838,25 @@ test("search-in searches across all attachments when one key maps to multiple PD
   assert.match(parsed.data.results[0]!.passage, /Unique paragraph 1\./);
   assert.match(parsed.data.results[1]!.passage, /Unique paragraph 2\./);
   assert.ok(
-    parsed.data.results[1]!.blockStart > parsed.data.results[0]!.blockStart,
-    "second attachment's block index should be offset past the separator",
+    parsed.data.results[1]!.charOffset > parsed.data.results[0]!.charOffset,
+    "second attachment's char offset should be past the merged separator",
   );
 });
 
 test("expand resolves a unique attachment by itemKey", async () => {
   const fixture = await createIndexedFixture();
 
+  // Block 1 spans charStart=65..charEnd=106 in the rendered markdown.
+  // Center the slice on its midpoint (≈86) with radius enough to capture
+  // the block plus a little surrounding context.
   const result = runCli([
     "expand",
     "--key",
     "ITEM9000",
-    "--block-start",
-    "1",
+    "--offset",
+    "86",
     "--radius",
-    "1",
+    "50",
     "--bibliography",
     fixture.bibliographyPath,
     "--attachments-root",
@@ -867,17 +871,16 @@ test("expand resolves a unique attachment by itemKey", async () => {
     data: {
       itemKey: string;
       files: string[];
-      contextStart: number;
-      contextEnd: number;
       passage: string;
+      passageStart: number;
+      passageEnd: number;
     };
   };
   assert.equal(parsed.ok, true);
   assert.equal(parsed.data.itemKey, "ITEM9000");
   assert.deepEqual(parsed.data.files, [fixture.filePath]);
-  assert.equal(parsed.data.contextStart, 0);
-  assert.equal(parsed.data.contextEnd, 2);
   assert.match(parsed.data.passage, /Party organization shapes firm governance\./);
+  assert.ok(parsed.data.passageStart < parsed.data.passageEnd);
 });
 
 test("blocks output identifies the item by itemKey only", async () => {

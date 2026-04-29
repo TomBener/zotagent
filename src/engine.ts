@@ -175,25 +175,56 @@ function truncateSearchPassage(text: string): string {
   return enc.decode(tokens.slice(0, SEARCH_PASSAGE_MAX_TOKENS)) + "…";
 }
 
+// Half-window for the search-result passage, in characters of the rendered
+// markdown. Combined with truncateSearchPassage's token cap, this gives the
+// agent a continuous slice centered on the hit that fits within ~500 tokens
+// for English and ~250 chars worth of content for CJK.
+const PASSAGE_CHAR_RADIUS = 250;
+
 function buildSearchRow(
   entry: CatalogEntry,
-  manifest: AttachmentManifest,
-  range: { blockStart: number; blockEnd: number },
-  globalOffset: number,
+  itemGroup: CatalogEntry[],
+  manifestCache: Map<string, AttachmentManifest>,
+  markdownCache: Map<string, string>,
+  hitRange: { blockStart: number; blockEnd: number },
   score: number,
 ): SearchResultRow {
-  const blocks = manifest.blocks.filter(
-    (block) => block.blockIndex >= range.blockStart && block.blockIndex <= range.blockEnd,
-  );
+  // The FTS hit is per-attachment; everything user-facing is item-global. Load
+  // the merged manifest once per item and slice its rendered markdown around
+  // the hit so passages read as continuous prose, not as paragraph fragments
+  // joined with `\n\n`.
+  const merged = loadMergedManifestForGroup(itemGroup, manifestCache);
+  const blockOffset = attachmentGlobalOffset(entry, itemGroup, manifestCache);
+  const mergedStart = hitRange.blockStart + blockOffset;
+  const mergedEnd = hitRange.blockEnd + blockOffset;
+  const startBlock = merged.blocks[mergedStart];
+  const endBlock = merged.blocks[mergedEnd];
+  if (!startBlock || !endBlock) {
+    throw new Error(
+      `Hit block out of range for ${entry.itemKey}: requested ${mergedStart}..${mergedEnd}, manifest has ${merged.blocks.length} blocks`,
+    );
+  }
+  let markdown = markdownCache.get(entry.itemKey);
+  if (markdown === undefined) {
+    markdown = renderManifestMarkdown(merged);
+    markdownCache.set(entry.itemKey, markdown);
+  }
+  const spanCenter = Math.round((startBlock.charStart + endBlock.charEnd) / 2);
+  const passageStart = Math.max(0, spanCenter - PASSAGE_CHAR_RADIUS);
+  const passageEnd = Math.min(markdown.length, spanCenter + PASSAGE_CHAR_RADIUS);
+  let passage = markdown.slice(passageStart, passageEnd);
+  if (passageStart > 0) passage = "…" + passage;
+  if (passageEnd < markdown.length) passage = passage + "…";
 
   return {
     itemKey: entry.itemKey,
     title: entry.title,
     authors: entry.authors,
     ...(entry.year ? { year: entry.year } : {}),
-    passage: truncateSearchPassage(blocks.map((block) => block.text).join("\n\n")),
-    blockStart: range.blockStart + globalOffset,
-    blockEnd: range.blockEnd + globalOffset,
+    passage: truncateSearchPassage(passage),
+    charOffset: spanCenter,
+    ...(startBlock.pageStart !== undefined ? { pageStart: startBlock.pageStart } : {}),
+    ...(endBlock.pageEnd !== undefined ? { pageEnd: endBlock.pageEnd } : {}),
     score: Math.round(score * 10000) / 10000,
   };
 }
@@ -235,28 +266,31 @@ function isMultiTokenExactPhrase(phrase: string): boolean {
 
 function buildKeywordSearchRow(
   entry: CatalogEntry,
-  manifest: AttachmentManifest,
+  itemGroup: CatalogEntry[],
+  manifestCache: Map<string, AttachmentManifest>,
+  markdownCache: Map<string, string>,
   blockIndex: number,
-  globalOffset: number,
   score: number,
-): SearchResultRow | null {
+): SearchResultRow {
   // FTS5 already returned this doc's best matching block; just frame the
   // single-block range. Block-level FTS does not match phrases that wrap a
   // block boundary — that gap is left to `search-in` (which has a manifest-
   // level cross-block scan), since scanning all manifests for every `search`
   // call would be prohibitive on large libraries.
   const range = { blockStart: blockIndex, blockEnd: blockIndex };
-  return buildSearchRow(entry, manifest, range, globalOffset, score);
+  return buildSearchRow(entry, itemGroup, manifestCache, markdownCache, range, score);
 }
 
 function buildHybridSearchRow(
   entry: CatalogEntry,
-  manifest: AttachmentManifest,
+  itemGroup: CatalogEntry[],
+  manifestCache: Map<string, AttachmentManifest>,
+  markdownCache: Map<string, string>,
   result: { bestChunkPos: number; bestChunk: string; score: number },
-  globalOffset: number,
 ): SearchResultRow {
+  const manifest = readManifestCached(entry, manifestCache);
   const range = mapChunkToBlockRange(manifest, result.bestChunkPos, result.bestChunk);
-  return buildSearchRow(entry, manifest, range, globalOffset, result.score);
+  return buildSearchRow(entry, itemGroup, manifestCache, markdownCache, range, result.score);
 }
 
 function docKeyFromSearchResultPath(resultPath: string): string | undefined {
@@ -329,6 +363,7 @@ export async function searchLiterature(
   const entryByDocKey = new Map(readyEntries.map((entry) => [entry.docKey, entry]));
   const itemGroups = groupReadyEntriesByItemKey(readyEntries);
   const manifestCache = new Map<string, AttachmentManifest>();
+  const markdownCache = new Map<string, string>();
 
   let mapped: SearchResultRow[];
 
@@ -350,9 +385,7 @@ export async function searchLiterature(
           const entry = entryByDocKey.get(docKey);
           if (!entry) return null;
           const itemGroup = itemGroups.get(entry.itemKey) ?? [entry];
-          const globalOffset = attachmentGlobalOffset(entry, itemGroup, manifestCache);
-          const manifest = readManifestCached(entry, manifestCache);
-          return buildHybridSearchRow(entry, manifest, result, globalOffset);
+          return buildHybridSearchRow(entry, itemGroup, manifestCache, markdownCache, result);
         })
         .filter((value): value is ReturnType<typeof buildHybridSearchRow> => value !== null)
         .sort((a, b) => b.score - a.score);
@@ -377,9 +410,7 @@ export async function searchLiterature(
           const entry = entryByDocKey.get(result.docKey);
           if (!entry) return null;
           const itemGroup = itemGroups.get(entry.itemKey) ?? [entry];
-          const globalOffset = attachmentGlobalOffset(entry, itemGroup, manifestCache);
-          const manifest = readManifestCached(entry, manifestCache);
-          return buildKeywordSearchRow(entry, manifest, result.blockIndex, globalOffset, result.score);
+          return buildKeywordSearchRow(entry, itemGroup, manifestCache, markdownCache, result.blockIndex, result.score);
         })
         .filter((value): value is SearchResultRow => value !== null)
         .sort((a, b) => b.score - a.score);
@@ -415,6 +446,7 @@ export async function searchWithinDocuments(
   const entries = resolveReadyEntries(input.key, readyEntries);
   const targetDocKeys = entries.map((entry) => entry.docKey);
   const manifestCache = new Map<string, AttachmentManifest>();
+  const markdownCache = new Map<string, string>();
   const mapped: SearchResultRow[] = [];
 
   const ftsOptions = { docKeys: targetDocKeys };
@@ -427,14 +459,6 @@ export async function searchWithinDocuments(
     }
 
     const entryByDocKey = new Map(entries.map((entry) => [entry.docKey, entry]));
-    const offsetByDocKey = new Map<string, number>();
-    let runningOffset = 0;
-    for (let i = 0; i < entries.length; i += 1) {
-      const entry = entries[i]!;
-      offsetByDocKey.set(entry.docKey, runningOffset);
-      const manifest = readManifestCached(entry, manifestCache);
-      runningOffset += manifest.blocks.length + (i < entries.length - 1 ? 1 : 0);
-    }
 
     // FTS5 phrase queries do not cross row boundaries, so a citation that
     // wraps mid-line into the next paragraph would be missed by per-block
@@ -453,9 +477,8 @@ export async function searchWithinDocuments(
           const manifest = readManifestCached(entry, manifestCache);
           const exactRange = findExactPhraseBlockRange(manifest, normalizedPhrase, { tokenBoundaries: true });
           if (exactRange) {
-            const offset = offsetByDocKey.get(entry.docKey) ?? 0;
             mapped.push(buildSearchRow(
-              entry, manifest, exactRange, offset,
+              entry, entries, manifestCache, markdownCache, exactRange,
               100 - (exactRange.blockEnd - exactRange.blockStart),
             ));
           }
@@ -466,26 +489,24 @@ export async function searchWithinDocuments(
     for (const result of blockResults) {
       const entry = entryByDocKey.get(result.docKey);
       if (!entry) continue;
-      const manifest = readManifestCached(entry, manifestCache);
-      const offset = offsetByDocKey.get(entry.docKey) ?? 0;
       const range = { blockStart: result.blockIndex, blockEnd: result.blockIndex };
-      mapped.push(buildSearchRow(entry, manifest, range, offset, result.score));
+      mapped.push(buildSearchRow(entry, entries, manifestCache, markdownCache, range, result.score));
     }
   } finally {
     await keywordIndex.close();
   }
 
-  // Dedupe by (itemKey, blockStart, blockEnd) — exact-phrase scan and per-block
-  // FTS may surface the same block; keep the higher-scored row.
+  // Dedupe by (itemKey, charOffset) — exact-phrase scan and per-block
+  // FTS may surface the same hit anchor; keep the higher-scored row.
   const seen = new Map<string, SearchResultRow>();
   for (const row of mapped) {
-    const key = `${row.itemKey}:${row.blockStart}:${row.blockEnd}`;
+    const key = `${row.itemKey}:${row.charOffset}`;
     const existing = seen.get(key);
     if (!existing || row.score > existing.score) {
       seen.set(key, row);
     }
   }
-  const ordered = [...seen.values()].sort((a, b) => b.score - a.score || a.blockStart - b.blockStart);
+  const ordered = [...seen.values()].sort((a, b) => b.score - a.score || a.charOffset - b.charOffset);
 
   return {
     results: ordered.slice(0, limit),
@@ -657,7 +678,7 @@ export function fullTextDocument(
 }
 
 export function expandDocument(
-  input: { key: string; blockStart: number; blockEnd: number; radius: number },
+  input: { key: string; offset: number; radius: number },
   overrides: ConfigOverrides = {},
 ): {
   itemKey: string;
@@ -665,19 +686,14 @@ export function expandDocument(
   authors: string[];
   year?: string;
   files: string[];
-  contextStart: number;
-  contextEnd: number;
-  blockStart: number;
-  blockEnd: number;
   passage: string;
-  blocks: Array<{
-    blockIndex: number;
-    blockType: string;
-    sectionPath: string[];
-    text: string;
-    pageStart?: number;
-    pageEnd?: number;
-  }>;
+  // Actual char bounds of the returned slice (clamped to the document).
+  passageStart: number;
+  passageEnd: number;
+  // Page numbers from the blocks that overlap the slice, where the
+  // extractor recorded them. Use these for citation locators.
+  pageStart?: number;
+  pageEnd?: number;
   warnings: string[];
 } {
   const config = resolveConfig(overrides);
@@ -685,15 +701,22 @@ export function expandDocument(
   const entries = resolveReadyEntries(input.key, getReadyEntries(catalog));
   const manifestCache = new Map<string, AttachmentManifest>();
   const manifest = loadMergedManifestForGroup(entries, manifestCache);
+  const markdown = renderManifestMarkdown(manifest);
   const primary = entries[0]!;
-  const contextStart = Math.max(0, input.blockStart - input.radius);
-  const contextEnd = Math.min(manifest.blocks.length - 1, input.blockEnd + input.radius);
-  const blocks = manifest.blocks.filter(
-    (block) => block.blockIndex >= contextStart && block.blockIndex <= contextEnd,
+
+  const center = Math.max(0, Math.min(markdown.length, input.offset));
+  const passageStart = Math.max(0, center - input.radius);
+  const passageEnd = Math.min(markdown.length, center + input.radius);
+
+  // Pages: pull from the blocks that overlap the slice. First overlapping
+  // block with a recorded pageStart sets the lower bound; last with pageEnd
+  // sets the upper. EPUB has no pages, and some PDF extractors leave them
+  // unset — the fields stay absent in that case.
+  const overlapping = manifest.blocks.filter(
+    (b) => b.charStart < passageEnd && b.charEnd > passageStart,
   );
-  const passageBlocks = blocks.filter(
-    (block) => block.blockIndex >= input.blockStart && block.blockIndex <= input.blockEnd,
-  );
+  const firstWithPage = overlapping.find((b) => b.pageStart !== undefined);
+  const lastWithPage = [...overlapping].reverse().find((b) => b.pageEnd !== undefined);
 
   return {
     itemKey: primary.itemKey,
@@ -701,19 +724,11 @@ export function expandDocument(
     authors: primary.authors,
     ...(primary.year ? { year: primary.year } : {}),
     files: itemFilePaths(entries),
-    contextStart,
-    contextEnd,
-    blockStart: input.blockStart,
-    blockEnd: input.blockEnd,
-    passage: passageBlocks.map((block) => block.text).join("\n\n"),
-    blocks: blocks.map((block) => ({
-      blockIndex: block.blockIndex,
-      blockType: block.blockType,
-      sectionPath: block.sectionPath,
-      text: block.text,
-      pageStart: block.pageStart,
-      pageEnd: block.pageEnd,
-    })),
+    passage: markdown.slice(passageStart, passageEnd),
+    passageStart,
+    passageEnd,
+    ...(firstWithPage?.pageStart !== undefined ? { pageStart: firstWithPage.pageStart } : {}),
+    ...(lastWithPage?.pageEnd !== undefined ? { pageEnd: lastWithPage.pageEnd } : {}),
     warnings: config.warnings,
   };
 }

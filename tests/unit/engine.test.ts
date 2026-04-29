@@ -256,7 +256,6 @@ test("searchLiterature keyword mode maps stemmed hits to the matching block", as
 
   assert.equal(result.results.length, 1);
   assert.equal(result.results[0]!.itemKey, "ITEMC000");
-  assert.equal(result.results[0]!.blockStart, 1);
   assert.match(result.results[0]!.passage, /governs recruitment/i);
 });
 
@@ -338,7 +337,6 @@ test("searchLiterature keyword mode matches spaced CJK content via NEAR rewritin
 
   assert.equal(result.results.length, 1);
   assert.equal(result.results[0]!.itemKey, "ITEMF000");
-  assert.equal(result.results[0]!.blockStart, 0);
   assert.match(result.results[0]!.passage, /党 委 书 记/u);
 });
 
@@ -517,9 +515,13 @@ test("searchLiterature NEAR/N picks the CJK co-occurrence block, not a distance 
   );
 
   assert.equal(result.results.length, 1);
-  assert.equal(result.results[0]!.blockStart, 1);
   assert.match(result.results[0]!.passage, /人力财力开发新疆/u);
-  assert.doesNotMatch(result.results[0]!.passage, /^\s*50(\s|$)/u);
+  // The hit anchor (charOffset) must land inside block 1 (charStart=13..charEnd=31),
+  // not block 0 ("50 52 54 54", charStart=0..charEnd=11).
+  assert.ok(
+    result.results[0]!.charOffset >= 13 && result.results[0]!.charOffset <= 31,
+    `charOffset ${result.results[0]!.charOffset} must point at the CJK block, not the numeric decoy`,
+  );
 });
 
 test("searchLiterature keeps AND/NEAR inside a quoted literal phrase for passage selection", async () => {
@@ -614,7 +616,6 @@ test("searchLiterature keeps AND/NEAR inside a quoted literal phrase for passage
   );
 
   assert.equal(result.results.length, 1);
-  assert.equal(result.results[0]!.blockStart, 1);
   assert.match(result.results[0]!.passage, /black and white/u);
 });
 
@@ -805,8 +806,6 @@ test("searchWithinDocuments returns passages from the selected attachment", asyn
   assert.equal(result.results.length > 0, true);
   assert.equal(result.results[0]!.itemKey, "ITEMS000");
   assert.match(result.results[0]!.passage, /dangwei shuji/i);
-  assert.equal(result.results[0]!.blockStart, 1);
-  assert.equal(result.results[0]!.blockEnd, 1);
 });
 
 test("searchWithinDocuments searches across multiple attachments for the same key", async () => {
@@ -937,8 +936,8 @@ test("searchWithinDocuments searches across multiple attachments for the same ke
     assert.equal("file" in row, false);
   }
   assert.ok(
-    result.results[1]!.blockStart > result.results[0]!.blockStart,
-    "second attachment's block index should sit past the merged separator",
+    result.results[1]!.charOffset > result.results[0]!.charOffset,
+    "second attachment's char offset should sit past the merged separator",
   );
 });
 
@@ -1073,7 +1072,7 @@ test("searchWithinDocuments AND requires every term in each ranked block", async
   );
   // The all-alpha block must not appear; only the alpha+beta block should.
   assert.equal(result.results.length, 1);
-  assert.equal(result.results[0]!.blockStart, 1);
+  assert.match(result.results[0]!.passage, /alpha and beta appear together/);
 });
 
 test("searchWithinDocuments AND with quoted phrases requires every phrase token in each block", async () => {
@@ -1130,7 +1129,7 @@ test("searchWithinDocuments AND with quoted phrases requires every phrase token 
   // Only the second block has both "property rights" and a credibility-stem
   // word ("credible"). The first block must not appear.
   assert.equal(result.results.length, 1);
-  assert.equal(result.results[0]!.blockStart, 1);
+  assert.match(result.results[0]!.passage, /Credible commitment to property rights/);
 });
 
 test("searchWithinDocuments NOT does not gate on attachment title", async () => {
@@ -1182,7 +1181,7 @@ test("searchWithinDocuments NOT does not gate on attachment title", async () => 
     { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir },
   );
   assert.equal(result.results.length, 1);
-  assert.equal(result.results[0]!.blockStart, 0);
+  assert.match(result.results[0]!.passage, /alpha appears here without/);
 });
 
 test("searchWithinDocuments NOT phrase keeps blocks that contain only one of the phrase tokens", async () => {
@@ -1237,7 +1236,7 @@ test("searchWithinDocuments NOT phrase keeps blocks that contain only one of the
   );
   // Block 0 must survive (no "beta gamma" phrase). Block 1 must be excluded.
   assert.equal(result.results.length, 1);
-  assert.equal(result.results[0]!.blockStart, 0);
+  assert.match(result.results[0]!.passage, /alpha and beta are mentioned together/);
 });
 
 test("searchWithinDocuments positive phrase requires the literal phrase, not its tokens scattered", async () => {
@@ -1295,7 +1294,7 @@ test("searchWithinDocuments positive phrase requires the literal phrase, not its
     { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir },
   );
   assert.ok(result.results.length >= 1);
-  assert.equal(result.results[0]!.blockStart, 1);
+  assert.match(result.results[0]!.passage, /literal phrase alpha beta/);
 
   const missingPrefix = await searchWithinDocuments(
     '"lpha beta"',
@@ -1367,8 +1366,6 @@ test("searchWithinDocuments finds quoted CJK phrases across block boundaries", a
   );
 
   assert.equal(result.results.length, 1);
-  assert.equal(result.results[0]!.blockStart, 0);
-  assert.equal(result.results[0]!.blockEnd, 1);
   assert.match(result.results[0]!.passage, /开发\n\n新疆/u);
 });
 
@@ -1596,11 +1593,12 @@ test("searchWithinDocuments OR with phrase requires each branch to actually matc
     { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir },
   );
   // Block 0 (scattered alpha/beta, no gamma) must not appear. Blocks 1 and 2
-  // both satisfy a branch and should appear.
-  const blockIndices = new Set(result.results.map((r) => r.blockStart));
-  assert.equal(blockIndices.has(0), false, "scattered alpha/beta block must be excluded");
-  assert.equal(blockIndices.has(1), true);
-  assert.equal(blockIndices.has(2), true);
+  // both satisfy a branch and should appear. Each block's expected charOffset
+  // is the midpoint of its charStart..charEnd range.
+  const offsets = new Set(result.results.map((r) => r.charOffset));
+  assert.equal(offsets.has(33), false, "scattered alpha/beta block must be excluded");
+  assert.equal(offsets.has(90), true, "gamma-only block must appear");
+  assert.equal(offsets.has(139), true, "literal alpha beta block must appear");
 });
 
 test("searchWithinDocuments OR+NOT enforces NOT inside each branch", async () => {
@@ -1669,11 +1667,13 @@ test("searchWithinDocuments OR+NOT enforces NOT inside each branch", async () =>
     10,
     { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir },
   );
-  const blockIndices = new Set(result.results.map((r) => r.blockStart));
-  assert.equal(blockIndices.has(1), true, "alpha-only block satisfies first branch");
-  assert.equal(blockIndices.has(2), true, "beta-only block satisfies second branch");
-  assert.equal(blockIndices.has(0), false, "alpha+delta block must be excluded by NOT");
-  assert.equal(blockIndices.has(3), false, "delta-only block satisfies neither branch");
+  // charOffsets for each block (midpoint of charStart..charEnd):
+  //   block 0: (0+60)/2=30, block 1: (62+120)/2=91, block 2: (122+184)/2=153, block 3: (186+248)/2=217
+  const offsets = new Set(result.results.map((r) => r.charOffset));
+  assert.equal(offsets.has(91), true, "alpha-only block satisfies first branch");
+  assert.equal(offsets.has(153), true, "beta-only block satisfies second branch");
+  assert.equal(offsets.has(30), false, "alpha+delta block must be excluded by NOT");
+  assert.equal(offsets.has(217), false, "delta-only block satisfies neither branch");
 });
 
 test("getDocumentBlocks merges multi-attachment itemKey and expandDocument uses item-global blocks", () => {
@@ -1808,12 +1808,13 @@ test("getDocumentBlocks merges multi-attachment itemKey and expandDocument uses 
   assert.equal(blocks.blocks[3]!.blockType, "heading");
   assert.match(blocks.blocks[3]!.text, /Attachment: doc-two\.pdf/);
 
+  // Block 1 in the merged manifest spans charStart=9..charEnd=23 ("Paragraph one.").
+  // A small char window centered there should return that paragraph as a slice.
   const expanded = expandDocument(
     {
       key: "ITEM1000",
-      blockStart: 1,
-      blockEnd: 1,
-      radius: 1,
+      offset: 16,   // (9 + 23) / 2
+      radius: 7,
     },
     {
       bibliographyJsonPath: join(root, "bibliography.json"),
@@ -1822,10 +1823,9 @@ test("getDocumentBlocks merges multi-attachment itemKey and expandDocument uses 
     },
   );
 
-  assert.equal(expanded.contextStart, 0);
-  assert.equal(expanded.contextEnd, 2);
-  assert.equal(expanded.blocks.length, 3);
-  assert.equal(expanded.passage, "Paragraph one.");
+  assert.match(expanded.passage, /Paragraph one\./);
+  assert.equal(expanded.passageStart, 9);
+  assert.equal(expanded.passageEnd, 23);
 });
 
 test("expandDocument resolves a unique attachment by itemKey", () => {
@@ -1898,12 +1898,14 @@ test("expandDocument resolves a unique attachment by itemKey", () => {
     ],
   });
 
+  // Block 1 spans charStart=14..charEnd=27 ("Second block.") in the rendered
+  // markdown.  Center the slice on its midpoint and use a radius wide enough
+  // to capture the block and a little context.
   const expanded = expandDocument(
     {
       key: "ITEM5000",
-      blockStart: 1,
-      blockEnd: 1,
-      radius: 1,
+      offset: 20,   // floor((14 + 27) / 2)
+      radius: 30,
     },
     {
       bibliographyJsonPath: join(root, "bibliography.json"),
@@ -1914,9 +1916,7 @@ test("expandDocument resolves a unique attachment by itemKey", () => {
 
   assert.equal(expanded.itemKey, "ITEM5000");
   assert.deepEqual(expanded.files, ["/tmp/doc-five.pdf"]);
-  assert.equal(expanded.contextStart, 0);
-  assert.equal(expanded.contextEnd, 1);
-  assert.equal(expanded.passage, "Second block.");
+  assert.match(expanded.passage, /Second block\./);
 });
 
 test("fullTextDocument keeps boilerplate and references by default", () => {

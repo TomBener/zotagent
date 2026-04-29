@@ -154,8 +154,16 @@ export interface SearchResultRow {
   authors: string[];
   year?: string;
   passage: string;
-  blockStart: number;
-  blockEnd: number;
+  // Item-global character offset of the hit anchor in the merged rendered
+  // markdown. Pass to `expand --offset` to retrieve more context. Not a
+  // citation locator — char offsets are internal addresses.
+  charOffset: number;
+  // Page numbers from the block containing the hit, where the extractor
+  // recorded them. Use these for human-readable citation locators
+  // (`[@itemKey, p. 23]`). Absent for EPUB and for PDFs the extractor
+  // could not page-tag.
+  pageStart?: number;
+  pageEnd?: number;
   score: number;
 }
 

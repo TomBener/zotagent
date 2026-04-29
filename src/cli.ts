@@ -75,7 +75,7 @@ const COMMAND_FLAG_ALLOWLIST: Record<string, ReadonlyArray<string>> = {
   metadata: ["limit", "field", "has-file", "abstract", "author", "year", "title", "journal", "publisher"],
   blocks: ["key", "offset-block", "limit-blocks"],
   fulltext: ["key", "clean"],
-  expand: ["key", "block-start", "block-end", "radius"],
+  expand: ["key", "offset", "radius"],
   diagnose: ["limit", "all", "threshold-avg", "threshold-median"],
 };
 
@@ -344,12 +344,12 @@ Retrieval
         --clean                     Apply heuristic cleanup (drops duplicate blocks and
                                     common boilerplate such as citation notices and TOC lines).
 
-  expand --key <key> --block-start <n> [--block-end <n>] [--radius <n>]
-      Expand around a search hit or block range from a local manifest.
-      Block indices are item-global; feed blockStart from search results directly.
-        --block-start <n>           Start block for expand.
-        --block-end <n>             End block for expand. Default: block-start.
-        --radius <n>                Include n blocks before and after. Default: 2.
+  expand --key <key> --offset <n> [--radius <n>]
+      Return a continuous slice of the rendered markdown around a search-result
+      \`charOffset\`. Useful when a search passage feels truncated and you want
+      more context around the hit.
+        --offset <n>                Char offset to center on. Pass \`charOffset\` from a search result.
+        --radius <n>                Half-window in characters. Default: 1000 (i.e. ~2000 char window).
 
 Diagnostics
   diagnose [--limit <n>] [--all] [--threshold-avg <n>] [--threshold-median <n>]
@@ -974,24 +974,14 @@ async function main(): Promise<void> {
 
       case "expand": {
         const key = getKeyFlag(parsed.flags);
-        const blockStartInput = parseNumericFlag(parsed.flags, "block-start", {
+        const offsetInput = parseNumericFlag(parsed.flags, "offset", {
           requirement: "a non-negative integer",
           constraint: "a non-negative integer",
           integer: true,
           min: 0,
         });
-        if (blockStartInput.error) {
-          emitError("INVALID_ARGUMENT", blockStartInput.error);
-          return;
-        }
-        const blockEndInput = parseNumericFlag(parsed.flags, "block-end", {
-          requirement: "a non-negative integer",
-          constraint: "a non-negative integer",
-          integer: true,
-          min: 0,
-        });
-        if (blockEndInput.error) {
-          emitError("INVALID_ARGUMENT", blockEndInput.error);
+        if (offsetInput.error) {
+          emitError("INVALID_ARGUMENT", offsetInput.error);
           return;
         }
         const radiusInput = parseNumericFlag(parsed.flags, "radius", {
@@ -1004,26 +994,19 @@ async function main(): Promise<void> {
           emitError("INVALID_ARGUMENT", radiusInput.error);
           return;
         }
-        if (!key || blockStartInput.value === undefined) {
+        if (!key || offsetInput.value === undefined) {
           emitError(
             "MISSING_ARGUMENT",
-            "Provide --key <key> and --block-start <n> for expand.",
+            "Provide --key <key> and --offset <n> for expand.",
           );
-          return;
-        }
-        const blockStartValue = blockStartInput.value;
-        const blockEndValue = blockEndInput.value ?? blockStartValue;
-        if (blockEndValue < blockStartValue) {
-          emitError("INVALID_ARGUMENT", "`--block-end` must be greater than or equal to `--block-start`.");
           return;
         }
         try {
           const data = expandDocument(
             {
               key,
-              blockStart: blockStartValue,
-              blockEnd: blockEndValue,
-              radius: radiusInput.value ?? 2,
+              offset: offsetInput.value,
+              radius: radiusInput.value ?? 1000,
             },
             overrides,
           );
