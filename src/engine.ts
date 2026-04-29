@@ -19,12 +19,6 @@ interface SearchBehaviorOptions {
   progress?: (message: string) => void;
 }
 
-// `SearchResultRow` is what callers see; the engine used to wrap it with a
-// reference-only flag for demotion, but that protection only caught full
-// bibliography blocks (not inline footnote-style citations) and obscured
-// useful "this paper cites X" hits. FTS5 bm25 is the sole ranker now.
-type VerifiedSearchRow = SearchResultRow;
-
 const ITEM_KEY_RE = /^[A-Z0-9]{8}$/;
 
 // Resolve the --key argument to a Zotero itemKey. citationKey lookups
@@ -187,7 +181,7 @@ function buildSearchRow(
   range: { blockStart: number; blockEnd: number },
   globalOffset: number,
   score: number,
-): VerifiedSearchRow {
+): SearchResultRow {
   const blocks = manifest.blocks.filter(
     (block) => block.blockIndex >= range.blockStart && block.blockIndex <= range.blockEnd,
   );
@@ -232,7 +226,7 @@ function buildKeywordSearchRow(
   blockIndex: number,
   globalOffset: number,
   score: number,
-): VerifiedSearchRow | null {
+): SearchResultRow | null {
   // FTS5 already returned this doc's best matching block; just frame the
   // single-block range. Block-level FTS does not match phrases that wrap a
   // block boundary — that gap is left to `search-in` (which has a manifest-
@@ -247,7 +241,7 @@ function buildHybridSearchRow(
   manifest: AttachmentManifest,
   result: { bestChunkPos: number; bestChunk: string; score: number },
   globalOffset: number,
-): VerifiedSearchRow {
+): SearchResultRow {
   const range = mapChunkToBlockRange(manifest, result.bestChunkPos, result.bestChunk);
   return buildSearchRow(entry, manifest, range, globalOffset, result.score);
 }
@@ -323,7 +317,7 @@ export async function searchLiterature(
   const itemGroups = groupReadyEntriesByItemKey(readyEntries);
   const manifestCache = new Map<string, AttachmentManifest>();
 
-  let mapped: VerifiedSearchRow[];
+  let mapped: SearchResultRow[];
 
   if (behavior.semantic) {
     const qmd = await qmdFactory(config);
@@ -374,7 +368,7 @@ export async function searchLiterature(
           const manifest = readManifestCached(entry, manifestCache);
           return buildKeywordSearchRow(entry, manifest, result.blockIndex, globalOffset, result.score);
         })
-        .filter((value): value is VerifiedSearchRow => value !== null)
+        .filter((value): value is SearchResultRow => value !== null)
         .sort((a, b) => b.score - a.score);
     } finally {
       await keywordIndex.close();
@@ -408,7 +402,7 @@ export async function searchWithinDocuments(
   const entries = resolveReadyEntries(input.key, readyEntries);
   const targetDocKeys = entries.map((entry) => entry.docKey);
   const manifestCache = new Map<string, AttachmentManifest>();
-  const mapped: VerifiedSearchRow[] = [];
+  const mapped: SearchResultRow[] = [];
 
   const ftsOptions = { docKeys: targetDocKeys };
   const keywordIndex = await keywordFactory(config);
@@ -470,7 +464,7 @@ export async function searchWithinDocuments(
 
   // Dedupe by (itemKey, blockStart, blockEnd) — exact-phrase scan and per-block
   // FTS may surface the same block; keep the higher-scored row.
-  const seen = new Map<string, VerifiedSearchRow>();
+  const seen = new Map<string, SearchResultRow>();
   for (const row of mapped) {
     const key = `${row.itemKey}:${row.blockStart}:${row.blockEnd}`;
     const existing = seen.get(key);
