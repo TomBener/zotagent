@@ -23,7 +23,18 @@ Metadata quick rules:
 - `--abstract` includes abstract text in the output. To search abstract text, use a positional query with `--field abstract`.
 - `metadata "Pratt 1985"` returns empty (year is not OR'd in) — split into `--author "Pratt" --year "1985"`.
 
-Keyword syntax (`search` and `search-in` both use it): `"exact phrase"`, `OR`, `NOT`, `term NEAR/<n> term`, `prefix*`. Use `NEAR/<n>` not `NEAR(...)`. Boolean operators must be uppercase (`AND` / `OR` / `NOT`); lowercase `or` is treated as a literal term. `search-in` evaluates the query per block, so a returned passage satisfies the query on its own — operator semantics are honored at the block level, not just the document level.
+Keyword syntax — `search` and `search-in` both run SQLite FTS5 with a porter stemmer over a Trad→Simp folded index, so the same operators work in both:
+
+| Operator | Example | Notes |
+|---|---|---|
+| Exact phrase | `"institutional change"` | Token-adjacent match. Quotes a multi-word phrase. |
+| AND (default) | `alpha beta` | Implicit between bare tokens. |
+| OR | `Acemoglu OR Robinson` | Must be uppercase. Lowercase `or` is a literal term, not an operator. |
+| NOT | `alpha NOT beta` | Excludes the right-hand expression. Same uppercase rule. |
+| Proximity | `"土地" NEAR/20 "垦荒"` | Within N tokens, unordered. Use `NEAR/<n>`, not `NEAR(...)`. |
+| Prefix wildcard | `Pete*` | Matches any token starting with `Pete`: `Peter`, `Petersen`, etc. Wildcard only at the end. |
+
+`search-in` evaluates the query per block, so a returned passage satisfies the query on its own (operator semantics honored at the block level, not just the document level). `search` ranks at the document level and surfaces one best passage per matched item.
 
 **`NEAR/<n>` is the best first pass** when you have 2–3 anchor terms that should co-occur but not necessarily adjacent — e.g. `"土地" NEAR/20 "垦荒"`. It is usually more precise than plain keyword and much faster than `--semantic`.
 
@@ -49,6 +60,29 @@ zotagent fulltext --key lee2024party --clean
 # Or page through blocks
 zotagent blocks --key KG326EEI --offset-block 120 --limit-blocks 30
 ```
+
+### Drill into one paper with `search-in`
+
+`search-in` is the right tool whenever the user has already pinned a specific item — "does this book cite X?", "find Y in chapter 3", "where does the author talk about Z in the paper I just opened?". It runs the same FTS5 syntax as `search` but evaluates the query per block, so each returned passage individually satisfies the query rather than being a doc-level approximation.
+
+```bash
+# "Does this book cite Acemoglu's 2012 work?" — quote the citation form so
+# partial-token matches do not over-claim. Multi-token quoted phrases also
+# catch citations that wrap across paragraph breaks in the references list.
+zotagent search-in '"Acemoglu, Daron. 2012"' --key CMJ3N8TL --limit 5
+
+# Proximity inside a single paper — find blocks where two anchor terms co-occur
+# within 20 tokens. Far more precise than plain keyword on dense academic prose.
+zotagent search-in '"property rights" NEAR/20 "credibility"' --key CMJ3N8TL --limit 10
+
+# Prefix wildcard for surname or stem variants — matches Peter, Petersen, Peterson...
+zotagent search-in 'Pete*' --key CMJ3N8TL --limit 10
+
+# Combine with expand to pull the full paragraph around a hit
+zotagent expand --key CMJ3N8TL --block-start 2192 --radius 1
+```
+
+If `search-in` returns nothing for a citation-style query, do not silently widen — say "not cited in this attachment" and offer to try a looser shape (drop the year, prefix the surname, switch to `search` across the whole library).
 
 ### Add a paper to Zotero
 
@@ -149,6 +183,7 @@ Do not cite `pageStart` / `pageEnd`. They appear in `expand` / `blocks` output b
 - **`--key` accepts `itemKey` or `citationKey`**, with or without a leading `@` (so Pandoc `@citekey` pastes straight in). Output always identifies items by `itemKey` only — `citationKey` is accepted as input but never emitted, so chain subsequent calls on `itemKey`.
 - **Block indices are item-global.** When an item has multiple indexed attachments, indices run monotonically across them with `# Attachment: <name>` dividers. Pass `blockStart` from `search` straight into `blocks` / `expand`.
 - **`search-in` on a chapter key may miss.** `SEARCH_IN_FAILED: No indexed attachment found` usually means the chapter's PDF is indexed only inside its parent volume. Look the parent up with `metadata`, then `search-in` against the parent's key and locate the chapter by its heading. Common for edited collections and proceedings.
+- **`search-in` returns block-level matches; `search` returns one passage per item.** A `search-in` result means *this block* satisfies the query (operators included). A `search` result means *this document* matches and here is one representative passage. When the user asks "does this paper say X" or "where in this paper does Y appear", reach for `search-in`.
 
 ## Index freshness
 
