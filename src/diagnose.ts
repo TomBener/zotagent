@@ -156,7 +156,19 @@ export async function diagnoseExtraction(
   summary.skipped = skipped;
 
   const filtered = showAll ? rows : rows.filter((r) => r.status !== "ok");
-  filtered.sort((a, b) => b.blocks - a.blocks);
+  // Sort by severity first, then by impact (blocks DESC) within each tier.
+  // Sorting purely by block count would let high-block borderline docs
+  // displace small-but-severely-fragmented suspicious docs from --limit.
+  const severityRank: Record<DiagnoseRow["status"], number> = {
+    suspicious: 0,
+    borderline: 1,
+    ok: 2,
+  };
+  filtered.sort((a, b) => {
+    const s = severityRank[a.status] - severityRank[b.status];
+    if (s !== 0) return s;
+    return b.blocks - a.blocks;
+  });
   const limited = filtered.slice(0, limit);
 
   return {
