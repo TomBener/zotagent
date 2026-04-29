@@ -5,7 +5,7 @@ description: Search, retrieve, or add Zotero literature via the `zotagent` CLI. 
 
 # zotagent
 
-`zotagent` is a CLI over a local index of Zotero attachments (PDF / EPUB / HTML / TXT) plus bibliography metadata. Commands are stateless; every output is JSON (`{ok, data}` on success, `{ok: false, error}` + exit 1 on failure).
+`zotagent` is a CLI for a Zotero library: search and retrieve indexed attachments (PDF / EPUB / HTML / TXT) and bibliography metadata, and add items by DOI, Semantic Scholar paperId, or manual fields. Commands are stateless; every output is JSON (`{ok, data}` on success, `{ok: false, error}` + exit 1 on failure).
 
 Don't invent citation keys, item keys, or passage text. If a query returns nothing, say so.
 
@@ -25,7 +25,7 @@ Metadata quick rules:
 - `--abstract` includes abstract text in the output. To search abstract text, use a positional query with `--field abstract`.
 - `metadata "Pratt 1985"` generally returns empty (year is not OR'd in) — split into `--author "Pratt" --year "1985"`.
 
-Keyword syntax — `search` and `search-in` both run SQLite FTS5 with a porter stemmer over a Trad→Simp folded index, so the same operators work in both:
+Keyword syntax — `search` and `search-in` both run SQLite FTS5 with a porter stemmer over a Trad→Simp folded index:
 
 | Operator | Example | Notes |
 |---|---|---|
@@ -33,7 +33,7 @@ Keyword syntax — `search` and `search-in` both run SQLite FTS5 with a porter s
 | AND (default) | `alpha beta` | Implicit between bare tokens. |
 | OR | `Acemoglu OR Robinson` | Must be uppercase. Lowercase `or` is a literal term, not an operator. |
 | NOT | `alpha NOT beta` | Excludes the right-hand expression. Same uppercase rule. |
-| Proximity | `"土地" NEAR/20 "利用"` | Within N tokens, unordered. Use `NEAR/<n>`, not `NEAR`. |
+| Proximity | `"土地" NEAR/20 "开发"` | Within N tokens, unordered. Use `NEAR/<n>`, not `NEAR`. |
 | Prefix wildcard | `Pete*` | Matches any token starting with `Pete`: `Peter`, `Petersen`, etc. Wildcard only at the end. |
 
 Both `search` and `search-in` evaluate the query against per-block FTS. `search-in` returns every matching block in the targeted document; `search` returns one row per matched document — each doc's best-ranking block (by FTS5 bm25) is the surfaced passage.
@@ -44,54 +44,63 @@ Keyword vs semantic heuristic: start with keyword (exact phrases, `OR`, `NEAR`) 
 
 Chinese trad/simp folding: keyword `search`, `search-in`, and `metadata` match across 繁 ↔ 简 both ways (黨組書記 ≡ 党组书记), so one form is enough. `search --semantic` does NOT fold — pick the likely source form.
 
+## Citing passages
+
+When you quote or paraphrase material from `search` / `search-in` / `expand` / `blocks` / `fulltext`, cite in **Pandoc source form** using the returned `itemKey` and the block index as locator:
+
+- With locator: `[@itemKey, block N]` — single block or a range like `block 3-7`
+- Narrative reference without locator: `@itemKey`
+
+`N` is `blockStart` (or `blockIndex` in `expand` / `blocks`).
+
+Examples (given `itemKey: "KG326EEI"`, `blockStart: 3`, `blockEnd: 7`):
+- `[@KG326EEI, block 3]`
+- `[@KG326EEI, block 3-7]`
+
+Do not cite `pageStart` / `pageEnd`. They appear in `expand` / `blocks` output but are unreliable (PDF extraction drift; EPUB has none) — use the block index.
+
 ## Typical workflows
 
 ### Find passages, then retrieve surrounding context
 
 ```bash
-# Search across the library
-zotagent search "party secretary governance" --limit 10
+# Library-wide search — keyword by default; --semantic for fuzzy/conceptual queries
+zotagent search "party secretary governance"
+zotagent search "informal political networks in contemporary China" --semantic --limit 20
 
-# Expand around a returned hit
+# Drill into one paper. A bare surname catches both in-text "Acemoglu and
+# Robinson 2012" and bibliography "Acemoglu, Daron. 2012".
+zotagent search-in 'Acemoglu' --key CMJ3N8TL
+
+# Expand around a returned hit, or read the full document / page through blocks
 zotagent expand --key KG326EEI --block-start 134 --radius 2
-
-# Read the whole document
 zotagent fulltext --key KG326EEI --clean
-zotagent fulltext --key lee2024party --clean
-
-# Or page through blocks
 zotagent blocks --key KG326EEI --offset-block 120 --limit-blocks 30
 ```
 
-### Drill into one paper with `search-in`
-
-`search-in` is the right tool whenever the user has already pinned a specific item — "does this book cite X?", "find Y in chapter 3", "where does the author talk about Z in the paper I just opened?". It runs the same FTS5 syntax as `search` but evaluates the query per block, so each returned passage individually satisfies the query rather than being a doc-level approximation.
+### Look up a paper's metadata
 
 ```bash
-# "Does this book cite Acemoglu's 2012 work?" — start with the bare surname.
-# In-text references use the parenthetical form (Acemoglu and Robinson 2012)
-# while the bibliography entry uses Acemoglu, Daron. 2012. — the bare token
-# matches both. Reach for a full quoted citation only to verify the exact
-# title or to disambiguate when one author has multiple bibliography entries
-# (multi-token quoted phrases also catch citations that wrap across paragraph
-# breaks in the references list).
-zotagent search-in 'Acemoglu' --key CMJ3N8TL --limit 10
-zotagent search-in '"Acemoglu, Daron. 2012"' --key CMJ3N8TL --limit 5
+# Search selected fields with a positional query
+zotagent metadata "aging in China" --field title --field abstract
 
-# Proximity inside a single paper — find blocks where two anchor terms co-occur
-# within 20 tokens. Far more precise than plain keyword on dense academic prose.
-zotagent search-in '"property rights" NEAR/20 "credibility"' --key CMJ3N8TL --limit 10
+# Narrow by specific metadata fields
+zotagent metadata --author "Pratt" --year "1985"
 
-# Prefix wildcard for surname or stem variants — matches Peter, Petersen, Peterson...
-zotagent search-in 'Pete*' --key CMJ3N8TL --limit 10
+# Use a year prefix for a range; `--year 198` matches the 1980s
+zotagent metadata --author "Pratt" --year "198"
 
-# Combine with expand to pull the full paragraph around a hit
-zotagent expand --key CMJ3N8TL --block-start 2192 --radius 1
+# Combine a positional query with a filter
+zotagent metadata "imperial" --author "Pratt"
+
+# Keep only indexed items; include abstract text only when needed
+zotagent metadata "dangwei shuji" --has-file
+zotagent metadata "aging in China" --abstract
+
+# Use a returned key with retrieval commands
+zotagent blocks --key KG326EEI --limit-blocks 40
+zotagent fulltext --key KG326EEI --clean
 ```
-
-If `search-in` returns nothing for a citation-style query, do not silently widen — say "not cited in this attachment" and offer to try a looser shape (drop the year, prefix the surname, switch to `search` across the whole library).
-
-`search-in --limit` defaults to 10 and rarely needs to go higher: you are already scoped to one document. The limit truncates the result list, not the underlying FTS search, so re-running the same query with a bigger `--limit` can never reveal hits that the first call missed — if the count looks short, change the query, not the limit.
 
 ### Add a paper to Zotero
 
@@ -146,45 +155,6 @@ zotagent recent --limit 20 --sort modified
 
 `recent` hits the Zotero Web API directly (no index required), so items just created with `add` show up immediately — useful for confirming an `add` landed, or for orienting yourself in the library. Returns regular top-level bibliography items only; standalone notes and attachments are skipped. Max `--limit` is 100.
 
-### Look up a paper's metadata
-
-```bash
-# Search selected fields with a positional query
-zotagent metadata "aging in China" --field title --field abstract
-
-# Narrow by specific metadata fields
-zotagent metadata --author "Pratt" --year "1985"
-
-# Use a year prefix for a range; `--year 198` matches the 1980s
-zotagent metadata --author "Pratt" --year "198"
-
-# Combine a positional query with a filter
-zotagent metadata "imperial" --author "Pratt"
-
-# Keep only indexed items; include abstract text only when needed
-zotagent metadata "dangwei shuji" --has-file
-zotagent metadata "aging in China" --abstract
-
-# Use a returned key with retrieval commands
-zotagent blocks --key KG326EEI --limit-blocks 40
-zotagent fulltext --key KG326EEI --clean
-```
-
-## Citing passages
-
-When you quote or paraphrase material from `search` / `search-in` / `expand` / `blocks` / `fulltext`, cite in **Pandoc source form** using the returned `itemKey` and the block index as locator:
-
-- With locator: `[@itemKey, block N]` — single block or a range like `block 3-7`
-- Narrative reference without locator: `@itemKey`
-
-`N` is `blockStart` (or `blockIndex` in `expand` / `blocks`).
-
-Examples (given `itemKey: "KG326EEI"`, `blockStart: 3`, `blockEnd: 7`):
-- `[@KG326EEI, block 3]`
-- `[@KG326EEI, block 3-7]`
-
-Do not cite `pageStart` / `pageEnd`. They appear in `expand` / `blocks` output but are unreliable (PDF extraction drift; EPUB has none) — use the block index.
-
 ## Output-shape gotchas
 
 - **`passage` is a ~500-token snippet** — the trailing `…` means truncation. Before quoting or treating it as evidence, call `expand --key <k> --block-start <blockStart> --block-end <blockEnd>` to get the full block text. Use `--radius 0` for just the hit; default is 2.
@@ -192,7 +162,8 @@ Do not cite `pageStart` / `pageEnd`. They appear in `expand` / `blocks` output b
 - **`--key` accepts `itemKey` or `citationKey`**, with or without a leading `@` (so Pandoc `@citekey` pastes straight in). Output always identifies items by `itemKey` only — `citationKey` is accepted as input but never emitted, so chain subsequent calls on `itemKey`.
 - **Block indices are item-global.** When an item has multiple indexed attachments, indices run monotonically across them with `# Attachment: <name>` dividers. Pass `blockStart` from `search` straight into `blocks` / `expand`.
 - **`search-in` on a chapter key may miss.** `SEARCH_IN_FAILED: No indexed attachment found` usually means the chapter's PDF is indexed only inside its parent volume. Look the parent up with `metadata`, then `search-in` against the parent's key and locate the chapter by its heading. Common for edited collections and proceedings.
-- **`search-in` returns block-level matches; `search` returns one passage per item.** A `search-in` result means *this block* satisfies the query (operators included). A `search` result means *this document* matches and here is one representative passage. When the user asks "does this paper say X" or "where in this paper does Y appear", reach for `search-in`.
+- **`search-in` returns block-level matches; `search` returns one passage per item.** A `search-in` row is a single block satisfying the query (operators always evaluate per block); a single quoted phrase that wraps across paragraphs — e.g. a citation breaking mid-line — may surface as a contiguous block range with `blockEnd > blockStart`. A `search` result means *this document* matches and here is one representative passage. When the user asks "does this paper say X" or "where in this paper does Y appear", reach for `search-in`.
+- **`search-in --limit` truncates the result list, not the FTS search itself.** Default 10 is usually enough — you're already scoped to one document. Re-running with a bigger limit can never reveal hits the first call missed; change the query, not the limit.
 
 ## Index freshness
 
