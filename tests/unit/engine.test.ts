@@ -1314,6 +1314,64 @@ test("searchWithinDocuments positive phrase requires the literal phrase, not its
   assert.equal(missingSuffix.results.length, 0, "quoted phrases must not match inside the last token");
 });
 
+test("searchWithinDocuments finds quoted CJK phrases across block boundaries", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-search-in-cjk-cross-"));
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docKey = "v".repeat(40);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
+
+  writeManifest(manifestPath, {
+    docKey,
+    itemKey: "ITEMV000",
+    title: "CJK cross-block phrase",
+    authors: ["A"],
+    filePath: "/tmp/cjk-cross.pdf",
+    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+    blocks: [
+      {
+        blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"],
+        text: "本文讨论开发",
+        charStart: 0, charEnd: 6, lineStart: 1, lineEnd: 1, isReferenceLike: false,
+      },
+      {
+        blockIndex: 1, blockType: "paragraph", sectionPath: ["Body"],
+        text: "新疆的人力财力问题。",
+        charStart: 8, charEnd: 18, lineStart: 3, lineEnd: 3, isReferenceLike: false,
+      },
+    ],
+  });
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [{
+      docKey, itemKey: "ITEMV000", title: "CJK cross-block phrase", authors: ["A"],
+      filePath: "/tmp/cjk-cross.pdf", fileExt: "pdf", exists: true, supported: true,
+      extractStatus: "ready", size: 1, mtimeMs: 1, sourceHash: "hash-cjk-cross",
+      lastIndexedAt: new Date().toISOString(),
+      normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+      manifestPath,
+    }],
+  });
+
+  const result = await searchWithinDocuments(
+    '"开发新疆"',
+    { key: "ITEMV000" },
+    10,
+    { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir },
+  );
+
+  assert.equal(result.results.length, 1);
+  assert.equal(result.results[0]!.blockStart, 0);
+  assert.equal(result.results[0]!.blockEnd, 1);
+  assert.match(result.results[0]!.passage, /开发\n\n新疆/u);
+});
+
 test("searchWithinDocuments NOT does not resurface blocks via cross-block phrase scan", async () => {
   // Repro from Codex review: stripping operators turns `alpha NOT beta` into
   // the substring `alpha beta`. The previous code happily ran the cross-block

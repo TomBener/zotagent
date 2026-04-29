@@ -204,10 +204,10 @@ function buildSearchRow(
  * phrase text; otherwise null. Used to gate the supplemental cross-block
  * phrase scan in search-in: any other query shape is FTS5's responsibility,
  * and stripping operators to manufacture a substring would resurface blocks
- * FTS5 legitimately excluded (e.g. `alpha NOT beta`). Single-token quoted
- * queries are skipped because per-block FTS already finds every occurrence
- * of a single token, and substring matching on a short token would falsely
- * "hit" prefixes of unrelated words like `how` for `ho`.
+ * FTS5 legitimately excluded (e.g. `alpha NOT beta`). Single-token non-CJK
+ * quoted queries are skipped because per-block FTS already finds every
+ * occurrence of a single token, and substring matching on a short token
+ * would falsely "hit" prefixes of unrelated words like `how` for `ho`.
  */
 function singleQuotedPhrase(query: string): string | null {
   const { masked, phrases } = maskQuotedPhrases(query);
@@ -215,9 +215,22 @@ function singleQuotedPhrase(query: string): string | null {
   const remainder = masked.replace(/\uE000Q\d+\uE001/gu, "").trim();
   if (remainder.length > 0) return null;
   const inner = phrases[0]!.slice(1, -1);
-  const tokens = inner.match(/[\p{L}\p{N}]+/gu) ?? [];
-  if (tokens.length < 2) return null;
+  if (!isMultiTokenExactPhrase(inner)) return null;
   return inner;
+}
+
+const CJK_CHAR_RE =
+  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+
+function isMultiTokenExactPhrase(phrase: string): boolean {
+  const normalized = normalizeExactText(phrase);
+  const tokens = normalized.match(/[\p{L}\p{N}]+/gu) ?? [];
+  if (tokens.length >= 2) return true;
+
+  // CJK phrases normalize to one contiguous token, but a multi-character CJK
+  // string is still a real phrase for the cross-block exact scanner.
+  const compact = normalized.replace(/\s+/gu, "");
+  return CJK_CHAR_RE.test(compact) && [...compact].length >= 2;
 }
 
 function buildKeywordSearchRow(

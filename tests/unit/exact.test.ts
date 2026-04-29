@@ -92,6 +92,18 @@ test("findExactPhraseBlockRange matches CJK phrases despite OCR-style spacing", 
   assert.deepEqual(result, { blockStart: 10, blockEnd: 10 });
 });
 
+test("findExactPhraseBlockRange matches CJK phrases across block boundaries", () => {
+  const result = findExactPhraseBlockRange(
+    manifest([
+      block(10, "本文讨论开发"),
+      block(20, "新疆的人力财力问题。"),
+    ]),
+    "开发新疆",
+  );
+
+  assert.deepEqual(result, { blockStart: 10, blockEnd: 20 });
+});
+
 test("normalizeExactText folds traditional Chinese to simplified", () => {
   assert.equal(normalizeExactText("繁體中文"), "繁体中文");
   assert.equal(normalizeExactText("開發新疆"), "开发新疆");

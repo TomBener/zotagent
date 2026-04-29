@@ -211,6 +211,7 @@ interface NumericFlagOptions {
   requirement: string;
   constraint: string;
   integer?: boolean;
+  positive?: boolean;
   min?: number;
 }
 
@@ -234,6 +235,9 @@ function parseNumericFlag(
     return { error: `\`--${key}\` must be ${options.constraint}.` };
   }
   if (options.integer && !Number.isInteger(value)) {
+    return { error: `\`--${key}\` must be ${options.constraint}.` };
+  }
+  if (options.positive && value <= 0) {
     return { error: `\`--${key}\` must be ${options.constraint}.` };
   }
   if (options.min !== undefined && value < options.min) {
@@ -836,6 +840,9 @@ async function main(): Promise<void> {
           emitOk(data, { elapsedMs: Date.now() - startedAt });
           return;
         } catch (error) {
+          if (error instanceof KeywordQuerySyntaxError) {
+            throw error;
+          }
           emitDocumentLookupError("SEARCH_IN", error);
           return;
         }
@@ -1046,6 +1053,7 @@ async function main(): Promise<void> {
         const thresholdAvgInput = parseNumericFlag(parsed.flags, "threshold-avg", {
           requirement: "a positive number",
           constraint: "a positive number",
+          positive: true,
           min: 0,
         });
         if (thresholdAvgInput.error) {
@@ -1055,6 +1063,7 @@ async function main(): Promise<void> {
         const thresholdMedianInput = parseNumericFlag(parsed.flags, "threshold-median", {
           requirement: "a positive number",
           constraint: "a positive number",
+          positive: true,
           min: 0,
         });
         if (thresholdMedianInput.error) {

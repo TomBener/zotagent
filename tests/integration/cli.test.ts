@@ -506,6 +506,18 @@ test("search-in requires --key and rejects invalid limit values", () => {
   assert.match(invalidLimit.stdout, /`--limit` must be a positive integer\./);
 });
 
+test("diagnose rejects non-positive thresholds", () => {
+  const invalidAvg = runCli(["diagnose", "--threshold-avg", "0"]);
+  assert.equal(invalidAvg.status, 1);
+  assert.match(invalidAvg.stdout, /"code": "INVALID_ARGUMENT"/);
+  assert.match(invalidAvg.stdout, /`--threshold-avg` must be a positive number\./);
+
+  const invalidMedian = runCli(["diagnose", "--threshold-median", "0"]);
+  assert.equal(invalidMedian.status, 1);
+  assert.match(invalidMedian.stdout, /"code": "INVALID_ARGUMENT"/);
+  assert.match(invalidMedian.stdout, /`--threshold-median` must be a positive number\./);
+});
+
 test("metadata rejects invalid limit values", () => {
   const result = runCli(["metadata", "aging in China", "--limit"]);
 
@@ -687,6 +699,33 @@ test("search rejects non-canonical NEAR syntax with an argument error", async ()
   const result = runCli([
     "search",
     'NEAR("party" "secretary", 10)',
+    "--bibliography",
+    fixture.bibliographyPath,
+    "--attachments-root",
+    fixture.attachmentsRoot,
+    "--data-dir",
+    fixture.dataDir,
+  ]);
+
+  assert.equal(result.status, 1);
+  const parsed = JSON.parse(result.stdout) as {
+    ok: boolean;
+    error: { code: string; message: string };
+  };
+  assert.equal(parsed.ok, false);
+  assert.equal(parsed.error.code, "INVALID_ARGUMENT");
+  assert.match(parsed.error.message, /NEAR\(\.\.\.\) is not supported/u);
+  assert.match(parsed.error.message, /NEAR\/50/u);
+});
+
+test("search-in rejects non-canonical NEAR syntax with an argument error", async () => {
+  const fixture = await createIndexedFixture();
+
+  const result = runCli([
+    "search-in",
+    'NEAR("party" "secretary", 10)',
+    "--key",
+    "ITEM9000",
     "--bibliography",
     fixture.bibliographyPath,
     "--attachments-root",

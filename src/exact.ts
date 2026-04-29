@@ -25,11 +25,15 @@ function hasTokenBoundaryAfter(text: string, offset: number, lastQueryChar: stri
   return next === " " || isCjkChar(next);
 }
 
-function satisfiesTokenBoundaries(text: string, start: number, query: string): boolean {
+function satisfiesTokenBoundaries(
+  text: string,
+  start: number,
+  endExclusive: number,
+  query: string,
+): boolean {
   const first = query[0];
   const last = query[query.length - 1];
   if (first === undefined || last === undefined) return false;
-  const endExclusive = start + query.length;
   return (
     hasTokenBoundaryBefore(text, start, first)
     && hasTokenBoundaryAfter(text, endExclusive, last)
@@ -95,6 +99,30 @@ export function countExactMatches(haystack: string, needle: string): number {
   return count;
 }
 
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+function buildFlexibleCjkPattern(query: string): RegExp | null {
+  if (![...query].some((ch) => isCjkChar(ch))) return null;
+
+  const chars = [...query];
+  let pattern = "";
+  for (let i = 0; i < chars.length; i += 1) {
+    const ch = chars[i]!;
+    if (ch === " ") {
+      pattern += "\\s+";
+      continue;
+    }
+    pattern += escapeRegExp(ch);
+    const next = chars[i + 1];
+    if (isCjkChar(ch) && isCjkChar(next)) {
+      pattern += "\\s*";
+    }
+  }
+  return new RegExp(pattern, "gu");
+}
+
 export function findExactPhraseBlockRange(
   manifest: AttachmentManifest,
   query: string,
@@ -148,30 +176,49 @@ export function findExactPhraseBlockRange(
   };
 
   let best: { blockStart: number; blockEnd: number; span: number } | null = null;
-  let matchStart = normalizedBody.indexOf(normalizedQuery);
 
-  while (matchStart !== -1) {
-    if (options.tokenBoundaries && !satisfiesTokenBoundaries(normalizedBody, matchStart, normalizedQuery)) {
-      matchStart = normalizedBody.indexOf(normalizedQuery, matchStart + 1);
-      continue;
+  const candidateForMatch = (
+    matchStart: number,
+    matchEndExclusive: number,
+  ): { blockStart: number; blockEnd: number; span: number } | null => {
+    if (
+      options.tokenBoundaries
+      && !satisfiesTokenBoundaries(normalizedBody, matchStart, matchEndExclusive, normalizedQuery)
+    ) {
+      return null;
     }
-
-    const matchEnd = matchStart + normalizedQuery.length - 1;
+    const matchEnd = matchEndExclusive - 1;
     const blockStart = findBlockForOffset(matchStart);
     const blockEnd = findBlockForOffset(matchEnd);
 
     if (blockStart !== null && blockEnd !== null) {
-      const candidate = {
+      return {
         blockStart: blockStart.blockIndex,
         blockEnd: blockEnd.blockIndex,
         span: blockEnd.ordinal - blockStart.ordinal,
       };
-      if (!best || candidate.span < best.span) {
+    }
+    return null;
+  };
+
+  const flexibleCjkPattern = buildFlexibleCjkPattern(normalizedQuery);
+  if (flexibleCjkPattern) {
+    let match: RegExpExecArray | null;
+    while ((match = flexibleCjkPattern.exec(normalizedBody)) !== null) {
+      const candidate = candidateForMatch(match.index, match.index + match[0].length);
+      if (candidate && (!best || candidate.span < best.span)) {
         best = candidate;
       }
     }
-
-    matchStart = normalizedBody.indexOf(normalizedQuery, matchStart + 1);
+  } else {
+    let matchStart = normalizedBody.indexOf(normalizedQuery);
+    while (matchStart !== -1) {
+      const candidate = candidateForMatch(matchStart, matchStart + normalizedQuery.length);
+      if (candidate && (!best || candidate.span < best.span)) {
+        best = candidate;
+      }
+      matchStart = normalizedBody.indexOf(normalizedQuery, matchStart + 1);
+    }
   }
 
   return best ? { blockStart: best.blockStart, blockEnd: best.blockEnd } : null;
