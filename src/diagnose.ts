@@ -10,6 +10,7 @@ export interface DiagnoseRow {
   authors: string[];
   year?: string;
   filePath: string;
+  normalizedPath?: string;
   blocks: number;
   avgChars: number;
   medianChars: number;
@@ -89,6 +90,7 @@ function buildRow(
   const sorted = [...textLengths].sort((a, b) => a - b);
   const med = median(sorted);
   const { status, note } = classify(avg, med, thresholdAvg, thresholdMedian);
+  const normalizedExists = entry.normalizedPath !== undefined && exists(entry.normalizedPath);
   return {
     itemKey: entry.itemKey,
     title: entry.title,
@@ -96,6 +98,7 @@ function buildRow(
     authors: entry.authors,
     ...(entry.year ? { year: entry.year } : {}),
     filePath: compactHomePath(entry.filePath),
+    ...(normalizedExists ? { normalizedPath: compactHomePath(entry.normalizedPath!) } : {}),
     blocks,
     avgChars: Math.round(avg * 10) / 10,
     medianChars: Math.round(med * 10) / 10,
