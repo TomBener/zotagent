@@ -770,6 +770,120 @@ test("searchLiterature keeps AND/NEAR inside a quoted literal phrase for passage
   assert.match(result.results[0]!.passage, /black and white/u);
 });
 
+test("searchLiterature picks a non-reference block when FTS5's top hit is a citation list", async () => {
+  // Regression: searchDocs returns the per-doc MIN(rank) block, which can be
+  // a reference list when the query token repeats in citations. The engine
+  // must fall back to a substantive block in the same doc when one exists,
+  // otherwise the surfaced passage is bibliography noise.
+  const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-ref-pref-"));
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docKey = "5".repeat(40);
+  const manifestPath = join(manifestsDir, docKey + MANIFEST_EXT);
+
+  writeManifest(manifestPath, {
+    docKey,
+    itemKey: "ITEMREF0",
+    title: "Reference Heavy Doc",
+    authors: ["A"],
+    filePath: "/tmp/ref-heavy.pdf",
+    normalizedPath: join(dataDir, "normalized", docKey + ".md"),
+    blocks: [
+      {
+        // Substantive block: one hit on "Acemoglu", but the body discusses it.
+        blockIndex: 0,
+        blockType: "paragraph",
+        sectionPath: ["Body"],
+        text: "Acemoglu's argument about extractive institutions reshapes the development debate in this section.",
+        charStart: 0,
+        charEnd: 100,
+        lineStart: 1,
+        lineEnd: 1,
+        isReferenceLike: false,
+      },
+      {
+        // Reference block: many hits on "Acemoglu", but it's a citation list.
+        blockIndex: 1,
+        blockType: "paragraph",
+        sectionPath: ["References"],
+        text: "Acemoglu, D. 1999. Acemoglu, D. 2001. Acemoglu, D. 2002. Acemoglu, D. and Robinson, J. 2012.",
+        charStart: 102,
+        charEnd: 200,
+        lineStart: 3,
+        lineEnd: 3,
+        isReferenceLike: true,
+      },
+    ],
+  });
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [
+      {
+        docKey,
+        itemKey: "ITEMREF0",
+        title: "Reference Heavy Doc",
+        authors: ["A"],
+        filePath: "/tmp/ref-heavy.pdf",
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: 1,
+        mtimeMs: 1,
+        sourceHash: "hash-ref-pref",
+        lastIndexedAt: new Date().toISOString(),
+        normalizedPath: join(dataDir, "normalized", docKey + ".md"),
+        manifestPath,
+      },
+    ],
+  });
+
+  // Fake searchDocs returns the reference block (blockIndex 1) as the doc's
+  // best — exactly what FTS5 would return when a citation list scores higher
+  // than a single body mention. Fake searchBlocks returns both blocks ordered
+  // by rank (reference first, body second), so the engine must fall back to
+  // the body block.
+  const fakeKeywordFactory = async () => ({
+    rebuildIndex: async () => {},
+    searchDocs: async (_query: string) => [{ docKey, blockIndex: 1, score: 4.5 }],
+    searchBlocks: async (_query: string, _limit: number, options?: { docKeys?: string[] }) => {
+      if (options?.docKeys && !options.docKeys.includes(docKey)) return [];
+      return [
+        { docKey, blockIndex: 1, score: 4.5 },
+        { docKey, blockIndex: 0, score: 2.3 },
+      ];
+    },
+    isEmpty: async () => false,
+    close: async () => {},
+  });
+  const unusedQmdFactory = async () => {
+    throw new Error("qmd search should not run in keyword mode");
+  };
+
+  const result = await searchLiterature(
+    "Acemoglu",
+    10,
+    { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir },
+    unusedQmdFactory,
+    {},
+    fakeKeywordFactory,
+  );
+
+  assert.equal(result.results.length, 1);
+  assert.equal(result.results[0]!.itemKey, "ITEMREF0");
+  // Critical: the body block (0) must surface, not the reference block (1).
+  assert.equal(result.results[0]!.blockStart, 0);
+  assert.match(result.results[0]!.passage, /extractive institutions/);
+  // The doc's overall score stays the original (FTS5's MIN rank).
+  assert.equal(result.results[0]!.score, 4.5);
+});
+
 test("searchLiterature does not rebuild the keyword index when empty results come from a populated index", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-no-rebuild-"));
   const dataDir = join(root, "data");
