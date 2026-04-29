@@ -12,6 +12,7 @@ import { openQmdClient, type QmdFactory } from "./qmd.js";
 import { getReadyEntries, readCatalogFile, summarizeCatalog } from "./state.js";
 import type { AttachmentManifest, CatalogEntry, ManifestBlock, SearchResultRow } from "./types.js";
 import { cleanText, compactHomePath, exists, overlap, readManifestFile } from "./utils.js";
+import { toSimplified } from "./zh-convert.js";
 
 interface SearchBehaviorOptions {
   semantic?: boolean;
@@ -181,25 +182,228 @@ function truncateSearchPassage(text: string): string {
 // for English and ~250 chars worth of content for CJK.
 const PASSAGE_CHAR_RADIUS = 250;
 
+type SearchHitRange = {
+  blockStart: number;
+  blockEnd: number;
+  // Per-attachment character offset in the rendered markdown. buildSearchRow
+  // translates this into the item-global merged document coordinate.
+  anchorOffset?: number;
+};
+
+type QueryAnchorCandidate = {
+  text: string;
+  prefix: boolean;
+  priority: number;
+};
+
+const QUOTE_MARK_RE = /\uE000Q\d+\uE001/gu;
+const NEGATED_QUOTE_MARK_RE = /\bNOT\s+\uE000Q(\d+)\uE001/giu;
+const SEARCH_OPERATOR_RE = /^(AND|OR|NOT|NEAR)$/iu;
+const SEARCH_OPERATOR_IN_QUERY_RE = /\b(?:AND|OR|NOT|NEAR(?:\/\d+)?)\b/iu;
+const CJK_CHAR_RE =
+  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+function cleanCandidatePhrase(text: string): string {
+  return cleanText(text)
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+function addQueryAnchorCandidate(
+  candidates: QueryAnchorCandidate[],
+  text: string,
+  priority: number,
+  prefix = false,
+): void {
+  const cleaned = cleanCandidatePhrase(text);
+  if (!cleaned) return;
+  candidates.push({ text: cleaned, priority, prefix });
+}
+
+function queryAnchorCandidates(query: string): QueryAnchorCandidate[] {
+  const { masked, phrases } = maskQuotedPhrases(query);
+  const candidates: QueryAnchorCandidate[] = [];
+  const negatedPhraseIndexes = new Set<number>();
+
+  let negatedPhrase: RegExpExecArray | null;
+  while ((negatedPhrase = NEGATED_QUOTE_MARK_RE.exec(masked)) !== null) {
+    negatedPhraseIndexes.add(Number(negatedPhrase[1]));
+  }
+
+  for (const [index, phrase] of phrases.entries()) {
+    if (negatedPhraseIndexes.has(index)) continue;
+    addQueryAnchorCandidate(candidates, phrase.slice(1, -1), 0);
+  }
+
+  // For simple unquoted multi-token queries, try the literal phrase before
+  // falling back to individual terms. Operator queries (`OR`, `NOT`, `NEAR/N`)
+  // are intentionally term-anchored because the whole query is not a literal.
+  const hasOperators = SEARCH_OPERATOR_IN_QUERY_RE.test(masked);
+  if (!hasOperators && phrases.length === 0) {
+    const literal = query
+      .replace(/[^\p{L}\p{N}*]+/gu, " ")
+      .replace(/\s+/gu, " ")
+      .trim();
+    if (literal.includes(" ") || CJK_CHAR_RE.test(literal)) {
+      addQueryAnchorCandidate(candidates, literal, 1);
+    }
+  }
+
+  const unquoted = masked
+    .replace(/\bNOT\s+(?:\uE000Q\d+\uE001|[\p{L}\p{N}]+\*?)/giu, " ")
+    .replace(QUOTE_MARK_RE, " ")
+    .replace(/\bNEAR\/\d+\b/giu, " ");
+  const tokens = unquoted.match(/[\p{L}\p{N}]+\*?/gu) ?? [];
+  for (const token of tokens) {
+    const prefix = token.endsWith("*");
+    const text = prefix ? token.slice(0, -1) : token;
+    if (!text || SEARCH_OPERATOR_RE.test(text) || /^\d+$/u.test(text)) continue;
+    addQueryAnchorCandidate(candidates, text, 2, prefix);
+  }
+
+  const seen = new Set<string>();
+  return candidates
+    .sort((a, b) => a.priority - b.priority || b.text.length - a.text.length)
+    .filter((candidate) => {
+      const key = `${candidate.priority}:${candidate.prefix}:${candidate.text.toLocaleLowerCase()}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function candidatePattern(candidate: QueryAnchorCandidate): RegExp | null {
+  const chars = [...candidate.text.normalize("NFKC")];
+  if (chars.length === 0) return null;
+
+  let pattern = "";
+  let containsCjk = false;
+  for (let i = 0; i < chars.length; i += 1) {
+    const ch = chars[i]!;
+    if (/\s/u.test(ch)) {
+      pattern += "\\s+";
+      while (/\s/u.test(chars[i + 1] ?? "")) i += 1;
+      continue;
+    }
+    containsCjk ||= CJK_CHAR_RE.test(ch);
+    pattern += escapeRegExp(ch);
+    const next = chars[i + 1];
+    if (CJK_CHAR_RE.test(ch) && next !== undefined && CJK_CHAR_RE.test(next)) {
+      pattern += "\\s*";
+    }
+  }
+
+  const before = containsCjk ? "" : "(?<![\\p{L}\\p{N}])";
+  const after = containsCjk || candidate.prefix ? "" : "(?![\\p{L}\\p{N}])";
+  const suffix = candidate.prefix && !containsCjk ? "[\\p{L}\\p{N}]*" : "";
+  return new RegExp(`${before}${pattern}${suffix}${after}`, "iu");
+}
+
+function findCandidateMatch(
+  text: string,
+  candidate: QueryAnchorCandidate,
+): { index: number; length: number } | undefined {
+  const directPattern = candidatePattern(candidate);
+  const direct = directPattern?.exec(text);
+  if (direct) return { index: direct.index, length: direct[0].length };
+
+  const simplifiedText = toSimplified(text.normalize("NFKC"));
+  const simplifiedCandidate = {
+    ...candidate,
+    text: toSimplified(candidate.text.normalize("NFKC")),
+  };
+  if (simplifiedText === text && simplifiedCandidate.text === candidate.text) return undefined;
+
+  const simplifiedPattern = candidatePattern(simplifiedCandidate);
+  const simplified = simplifiedPattern?.exec(simplifiedText);
+  if (!simplified) return undefined;
+  // OpenCC and NFKC usually preserve offsets for the CJK and ASCII cases this
+  // fallback serves. If not, the clamped index is still a closer anchor than
+  // the whole-block midpoint.
+  return {
+    index: Math.min(simplified.index, text.length),
+    length: simplified[0].length,
+  };
+}
+
+function renderManifestRangeWithOffsets(
+  manifest: AttachmentManifest,
+  range: { blockStart: number; blockEnd: number },
+): { text: string; offsets: number[] } {
+  let text = "";
+  const offsets: number[] = [];
+  let lastOffset = 0;
+
+  for (let i = range.blockStart; i <= range.blockEnd; i += 1) {
+    const block = manifest.blocks[i];
+    if (!block) continue;
+    if (text.length > 0) {
+      text += "\n\n";
+      offsets.push(lastOffset, lastOffset);
+    }
+    const blockText = cleanText(block.text);
+    const snippet = renderMarkdownBlock({ ...block, text: blockText }).trim();
+    for (let j = 0; j < snippet.length; j += 1) {
+      offsets.push(block.charStart + j);
+    }
+    text += snippet;
+    lastOffset = block.charEnd;
+  }
+
+  return { text, offsets };
+}
+
+function findQueryAnchorOffset(
+  manifest: AttachmentManifest,
+  range: { blockStart: number; blockEnd: number },
+  query: string | undefined,
+): number | undefined {
+  if (!query?.trim()) return undefined;
+  const candidates = queryAnchorCandidates(query);
+  if (candidates.length === 0) return undefined;
+
+  const rendered = renderManifestRangeWithOffsets(manifest, range);
+  if (rendered.text.length === 0) return undefined;
+
+  for (const candidate of candidates) {
+    const match = findCandidateMatch(rendered.text, candidate);
+    if (!match) continue;
+    const anchorIndex = Math.min(
+      rendered.offsets.length - 1,
+      match.index + Math.floor(Math.max(1, match.length) / 2),
+    );
+    return rendered.offsets[anchorIndex];
+  }
+  return undefined;
+}
+
 function buildSearchRow(
   entry: CatalogEntry,
   itemGroup: CatalogEntry[],
   manifestCache: Map<string, AttachmentManifest>,
   markdownCache: Map<string, string>,
-  hitRange: { blockStart: number; blockEnd: number },
+  hitRange: SearchHitRange,
   score: number,
+  query?: string,
 ): SearchResultRow {
   // The FTS hit is per-attachment; everything user-facing is item-global. Load
   // the merged manifest once per item and slice its rendered markdown around
   // the hit so passages read as continuous prose, not as paragraph fragments
   // joined with `\n\n`.
   const merged = loadMergedManifestForGroup(itemGroup, manifestCache);
+  const source = readManifestCached(entry, manifestCache);
   const blockOffset = attachmentGlobalOffset(entry, itemGroup, manifestCache);
   const mergedStart = hitRange.blockStart + blockOffset;
   const mergedEnd = hitRange.blockEnd + blockOffset;
+  const sourceStartBlock = source.blocks[hitRange.blockStart];
+  const sourceEndBlock = source.blocks[hitRange.blockEnd];
   const startBlock = merged.blocks[mergedStart];
   const endBlock = merged.blocks[mergedEnd];
-  if (!startBlock || !endBlock) {
+  if (!sourceStartBlock || !sourceEndBlock || !startBlock || !endBlock) {
     throw new Error(
       `Hit block out of range for ${entry.itemKey}: requested ${mergedStart}..${mergedEnd}, manifest has ${merged.blocks.length} blocks`,
     );
@@ -209,7 +413,12 @@ function buildSearchRow(
     markdown = renderManifestMarkdown(merged);
     markdownCache.set(entry.itemKey, markdown);
   }
-  const spanCenter = Math.round((startBlock.charStart + endBlock.charEnd) / 2);
+  const sourceFallbackAnchor = Math.round((sourceStartBlock.charStart + sourceEndBlock.charEnd) / 2);
+  const sourceAnchor = hitRange.anchorOffset
+    ?? findQueryAnchorOffset(source, hitRange, query)
+    ?? sourceFallbackAnchor;
+  const charShift = startBlock.charStart - sourceStartBlock.charStart;
+  const spanCenter = Math.max(0, Math.min(markdown.length, sourceAnchor + charShift));
   const passageStart = Math.max(0, spanCenter - PASSAGE_CHAR_RADIUS);
   const passageEnd = Math.min(markdown.length, spanCenter + PASSAGE_CHAR_RADIUS);
   let passage = markdown.slice(passageStart, passageEnd);
@@ -250,9 +459,6 @@ function singleQuotedPhrase(query: string): string | null {
   return inner;
 }
 
-const CJK_CHAR_RE =
-  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
-
 function isMultiTokenExactPhrase(phrase: string): boolean {
   const normalized = normalizeExactText(phrase);
   const tokens = normalized.match(/[\p{L}\p{N}]+/gu) ?? [];
@@ -271,6 +477,7 @@ function buildKeywordSearchRow(
   markdownCache: Map<string, string>,
   blockIndex: number,
   score: number,
+  query: string,
 ): SearchResultRow {
   // FTS5 already returned this doc's best matching block; just frame the
   // single-block range. Block-level FTS does not match phrases that wrap a
@@ -278,7 +485,7 @@ function buildKeywordSearchRow(
   // level cross-block scan), since scanning all manifests for every `search`
   // call would be prohibitive on large libraries.
   const range = { blockStart: blockIndex, blockEnd: blockIndex };
-  return buildSearchRow(entry, itemGroup, manifestCache, markdownCache, range, score);
+  return buildSearchRow(entry, itemGroup, manifestCache, markdownCache, range, score, query);
 }
 
 function buildHybridSearchRow(
@@ -289,7 +496,10 @@ function buildHybridSearchRow(
   result: { bestChunkPos: number; bestChunk: string; score: number },
 ): SearchResultRow {
   const manifest = readManifestCached(entry, manifestCache);
-  const range = mapChunkToBlockRange(manifest, result.bestChunkPos, result.bestChunk);
+  const range = {
+    ...mapChunkToBlockRange(manifest, result.bestChunkPos, result.bestChunk),
+    anchorOffset: Math.max(0, result.bestChunkPos + Math.floor(result.bestChunk.length / 2)),
+  };
   return buildSearchRow(entry, itemGroup, manifestCache, markdownCache, range, result.score);
 }
 
@@ -410,7 +620,7 @@ export async function searchLiterature(
           const entry = entryByDocKey.get(result.docKey);
           if (!entry) return null;
           const itemGroup = itemGroups.get(entry.itemKey) ?? [entry];
-          return buildKeywordSearchRow(entry, itemGroup, manifestCache, markdownCache, result.blockIndex, result.score);
+          return buildKeywordSearchRow(entry, itemGroup, manifestCache, markdownCache, result.blockIndex, result.score, query);
         })
         .filter((value): value is SearchResultRow => value !== null)
         .sort((a, b) => b.score - a.score);
@@ -480,6 +690,7 @@ export async function searchWithinDocuments(
             mapped.push(buildSearchRow(
               entry, entries, manifestCache, markdownCache, exactRange,
               100 - (exactRange.blockEnd - exactRange.blockStart),
+              query,
             ));
           }
         }
@@ -490,7 +701,7 @@ export async function searchWithinDocuments(
       const entry = entryByDocKey.get(result.docKey);
       if (!entry) continue;
       const range = { blockStart: result.blockIndex, blockEnd: result.blockIndex };
-      mapped.push(buildSearchRow(entry, entries, manifestCache, markdownCache, range, result.score));
+      mapped.push(buildSearchRow(entry, entries, manifestCache, markdownCache, range, result.score, query));
     }
   } finally {
     await keywordIndex.close();

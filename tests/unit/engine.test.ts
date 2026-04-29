@@ -112,6 +112,181 @@ test("searchLiterature keyword mode uses the keyword index and skips qmd", async
   assert.match(result.results[0]!.passage, /dangwei shuji/i);
 });
 
+test("searchLiterature keyword mode anchors long-block passages on the matched query", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-long-anchor-"));
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docKey = "8".repeat(40);
+  const manifestPath = join(manifestsDir, docKey + MANIFEST_EXT);
+  const text = `needle ${"x".repeat(2000)}`;
+
+  writeManifest(manifestPath, {
+    docKey,
+    itemKey: "ITEMKANC",
+    title: "Long keyword block",
+    authors: ["A"],
+    filePath: "/tmp/long-keyword.pdf",
+    normalizedPath: join(dataDir, "normalized", docKey + ".md"),
+    blocks: [
+      {
+        blockIndex: 0,
+        blockType: "paragraph",
+        sectionPath: ["Body"],
+        text,
+        charStart: 0,
+        charEnd: text.length,
+        lineStart: 1,
+        lineEnd: 1,
+        isReferenceLike: false,
+      },
+    ],
+  });
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [
+      {
+        docKey,
+        itemKey: "ITEMKANC",
+        title: "Long keyword block",
+        authors: ["A"],
+        filePath: "/tmp/long-keyword.pdf",
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: 1,
+        mtimeMs: 1,
+        sourceHash: "hash-long-keyword",
+        lastIndexedAt: new Date().toISOString(),
+        normalizedPath: join(dataDir, "normalized", docKey + ".md"),
+        manifestPath,
+      },
+    ],
+  });
+
+  const fakeKeywordFactory = async () => ({
+    rebuildIndex: async () => {},
+    searchDocs: async (_query: string) => [{ docKey, blockIndex: 0, score: 1.5 }],
+    searchBlocks: async () => [],
+    isEmpty: async () => false,
+    close: async () => {},
+  });
+  const unusedQmdFactory = async () => {
+    throw new Error("qmd search should not run in keyword mode");
+  };
+
+  const result = await searchLiterature(
+    "needle",
+    10,
+    { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir },
+    unusedQmdFactory,
+    {},
+    fakeKeywordFactory,
+  );
+
+  assert.equal(result.results.length, 1);
+  assert.match(result.results[0]!.passage, /needle/);
+  assert.ok(result.results[0]!.charOffset < 20, `charOffset ${result.results[0]!.charOffset} should anchor near the hit`);
+});
+
+test("searchLiterature semantic mode anchors long-block passages on the best chunk", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-semantic-long-anchor-"));
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docKey = "7".repeat(40);
+  const manifestPath = join(manifestsDir, docKey + MANIFEST_EXT);
+  const bestChunk = "semantic-anchor";
+  const text = `${bestChunk} ${"x".repeat(2000)}`;
+
+  writeManifest(manifestPath, {
+    docKey,
+    itemKey: "ITEMSANC",
+    title: "Long semantic block",
+    authors: ["A"],
+    filePath: "/tmp/long-semantic.pdf",
+    normalizedPath: join(dataDir, "normalized", docKey + ".md"),
+    blocks: [
+      {
+        blockIndex: 0,
+        blockType: "paragraph",
+        sectionPath: ["Body"],
+        text,
+        charStart: 0,
+        charEnd: text.length,
+        lineStart: 1,
+        lineEnd: 1,
+        isReferenceLike: false,
+      },
+    ],
+  });
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [
+      {
+        docKey,
+        itemKey: "ITEMSANC",
+        title: "Long semantic block",
+        authors: ["A"],
+        filePath: "/tmp/long-semantic.pdf",
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: 1,
+        mtimeMs: 1,
+        sourceHash: "hash-long-semantic",
+        lastIndexedAt: new Date().toISOString(),
+        normalizedPath: join(dataDir, "normalized", docKey + ".md"),
+        manifestPath,
+      },
+    ],
+  });
+
+  const fakeQmdFactory = async () => ({
+    search: async () => [{
+      file: `qmd://library/${docKey}.md`,
+      displayPath: `qmd://library/${docKey}.md`,
+      bestChunk,
+      bestChunkPos: 0,
+      score: 0.9,
+    }],
+    searchLex: async () => [],
+    update: async () => ({}),
+    embed: async () => ({}),
+    getStatus: async () => ({ totalDocuments: 1, needsEmbedding: 0, hasVectorIndex: true, collections: [] }),
+    listContexts: async () => [],
+    addContext: async () => true,
+    removeContext: async () => true,
+    clearEmbeddings: async () => {},
+    cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
+    close: async () => {},
+  });
+
+  const result = await searchLiterature(
+    "semantic query",
+    10,
+    { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir },
+    fakeQmdFactory,
+    { semantic: true },
+  );
+
+  assert.equal(result.results.length, 1);
+  assert.match(result.results[0]!.passage, /semantic-anchor/);
+  assert.ok(result.results[0]!.charOffset < 20, `charOffset ${result.results[0]!.charOffset} should anchor near the best chunk`);
+});
+
 test("searchLiterature keyword mode bootstraps a missing keyword index from existing manifests", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-bootstrap-"));
   const dataDir = join(root, "data");
@@ -1593,12 +1768,11 @@ test("searchWithinDocuments OR with phrase requires each branch to actually matc
     { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir },
   );
   // Block 0 (scattered alpha/beta, no gamma) must not appear. Blocks 1 and 2
-  // both satisfy a branch and should appear. Each block's expected charOffset
-  // is the midpoint of its charStart..charEnd range.
-  const offsets = new Set(result.results.map((r) => r.charOffset));
-  assert.equal(offsets.has(33), false, "scattered alpha/beta block must be excluded");
-  assert.equal(offsets.has(90), true, "gamma-only block must appear");
-  assert.equal(offsets.has(139), true, "literal alpha beta block must appear");
+  // both satisfy a branch and should appear.
+  const offsets = result.results.map((r) => r.charOffset);
+  assert.equal(offsets.some((offset) => offset >= 0 && offset <= 65), false, "scattered alpha/beta block must be excluded");
+  assert.equal(offsets.some((offset) => offset >= 67 && offset <= 113), true, "gamma-only block must appear");
+  assert.equal(offsets.some((offset) => offset >= 115 && offset <= 162), true, "literal alpha beta block must appear");
 });
 
 test("searchWithinDocuments OR+NOT enforces NOT inside each branch", async () => {
@@ -1667,13 +1841,11 @@ test("searchWithinDocuments OR+NOT enforces NOT inside each branch", async () =>
     10,
     { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir },
   );
-  // charOffsets for each block (midpoint of charStart..charEnd):
-  //   block 0: (0+60)/2=30, block 1: (62+120)/2=91, block 2: (122+184)/2=153, block 3: (186+248)/2=217
-  const offsets = new Set(result.results.map((r) => r.charOffset));
-  assert.equal(offsets.has(91), true, "alpha-only block satisfies first branch");
-  assert.equal(offsets.has(153), true, "beta-only block satisfies second branch");
-  assert.equal(offsets.has(30), false, "alpha+delta block must be excluded by NOT");
-  assert.equal(offsets.has(217), false, "delta-only block satisfies neither branch");
+  const offsets = result.results.map((r) => r.charOffset);
+  assert.equal(offsets.some((offset) => offset >= 62 && offset <= 120), true, "alpha-only block satisfies first branch");
+  assert.equal(offsets.some((offset) => offset >= 122 && offset <= 184), true, "beta-only block satisfies second branch");
+  assert.equal(offsets.some((offset) => offset >= 0 && offset <= 60), false, "alpha+delta block must be excluded by NOT");
+  assert.equal(offsets.some((offset) => offset >= 186 && offset <= 248), false, "delta-only block satisfies neither branch");
 });
 
 test("getDocumentBlocks merges multi-attachment itemKey and expandDocument uses item-global blocks", () => {

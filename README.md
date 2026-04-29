@@ -21,9 +21,9 @@ Search and retrieval are the core features. Both read from a local index that `s
 
 - `blocks` — paginate blocks from one item's manifest with `--offset-block` / `--limit-blocks`.
 - `fulltext` — return the full normalized markdown for one item. `--clean` drops duplicate blocks and common boilerplate (citation notices, TOC lines).
-- `expand` — pull context around a block range, typically a search hit, with a configurable `--radius`.
+- `expand` — pull context around a search result's `charOffset`, with a configurable character `--radius`.
 
-All three address an item by `--key`, which accepts either `itemKey` or `citationKey`. A leading `@` is stripped before dispatch, so Pandoc-style citations can be pasted directly. Values matching `[A-Z0-9]{8}` are dispatched as `itemKey`; anything else is treated as `citationKey`. When one item has multiple indexed attachments, they are merged into one logical document with monotonic block indices and `# Attachment: <name>` dividers. Output always identifies items by `itemKey` only — citationKey is accepted as input but never emitted, so downstream chaining stays on a single stable key.
+All three address an item by `--key`, which accepts either `itemKey` or `citationKey`. A leading `@` is stripped before dispatch, so Pandoc-style citations can be pasted directly. Values matching `[A-Z0-9]{8}` are dispatched as `itemKey`; anything else is treated as `citationKey`. When one item has multiple indexed attachments, they are merged into one logical document with monotonic block indices/character offsets and `# Attachment: <name>` dividers. Output always identifies items by `itemKey` only — citationKey is accepted as input but never emitted, so downstream chaining stays on a single stable key.
 
 ### Diagnostics
 
@@ -186,12 +186,11 @@ Retrieval
         --clean                     Apply heuristic cleanup (drops duplicate blocks and
                                     common boilerplate such as citation notices and TOC lines).
 
-  expand --key <key> --block-start <n> [--block-end <n>] [--radius <n>]
-      Expand around a search hit or block range from a local manifest.
-      Block indices are item-global; feed blockStart from search results directly.
-        --block-start <n>           Start block for expand.
-        --block-end <n>             End block for expand. Default: block-start.
-        --radius <n>                Include n blocks before and after. Default: 2.
+  expand --key <key> --offset <n> [--radius <n>]
+      Return a continuous slice of the rendered markdown around a search-result
+      `charOffset`.
+        --offset <n>                Char offset to center on. Pass `charOffset` from a search result.
+        --radius <n>                Half-window in characters. Default: 1000 (i.e. ~2000 char window).
 
 Diagnostics
   diagnose [--limit <n>] [--all] [--threshold-avg <n>] [--threshold-median <n>]
@@ -260,7 +259,7 @@ Add to Zotero
 A few behaviors worth knowing:
 
 - `add` does not deduplicate against your existing Zotero library — it is speed-first and returns `itemKey` immediately. New items are tagged `Added by AI Agent`.
-- `search` truncates each hit's `passage` at 500 tokens so bulk results stay compact regardless of language; use `expand` to pull full context around a block range. Title-driven lookups belong in `metadata`, not `search`, because keyword search indexes attachment body text only. `metadata` omits `abstract` by default for the same compactness reason — pass `--abstract` to include it.
+- `search` returns a compact character-windowed `passage` centered on the hit and capped at 500 tokens; use `expand --key <key> --offset <charOffset>` to pull fuller context. Title-driven lookups belong in `metadata`, not `search`, because keyword search indexes attachment body text only. `metadata` omits `abstract` by default for the same compactness reason — pass `--abstract` to include it.
 - Traditional Chinese is folded to simplified at both index and query time. This applies to `search`, `search-in`, and `metadata`; `search --semantic` does not fold. Returned text (`passage`, `blocks`, `fulltext`, `expand`) preserves the original form as stored in the attachment.
 - `sync` skips files that fail extraction, records them as `error`, and continues. Re-runs skip unchanged errors; pass `--retry-errors` to retry. When an item has both a PDF and an EPUB, only the EPUB is indexed (both files stay attached in Zotero).
 - `sync` auto-loads `~/.zotagent/excludes.txt` when present. Put one `itemKey` or `citationKey` per line; blank lines and `#` comments are ignored. Excluded items are skipped entirely and removed from local keyword/qmd indexing on the next sync.
