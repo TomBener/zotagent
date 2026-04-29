@@ -90,28 +90,28 @@ test("openKeywordIndex builds and searches with porter stemming", async () => {
     assert.equal(existsSync(getDataPaths(dataDir).keywordDbPath), true);
 
     // Porter stemming: "governing" matches "governs"
-    const stemmed = await client.search("governing", 10);
+    const stemmed = await client.searchDocs("governing", 10);
     assert.equal(stemmed.length, 1);
     assert.equal(stemmed[0]!.docKey, docKey);
 
     // Multi-word AND
-    const multi = await client.search("party secretary", 10);
+    const multi = await client.searchDocs("party secretary", 10);
     assert.equal(multi.length, 1);
 
     // Phrase search
-    const phrase = await client.search('"party secretary"', 10);
+    const phrase = await client.searchDocs('"party secretary"', 10);
     assert.equal(phrase.length, 1);
 
     // No match
-    const missing = await client.search("nonexistent gibberish", 10);
+    const missing = await client.searchDocs("nonexistent gibberish", 10);
     assert.deepEqual(missing, []);
 
     // OR operator
-    const orQuery = await client.search("secretary OR gibberish", 10);
+    const orQuery = await client.searchDocs("secretary OR gibberish", 10);
     assert.equal(orQuery.length, 1);
 
     // Prefix search
-    const prefix = await client.search("govern*", 10);
+    const prefix = await client.searchDocs("govern*", 10);
     assert.equal(prefix.length, 1);
   } finally {
     await client.close();
@@ -148,12 +148,12 @@ test("rebuildIndex replaces old entries with new ones", async () => {
   const client = await openKeywordIndex(createConfig(dataDir));
   try {
     await client.rebuildIndex([oldEntry]);
-    assert.equal((await client.search("cadres", 10)).length, 1);
+    assert.equal((await client.searchDocs("cadres", 10)).length, 1);
 
     // Full rebuild with only the new entry — old entry should be gone.
     await client.rebuildIndex([newEntry]);
-    assert.deepEqual(await client.search("cadres", 10), []);
-    assert.equal((await client.search("dangwei", 10)).length, 1);
+    assert.deepEqual(await client.searchDocs("cadres", 10), []);
+    assert.equal((await client.searchDocs("dangwei", 10)).length, 1);
   } finally {
     await client.close();
   }
@@ -167,7 +167,7 @@ test("search throws on empty query", async () => {
   const client = await openKeywordIndex(createConfig(dataDir));
   try {
     await assert.rejects(
-      () => client.search("", 10),
+      () => client.searchDocs("", 10),
       { message: "Search text cannot be empty." },
     );
   } finally {
@@ -296,14 +296,14 @@ test("CJK keyword search matches Chinese content via NEAR", async () => {
   const client = await openKeywordIndex(createConfig(dataDir));
   try {
     await client.rebuildIndex([entry]);
-    const results = await client.search("盛世才", 10);
+    const results = await client.searchDocs("盛世才", 10);
     assert.equal(results.length, 1);
     assert.equal(results[0]!.docKey, docKey);
 
-    const results2 = await client.search("新疆", 10);
+    const results2 = await client.searchDocs("新疆", 10);
     assert.equal(results2.length, 1);
 
-    const quoted = await client.search('"盛世才"', 10);
+    const quoted = await client.searchDocs('"盛世才"', 10);
     assert.equal(quoted.length, 1);
     assert.equal(quoted[0]!.docKey, docKey);
   } finally {
@@ -345,7 +345,7 @@ test("keyword search is agnostic to traditional vs simplified Chinese", async ()
     await client.rebuildIndex([tradEntry, simpEntry]);
 
     // A simplified query finds both documents.
-    const simpHits = await client.search("开发新疆", 10);
+    const simpHits = await client.searchDocs("开发新疆", 10);
     assert.equal(simpHits.length, 2);
     assert.deepEqual(
       simpHits.map((h) => h.docKey).sort(),
@@ -353,7 +353,7 @@ test("keyword search is agnostic to traditional vs simplified Chinese", async ()
     );
 
     // A traditional query finds both documents.
-    const tradHits = await client.search("開發新疆", 10);
+    const tradHits = await client.searchDocs("開發新疆", 10);
     assert.equal(tradHits.length, 2);
     assert.deepEqual(
       tradHits.map((h) => h.docKey).sort(),
@@ -361,13 +361,13 @@ test("keyword search is agnostic to traditional vs simplified Chinese", async ()
     );
 
     // Quoted phrase form works across variants.
-    const quotedTrad = await client.search('"開發新疆"', 10);
+    const quotedTrad = await client.searchDocs('"開發新疆"', 10);
     assert.equal(quotedTrad.length, 2);
-    const quotedSimp = await client.search('"开发新疆"', 10);
+    const quotedSimp = await client.searchDocs('"开发新疆"', 10);
     assert.equal(quotedSimp.length, 2);
 
     // NEAR/N proximity across variants.
-    const nearHits = await client.search('"開發新疆" NEAR/20 "人力財力"', 10);
+    const nearHits = await client.searchDocs('"開發新疆" NEAR/20 "人力財力"', 10);
     assert.equal(nearHits.length, 2);
   } finally {
     await client.close();
@@ -396,15 +396,15 @@ test("keyword search accepts canonical NEAR/N with CJK phrases against a real FT
   const client = await openKeywordIndex(createConfig(dataDir));
   try {
     await client.rebuildIndex([entry]);
-    const distance = await client.search('"开发新疆" NEAR/50 "人力财力"', 10);
+    const distance = await client.searchDocs('"开发新疆" NEAR/50 "人力财力"', 10);
     assert.equal(distance.length, 1);
     assert.equal(distance[0]!.docKey, docKey);
     await assert.rejects(
-      () => client.search('"开发新疆" NEAR "人力财力"', 10),
+      () => client.searchDocs('"开发新疆" NEAR "人力财力"', 10),
       KeywordQuerySyntaxError,
     );
     await assert.rejects(
-      () => client.search('NEAR("开发新疆" "人力财力", 50)', 10),
+      () => client.searchDocs('NEAR("开发新疆" "人力财力", 50)', 10),
       KeywordQuerySyntaxError,
     );
   } finally {
@@ -434,7 +434,7 @@ test("quoted literal containing the word NEAR still matches the original text", 
   const client = await openKeywordIndex(createConfig(dataDir));
   try {
     await client.rebuildIndex([entry]);
-    const results = await client.search('"foo NEAR bar"', 10);
+    const results = await client.searchDocs('"foo NEAR bar"', 10);
     assert.equal(results.length, 1);
     assert.equal(results[0]!.docKey, docKey);
   } finally {
@@ -500,14 +500,14 @@ test("search filters to a single docKey when docKeys is provided", async () => {
   try {
     await client.rebuildIndex(entries);
 
-    const all = await client.search("property", 10);
+    const all = await client.searchDocs("property", 10);
     assert.equal(all.length, 2);
 
-    const filtered = await client.search("property", 10, { docKeys: [docTwo] });
+    const filtered = await client.searchDocs("property", 10, { docKeys: [docTwo] });
     assert.equal(filtered.length, 1);
     assert.equal(filtered[0]!.docKey, docTwo);
 
-    const empty = await client.search("property", 10, { docKeys: [] });
+    const empty = await client.searchDocs("property", 10, { docKeys: [] });
     assert.equal(empty.length, 2, "an empty docKeys array should not constrain results");
   } finally {
     await client.close();
@@ -601,7 +601,7 @@ test("search handles malformed FTS5 queries gracefully", async () => {
   try {
     await client.rebuildIndex([entry]);
     // Unbalanced quotes should not throw, should fall back to sanitized query
-    const results = await client.search('"aging in', 10);
+    const results = await client.searchDocs('"aging in', 10);
     assert.equal(results.length, 1);
   } finally {
     await client.close();

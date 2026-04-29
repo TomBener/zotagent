@@ -239,10 +239,11 @@ test("searchLiterature keyword mode uses the keyword index and skips qmd", async
   let keywordSearchCalled = false;
   const fakeKeywordFactory = async () => ({
     rebuildIndex: async () => {},
-    search: async (_query: string) => {
+    searchDocs: async (_query: string) => {
       keywordSearchCalled = true;
-      return [{ docKey, score: 1.5 }];
+      return [{ docKey, blockIndex: 0, score: 1.5 }];
     },
+    searchBlocks: async () => [],
     isEmpty: async () => false,
     close: async () => {},
   });
@@ -411,154 +412,7 @@ test("searchLiterature keyword mode maps stemmed hits to the matching block", as
   assert.match(result.results[0]!.passage, /governs recruitment/i);
 });
 
-test("searchLiterature keyword mode uses the title when the title is the only match", async () => {
-  const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-title-"));
-  const dataDir = join(root, "data");
-  const indexDir = join(dataDir, "index");
-  const manifestsDir = join(dataDir, "manifests");
-  mkdirSync(indexDir, { recursive: true });
-  mkdirSync(manifestsDir, { recursive: true });
-
-  const docKey = "d".repeat(40);
-  const manifestPath = join(manifestsDir, docKey + MANIFEST_EXT);
-
-  writeManifest(manifestPath, {
-    docKey,
-    itemKey: "ITEMD000",
-    title: "Party Secretary Governance",
-    authors: ["A"],
-    filePath: "/tmp/title-only.pdf",
-    normalizedPath: join(dataDir, "normalized", docKey + ".md"),
-    blocks: [
-      {
-        blockIndex: 0,
-        blockType: "paragraph",
-        sectionPath: ["Body"],
-        text: "This study examines enterprise governance.",
-        charStart: 0,
-        charEnd: 42,
-        lineStart: 1,
-        lineEnd: 1,
-        isReferenceLike: false,
-      },
-    ],
-  });
-
-  writeCatalogFile(join(indexDir, "catalog.json"), {
-    version: 1,
-    generatedAt: new Date().toISOString(),
-    entries: [
-      {
-        docKey,
-        itemKey: "ITEMD000",
-        title: "Party Secretary Governance",
-        authors: ["A"],
-        filePath: "/tmp/title-only.pdf",
-        fileExt: "pdf",
-        exists: true,
-        supported: true,
-        extractStatus: "ready",
-        size: 1,
-        mtimeMs: 1,
-        sourceHash: "hash-title",
-        lastIndexedAt: new Date().toISOString(),
-        normalizedPath: join(dataDir, "normalized", docKey + ".md"),
-        manifestPath,
-      },
-    ],
-  });
-
-  const result = await searchLiterature(
-    "secretary",
-    10,
-    { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir },
-  );
-
-  assert.equal(result.results.length, 1);
-  assert.equal(result.results[0]!.itemKey, "ITEMD000");
-  assert.equal(result.results[0]!.passage, "Party Secretary Governance");
-});
-
-test("searchLiterature keyword mode drops CJK candidates without a verifiable block or title match", async () => {
-  const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-cjk-false-positive-"));
-  const dataDir = join(root, "data");
-  const indexDir = join(dataDir, "index");
-  const manifestsDir = join(dataDir, "manifests");
-  mkdirSync(indexDir, { recursive: true });
-  mkdirSync(manifestsDir, { recursive: true });
-
-  const docKey = "e".repeat(40);
-  const manifestPath = join(manifestsDir, docKey + MANIFEST_EXT);
-
-  writeManifest(manifestPath, {
-    docKey,
-    itemKey: "ITEME000",
-    title: "党委书记研究",
-    authors: ["A"],
-    filePath: "/tmp/cjk-false-positive.pdf",
-    normalizedPath: join(dataDir, "normalized", docKey + ".md"),
-    blocks: [
-      {
-        blockIndex: 0,
-        blockType: "paragraph",
-        sectionPath: ["Body"],
-        text: "党委书记是干部体系中的关键岗位。",
-        charStart: 0,
-        charEnd: 17,
-        lineStart: 1,
-        lineEnd: 1,
-        isReferenceLike: false,
-      },
-    ],
-  });
-
-  writeCatalogFile(join(indexDir, "catalog.json"), {
-    version: 1,
-    generatedAt: new Date().toISOString(),
-    entries: [
-      {
-        docKey,
-        itemKey: "ITEME000",
-        title: "党委书记研究",
-        authors: ["A"],
-        filePath: "/tmp/cjk-false-positive.pdf",
-        fileExt: "pdf",
-        exists: true,
-        supported: true,
-        extractStatus: "ready",
-        size: 1,
-        mtimeMs: 1,
-        sourceHash: "hash-cjk-false-positive",
-        lastIndexedAt: new Date().toISOString(),
-        normalizedPath: join(dataDir, "normalized", docKey + ".md"),
-        manifestPath,
-      },
-    ],
-  });
-
-  const fakeKeywordFactory = async () => ({
-    rebuildIndex: async () => {},
-    search: async (_query: string) => [{ docKey, score: 1.5 }],
-    isEmpty: async () => false,
-    close: async () => {},
-  });
-  const unusedQmdFactory = async () => {
-    throw new Error("qmd search should not run in keyword mode");
-  };
-
-  const result = await searchLiterature(
-    "书记党委",
-    10,
-    { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir },
-    unusedQmdFactory,
-    {},
-    fakeKeywordFactory,
-  );
-
-  assert.equal(result.results.length, 0);
-});
-
-test("searchLiterature keyword mode verifies spaced CJK text before keeping a candidate", async () => {
+test("searchLiterature keyword mode matches spaced CJK content via NEAR rewriting", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-cjk-spacing-"));
   const dataDir = join(root, "data");
   const indexDir = join(dataDir, "index");
@@ -617,7 +471,7 @@ test("searchLiterature keyword mode verifies spaced CJK text before keeping a ca
 
   const fakeKeywordFactory = async () => ({
     rebuildIndex: async () => {},
-    search: async (_query: string) => [{ docKey, score: 1.5 }],
+    searchDocs: async (_query: string) => [{ docKey, blockIndex: 0, score: 1.5 }],
     isEmpty: async () => false,
     close: async () => {},
   });
@@ -702,7 +556,7 @@ test("searchLiterature keyword mode verifies a traditional query against a simpl
 
   const fakeKeywordFactory = async () => ({
     rebuildIndex: async () => {},
-    search: async (_query: string) => [{ docKey, score: 1.5 }],
+    searchDocs: async (_query: string) => [{ docKey, blockIndex: 0, score: 1.5 }],
     isEmpty: async () => false,
     close: async () => {},
   });
@@ -797,7 +651,7 @@ test("searchLiterature NEAR/N picks the CJK co-occurrence block, not a distance 
 
   const fakeKeywordFactory = async () => ({
     rebuildIndex: async () => {},
-    search: async (_query: string) => [{ docKey, score: 1.5 }],
+    searchDocs: async (_query: string) => [{ docKey, blockIndex: 1, score: 1.5 }],
     isEmpty: async () => false,
     close: async () => {},
   });
@@ -894,7 +748,7 @@ test("searchLiterature keeps AND/NEAR inside a quoted literal phrase for passage
 
   const fakeKeywordFactory = async () => ({
     rebuildIndex: async () => {},
-    search: async (_query: string) => [{ docKey, score: 1.5 }],
+    searchDocs: async (_query: string) => [{ docKey, blockIndex: 1, score: 1.5 }],
     isEmpty: async () => false,
     close: async () => {},
   });
@@ -976,7 +830,7 @@ test("searchLiterature does not rebuild the keyword index when empty results com
   let rebuildCalled = false;
   const fakeKeywordFactory = async () => ({
     rebuildIndex: async () => { rebuildCalled = true; },
-    search: async (_query: string) => [],
+    searchDocs: async (_query: string) => [],
     isEmpty: async () => false,
     close: async () => {},
   });
@@ -1080,8 +934,8 @@ test("searchWithinDocuments returns passages from the selected attachment", asyn
 
   const fakeKeywordFactory = async () => ({
     rebuildIndex: async () => {},
-    search: async (_query: string, _limit: number, options?: { docKeys?: string[] }) =>
-      (options?.docKeys ?? [docKey]).map((k) => ({ docKey: k, score: 1 })),
+    searchDocs: async (_query: string, _limit: number, options?: { docKeys?: string[] }) =>
+      (options?.docKeys ?? [docKey]).map((k) => ({ docKey: k, blockIndex: 1, score: 1 })),
     searchBlocks: async (_query: string, _limit: number, options?: { docKeys?: string[] }) =>
       (options?.docKeys ?? [docKey]).map((k) => ({ docKey: k, blockIndex: 1, score: 1 })),
     isEmpty: async () => false,
@@ -1210,8 +1064,8 @@ test("searchWithinDocuments searches across multiple attachments for the same ke
 
   const fakeKeywordFactory = async () => ({
     rebuildIndex: async () => {},
-    search: async (_query: string, _limit: number, options?: { docKeys?: string[] }) =>
-      (options?.docKeys ?? [docOne, docTwo]).map((k) => ({ docKey: k, score: 1 })),
+    searchDocs: async (_query: string, _limit: number, options?: { docKeys?: string[] }) =>
+      (options?.docKeys ?? [docOne, docTwo]).map((k) => ({ docKey: k, blockIndex: 0, score: 1 })),
     searchBlocks: async (_query: string, _limit: number, options?: { docKeys?: string[] }) =>
       (options?.docKeys ?? [docOne, docTwo]).map((k) => ({ docKey: k, blockIndex: 0, score: 1 })),
     isEmpty: async () => false,

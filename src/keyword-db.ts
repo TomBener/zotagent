@@ -7,6 +7,7 @@ import { toSimplified } from "./zh-convert.js";
 
 export interface KeywordSearchResult {
   docKey: string;
+  blockIndex: number;
   score: number;
 }
 
@@ -26,14 +27,14 @@ export interface KeywordBlockSearchOptions {
 
 export interface KeywordIndexClient {
   rebuildIndex(readyEntries: CatalogEntry[]): Promise<void>;
-  search(query: string, limit: number, options?: KeywordSearchOptions): Promise<KeywordSearchResult[]>;
+  searchDocs(query: string, limit: number, options?: KeywordSearchOptions): Promise<KeywordSearchResult[]>;
   searchBlocks(query: string, limit: number, options?: KeywordBlockSearchOptions): Promise<KeywordBlockSearchResult[]>;
   isEmpty(): Promise<boolean>;
   close(): Promise<void>;
 }
 
 export type KeywordIndexFactory = (config: AppConfig) => Promise<KeywordIndexClient>;
-export const KEYWORD_INDEX_SCHEMA_VERSION = "keyword-fts5-porter-unicode61-contentless-tradsimp-v3-blockindex";
+export const KEYWORD_INDEX_SCHEMA_VERSION = "keyword-fts5-porter-unicode61-contentless-tradsimp-v4-blockonly";
 
 export class KeywordQuerySyntaxError extends Error {
   constructor(message: string) {
@@ -43,12 +44,12 @@ export class KeywordQuerySyntaxError extends Error {
 }
 
 function ensureSchema(db: Database.Database): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS keyword_docs (
-      rowid INTEGER PRIMARY KEY,
-      docKey TEXT NOT NULL
-    )
-  `);
+  // v3-blockindex left behind a doc-level keyword_fts(title, body) and its
+  // keyword_docs shadow. v4-blockonly drops both — title search lives in the
+  // metadata command, and body content is fully captured in keyword_block_fts.
+  db.exec("DROP TABLE IF EXISTS keyword_fts");
+  db.exec("DROP TABLE IF EXISTS keyword_docs");
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS keyword_blocks (
       rowid INTEGER PRIMARY KEY,
@@ -56,18 +57,6 @@ function ensureSchema(db: Database.Database): void {
       blockIndex INTEGER NOT NULL
     )
   `);
-  const ftsExists = db.prepare(
-    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='keyword_fts'",
-  ).get();
-  if (!ftsExists) {
-    db.exec(`
-      CREATE VIRTUAL TABLE keyword_fts USING fts5(
-        title, body,
-        tokenize='porter unicode61',
-        content=''
-      )
-    `);
-  }
   const blockFtsExists = db.prepare(
     "SELECT 1 FROM sqlite_master WHERE type='table' AND name='keyword_block_fts'",
   ).get();
@@ -110,15 +99,7 @@ export function segmentCjk(text: string): string {
 }
 
 function rebuildTable(db: Database.Database, readyEntries: CatalogEntry[]): void {
-  db.exec("DROP TABLE IF EXISTS keyword_fts");
   db.exec("DROP TABLE IF EXISTS keyword_block_fts");
-  db.exec(`
-    CREATE VIRTUAL TABLE keyword_fts USING fts5(
-      title, body,
-      tokenize='porter unicode61',
-      content=''
-    )
-  `);
   db.exec(`
     CREATE VIRTUAL TABLE keyword_block_fts USING fts5(
       text,
@@ -126,15 +107,11 @@ function rebuildTable(db: Database.Database, readyEntries: CatalogEntry[]): void
       content=''
     )
   `);
-  db.exec("DELETE FROM keyword_docs");
   db.exec("DELETE FROM keyword_blocks");
 
-  const insertDoc = db.prepare("INSERT INTO keyword_docs (rowid, docKey) VALUES (?, ?)");
-  const insertFts = db.prepare("INSERT INTO keyword_fts (rowid, title, body) VALUES (?, ?, ?)");
   const insertBlock = db.prepare("INSERT INTO keyword_blocks (rowid, docKey, blockIndex) VALUES (?, ?, ?)");
   const insertBlockFts = db.prepare("INSERT INTO keyword_block_fts (rowid, text) VALUES (?, ?)");
 
-  let docRowid = 1;
   let blockRowid = 1;
   for (const entry of readyEntries) {
     if (!entry.manifestPath || !exists(entry.manifestPath)) continue;
@@ -143,11 +120,6 @@ function rebuildTable(db: Database.Database, readyEntries: CatalogEntry[]): void
       .map((block) => ({ blockIndex: block.blockIndex, indexed: segmentCjk(toSimplified(block.text)) }))
       .filter((b) => b.indexed.length > 0);
     if (indexedBlocks.length === 0) continue;
-
-    const body = indexedBlocks.map((b) => b.indexed).join("\n");
-    insertDoc.run(docRowid, entry.docKey);
-    insertFts.run(docRowid, segmentCjk(toSimplified(entry.title)), body);
-    docRowid += 1;
 
     for (const b of indexedBlocks) {
       insertBlock.run(blockRowid, entry.docKey, b.blockIndex);
@@ -286,36 +258,38 @@ export async function openKeywordIndex(config: AppConfig): Promise<KeywordIndexC
     },
 
     isEmpty: async () => {
-      const docRow = db.prepare("SELECT 1 FROM keyword_docs LIMIT 1").get();
-      if (docRow === undefined) return true;
       const blockRow = db.prepare("SELECT 1 FROM keyword_blocks LIMIT 1").get();
       return blockRow === undefined;
     },
 
-    search: async (query, limit, options) => {
+    searchDocs: async (query, limit, options) => {
       if (query.trim().length === 0) {
         throw new Error("Search text cannot be empty.");
       }
       const docKeys = options?.docKeys;
 
       const docKeyFilter = docKeys && docKeys.length > 0
-        ? `AND d.docKey IN (${docKeys.map(() => "?").join(",")})`
+        ? `AND b.docKey IN (${docKeys.map(() => "?").join(",")})`
         : "";
+      // GROUP BY docKey + MIN(rank): SQLite picks blockIndex from the row that
+      // produced the minimum rank (bare-column-with-min behavior), giving us
+      // each doc's best matching block in one query.
       const sql = `
-        SELECT d.docKey, f.rank
-        FROM keyword_fts f
-        JOIN keyword_docs d ON d.rowid = f.rowid
-        WHERE keyword_fts MATCH ?
+        SELECT b.docKey, b.blockIndex, MIN(f.rank) AS rank
+        FROM keyword_block_fts f
+        JOIN keyword_blocks b ON b.rowid = f.rowid
+        WHERE keyword_block_fts MATCH ?
         ${docKeyFilter}
-        ORDER BY f.rank
+        GROUP BY b.docKey
+        ORDER BY rank
         LIMIT ?
       `;
       const docKeyParams = docKeys && docKeys.length > 0 ? docKeys : [];
 
       const ftsQuery = buildFtsQuery(query);
       try {
-        const rows = db.prepare(sql).all(ftsQuery, ...docKeyParams, limit) as Array<{ docKey: string; rank: number }>;
-        return rows.map((row) => ({ docKey: row.docKey, score: -row.rank }));
+        const rows = db.prepare(sql).all(ftsQuery, ...docKeyParams, limit) as Array<{ docKey: string; blockIndex: number; rank: number }>;
+        return rows.map((row) => ({ docKey: row.docKey, blockIndex: row.blockIndex, score: -row.rank }));
       } catch (error) {
         if (error instanceof KeywordQuerySyntaxError) {
           throw error;
@@ -325,8 +299,8 @@ export async function openKeywordIndex(config: AppConfig): Promise<KeywordIndexC
           throw new Error("Search text cannot be empty.");
         }
         const fallback = buildFtsQuery(sanitized);
-        const rows = db.prepare(sql).all(fallback, ...docKeyParams, limit) as Array<{ docKey: string; rank: number }>;
-        return rows.map((row) => ({ docKey: row.docKey, score: -row.rank }));
+        const rows = db.prepare(sql).all(fallback, ...docKeyParams, limit) as Array<{ docKey: string; blockIndex: number; rank: number }>;
+        return rows.map((row) => ({ docKey: row.docKey, blockIndex: row.blockIndex, score: -row.rank }));
       }
     },
 

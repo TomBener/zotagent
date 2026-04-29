@@ -712,14 +712,14 @@ test("keyword index searches with FTS5 porter stemming", async () => {
   const keywordIndex = await openKeywordIndex(config);
 
   try {
-    const results = await keywordIndex.search("dangwei shuji", 10);
+    const results = await keywordIndex.searchDocs("dangwei shuji", 10);
     assert.deepEqual(results.map((row) => row.docKey), [fixture.docKey]);
 
     // Porter stemming: "governance" matches "governs"/"governing" etc.
-    const stemmed = await keywordIndex.search("governance", 10);
+    const stemmed = await keywordIndex.searchDocs("governance", 10);
     assert.equal(stemmed.length, 1);
 
-    const missing = await keywordIndex.search("nonexistent gibberish xyz", 10);
+    const missing = await keywordIndex.searchDocs("nonexistent gibberish xyz", 10);
     assert.deepEqual(missing, []);
   } finally {
     await keywordIndex.close();

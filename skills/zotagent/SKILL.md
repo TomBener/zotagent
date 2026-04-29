@@ -13,15 +13,17 @@ Don't invent citation keys, item keys, or passage text. If a query returns nothi
 
 | Command | Searches over | Good for |
 |---|---|---|
-| `zotagent search "<q>" [--semantic] [--limit n] [--min-score n]` | Indexed full text (FTS5 keyword by default; vector + LLM query expansion with `--semantic`) | Finding passages that discuss a topic across the library |
+| `zotagent search "<q>" [--semantic] [--limit n] [--min-score n]` | Indexed full text only — body, not title (FTS5 keyword by default; vector + LLM query expansion with `--semantic`) | Finding passages that discuss a topic across the library |
 | `zotagent search-in "<q>" --key <k> [--limit n]` | Full text of one item's attachments | Drilling into a single paper for a term |
-| `zotagent metadata ["<q>"] [metadata filters...] [--field f] [--abstract] [--has-file] [--limit n]` | Bibliography fields: title / author / year / journal / publisher / abstract | Finding papers by metadata, verifying existence, resolving an `itemKey` |
+| `zotagent metadata ["<q>"] [metadata filters...] [--field f] [--abstract] [--has-file] [--limit n]` | Bibliography fields: title / author / year / journal / publisher / abstract | Finding papers by metadata or by title, verifying existence, resolving an `itemKey` |
+
+**Title queries belong in `metadata`, not `search`.** `search` only matches body text; a query like `search "Attention Is All You Need"` will find passages that mention the phrase, not the paper with that title. Use `metadata "Attention Is All You Need" --field title` for title-driven lookups.
 
 Metadata quick rules:
 - Positional query, field filters (`--author` / `--year` / `--title` / `--journal` / `--publisher`), or both are valid.
 - `--field` scopes only the positional query; filter flags AND together.
 - `--abstract` includes abstract text in the output. To search abstract text, use a positional query with `--field abstract`.
-- `metadata "Pratt 1985"` returns empty (year is not OR'd in) — split into `--author "Pratt" --year "1985"`.
+- `metadata "Pratt 1985"` generally returns empty (year is not OR'd in) — split into `--author "Pratt" --year "1985"`.
 
 Keyword syntax — `search` and `search-in` both run SQLite FTS5 with a porter stemmer over a Trad→Simp folded index, so the same operators work in both:
 
@@ -31,12 +33,12 @@ Keyword syntax — `search` and `search-in` both run SQLite FTS5 with a porter s
 | AND (default) | `alpha beta` | Implicit between bare tokens. |
 | OR | `Acemoglu OR Robinson` | Must be uppercase. Lowercase `or` is a literal term, not an operator. |
 | NOT | `alpha NOT beta` | Excludes the right-hand expression. Same uppercase rule. |
-| Proximity | `"土地" NEAR/20 "垦荒"` | Within N tokens, unordered. Use `NEAR/<n>`, not `NEAR(...)`. |
+| Proximity | `"土地" NEAR/20 "利用"` | Within N tokens, unordered. Use `NEAR/<n>`, not `NEAR`. |
 | Prefix wildcard | `Pete*` | Matches any token starting with `Pete`: `Peter`, `Petersen`, etc. Wildcard only at the end. |
 
-`search-in` evaluates the query per block, so a returned passage satisfies the query on its own (operator semantics honored at the block level, not just the document level). `search` ranks at the document level and surfaces one best passage per matched item.
+Both `search` and `search-in` evaluate the query against per-block FTS. `search-in` returns every matching block in the targeted document; `search` returns one row per matched document — each doc's best-ranking block (by FTS5 bm25) is the surfaced passage.
 
-**`NEAR/<n>` is the best first pass** when you have 2–3 anchor terms that should co-occur but not necessarily adjacent — e.g. `"土地" NEAR/20 "垦荒"`. It is usually more precise than plain keyword and much faster than `--semantic`.
+**`NEAR/<n>` is the best first pass** when you have 2–3 anchor terms that should co-occur but not necessarily adjacent — e.g. `"土地" NEAR/20 "利用"`. It is usually more precise than plain keyword and much faster than `--semantic`.
 
 Keyword vs semantic heuristic: start with keyword (exact phrases, `OR`, `NEAR`) for names, anchor terms, or quotations; switch to `--semantic` when phrasing is fuzzy or you want conceptual neighbors. `NEAR/<n>` is especially useful on OCR'd or scanned materials (Republican China vertical-layout texts, old gazetteers, etc.), where one keyword often drowns in noise.
 
