@@ -4,16 +4,13 @@
 
 ## Core invariants
 
-- All document-selecting commands take `--key <value>`. Values matching `[A-Z0-9]{8}` are resolved as Zotero `itemKey`; anything else as Better BibTeX `citationKey`. Output always identifies items by `itemKey` only — `citationKey` is an accepted input alias but is never emitted.
-- `docKey = sha1(relativePath)`. Renaming/moving an attachment inside `attachmentsRoot` is detected via `(itemKey, size, mtimeMs)` matching a previously-ready entry whose filePath has dropped out of the bibliography: the cached manifest + normalized markdown are migrated to the new docKey instead of re-extracting (qmd embeddings are still recomputed, since they key on docKey). If `size` or `mtimeMs` shifted (cross-volume copy, Finder drag-copy, iCloud metadata churn) or the triple collides within the candidate pool, the rename detection misses and sync falls back to "old path removed + new path added" — full re-extract.
-- `add` is speed-first and does not do Zotero-side duplicate checking; write responses should return `itemKey` immediately.
-- `blocks` and `expand` read local manifests directly; they do not depend on the search backend.
-- Long-lived indexes live in the iCloud-backed `dataDir`. Do not move persistent index files into `/tmp`.
+- `dataDir` is `~/Zotagent` — holds long-lived indexes (`index/`, `manifests/`, `normalized/`, `logs/`).
+- Config lives in `~/.zotagent` — `config.json` and `excludes.txt`.
 
 ## Development Principles
 
 - Avoid unnecessary fallbacks or compatibility layers. When you change CLI or config behavior, switch cleanly and update help text, tests, and docs in the same change.
-- Validate search changes on a real indexed subset, not just unit tests. Check: top result is sensible; no single document dominates the first few slots; `passage` is not polluted by title-page or front-matter text; `blocks` and `expand` still behave correctly. (`search` does not deprefer reference/citation blocks — FTS5 bm25 ranks all blocks equally; that's by design, since the heuristic for spotting references only catches end-of-document bibliography sections and would falsely "protect" against a problem inline footnote citations evade anyway.)
+- Validate search changes on a real indexed subset, not just unit tests.
 - To exercise local changes, run `node dist/cli.js <cmd>` after `npm run build` (or `npm run dev -- <cmd>`). Never test against the globally-installed `zotagent` — it executes the previously-installed build and will silently run stale code.
 
 ## Release Process
