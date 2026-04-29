@@ -19,7 +19,11 @@ interface SearchBehaviorOptions {
   progress?: (message: string) => void;
 }
 
-type VerifiedSearchRow = SearchResultRow & { referenceOnly: boolean };
+// `SearchResultRow` is what callers see; the engine used to wrap it with a
+// reference-only flag for demotion, but that protection only caught full
+// bibliography blocks (not inline footnote-style citations) and obscured
+// useful "this paper cites X" hits. FTS5 bm25 is the sole ranker now.
+type VerifiedSearchRow = SearchResultRow;
 
 const ITEM_KEY_RE = /^[A-Z0-9]{8}$/;
 
@@ -187,7 +191,6 @@ function buildSearchRow(
   const blocks = manifest.blocks.filter(
     (block) => block.blockIndex >= range.blockStart && block.blockIndex <= range.blockEnd,
   );
-  const referenceOnly = blocks.length > 0 && blocks.every((block) => block.isReferenceLike);
 
   return {
     itemKey: entry.itemKey,
@@ -197,8 +200,7 @@ function buildSearchRow(
     passage: truncateSearchPassage(blocks.map((block) => block.text).join("\n\n")),
     blockStart: range.blockStart + globalOffset,
     blockEnd: range.blockEnd + globalOffset,
-    score: Math.round((score - (referenceOnly ? 0.05 : 0)) * 10000) / 10000,
-    referenceOnly,
+    score: Math.round(score * 10000) / 10000,
   };
 }
 
@@ -362,49 +364,25 @@ export async function searchLiterature(
         await keywordIndex.rebuildIndex(readyEntries);
         results = await keywordIndex.searchDocs(query, limit);
       }
-      const collected: VerifiedSearchRow[] = [];
-      for (const result of results) {
-        if (behavior.minScore !== undefined && result.score < behavior.minScore) continue;
-        const entry = entryByDocKey.get(result.docKey);
-        if (!entry) continue;
-        const itemGroup = itemGroups.get(entry.itemKey) ?? [entry];
-        const globalOffset = attachmentGlobalOffset(entry, itemGroup, manifestCache);
-        const manifest = readManifestCached(entry, manifestCache);
-
-        // Reference-aware passage selection. FTS5's MIN(rank) per doc may pick
-        // a citation list block when the query token repeats in references —
-        // e.g. searching "Acemoglu" in a paper that cites him many times. The
-        // doc IS relevant (keep its overall rank), but the displayed passage
-        // should come from substantive prose where one exists. Only fires for
-        // affected docs, so the extra searchBlocks roundtrip is bounded.
-        let chosenBlockIndex = result.blockIndex;
-        const initialBlock = manifest.blocks.find((b) => b.blockIndex === result.blockIndex);
-        if (initialBlock?.isReferenceLike) {
-          const candidates = await keywordIndex.searchBlocks(query, 20, { docKeys: [result.docKey] });
-          for (const candidate of candidates) {
-            const candBlock = manifest.blocks.find((b) => b.blockIndex === candidate.blockIndex);
-            if (candBlock && !candBlock.isReferenceLike) {
-              chosenBlockIndex = candidate.blockIndex;
-              break;
-            }
-          }
-        }
-
-        const row = buildKeywordSearchRow(entry, manifest, chosenBlockIndex, globalOffset, result.score);
-        if (row !== null) collected.push(row);
-      }
-      mapped = collected.sort((a, b) => b.score - a.score);
+      mapped = results
+        .filter((result) => behavior.minScore === undefined || result.score >= behavior.minScore)
+        .map((result) => {
+          const entry = entryByDocKey.get(result.docKey);
+          if (!entry) return null;
+          const itemGroup = itemGroups.get(entry.itemKey) ?? [entry];
+          const globalOffset = attachmentGlobalOffset(entry, itemGroup, manifestCache);
+          const manifest = readManifestCached(entry, manifestCache);
+          return buildKeywordSearchRow(entry, manifest, result.blockIndex, globalOffset, result.score);
+        })
+        .filter((value): value is VerifiedSearchRow => value !== null)
+        .sort((a, b) => b.score - a.score);
     } finally {
       await keywordIndex.close();
     }
   }
 
-  const substantive = mapped.filter((row) => !row.referenceOnly);
-  const references = mapped.filter((row) => row.referenceOnly);
-  const ordered = substantive.length > 0 ? [...substantive, ...references] : mapped;
-
   return {
-    results: ordered.slice(0, limit).map(({ referenceOnly: _referenceOnly, ...row }) => row),
+    results: mapped.slice(0, limit),
     ...(config.warnings.length > 0 ? { warnings: config.warnings } : {}),
   };
 }
@@ -503,7 +481,7 @@ export async function searchWithinDocuments(
   const ordered = [...seen.values()].sort((a, b) => b.score - a.score || a.blockStart - b.blockStart);
 
   return {
-    results: ordered.slice(0, limit).map(({ referenceOnly: _referenceOnly, ...row }) => row),
+    results: ordered.slice(0, limit),
     warnings: config.warnings,
   };
 }
