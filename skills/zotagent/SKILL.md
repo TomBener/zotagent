@@ -23,7 +23,7 @@ Metadata quick rules:
 - `--abstract` includes abstract text in the output. To search abstract text, use a positional query with `--field abstract`.
 - `metadata "Pratt 1985"` returns empty (year is not OR'd in) — split into `--author "Pratt" --year "1985"`.
 
-Keyword syntax (default `search`): `"exact phrase"`, `OR`, `NOT`, `term NEAR/<n> term`, `prefix*`. Use `NEAR/<n>` not `NEAR(...)`.
+Keyword syntax (`search` and `search-in` both use it): `"exact phrase"`, `OR`, `NOT`, `term NEAR/<n> term`, `prefix*`. Use `NEAR/<n>` not `NEAR(...)`. Boolean operators must be uppercase (`AND` / `OR` / `NOT`); lowercase `or` is treated as a literal term. `search-in` evaluates the query per block, so a returned passage satisfies the query on its own — operator semantics are honored at the block level, not just the document level.
 
 **`NEAR/<n>` is the best first pass** when you have 2–3 anchor terms that should co-occur but not necessarily adjacent — e.g. `"土地" NEAR/20 "垦荒"`. It is usually more precise than plain keyword and much faster than `--semantic`.
 
