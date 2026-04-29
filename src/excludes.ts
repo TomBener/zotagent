@@ -58,28 +58,34 @@ export function applyExcludes(
 
   const matched = new Set<string>();
 
+  // Mark every alias of a record that appears in the exclude list, not just
+  // the first one we hit. Otherwise `excludes.txt` listing both an itemKey and
+  // its citationKey for the same record would warn that the second alias is
+  // "unmatched" even though it cleanly identifies the dropped record.
   const filteredRecords = catalogData.records.filter((record) => {
+    let drop = false;
     if (excludedKeys.has(record.itemKey)) {
       matched.add(record.itemKey);
-      return false;
+      drop = true;
     }
     if (record.citationKey && excludedKeys.has(record.citationKey)) {
       matched.add(record.citationKey);
-      return false;
+      drop = true;
     }
-    return true;
+    return !drop;
   });
 
   const filteredAttachments = catalogData.attachments.filter((attachment) => {
+    let drop = false;
     if (excludedKeys.has(attachment.itemKey)) {
       matched.add(attachment.itemKey);
-      return false;
+      drop = true;
     }
     if (attachment.citationKey && excludedKeys.has(attachment.citationKey)) {
       matched.add(attachment.citationKey);
-      return false;
+      drop = true;
     }
-    return true;
+    return !drop;
   });
 
   const unmatchedKeys = [...excludedKeys].filter((key) => !matched.has(key)).sort();

@@ -116,3 +116,18 @@ test("applyExcludes reports keys that did not match any bibliography entry", () 
   assert.deepEqual(stats.matchedKeys, ["PRESENT1"]);
   assert.deepEqual(stats.unmatchedKeys.sort(), ["STALE_KEY", "another-typo"].sort());
 });
+
+test("applyExcludes marks both itemKey and citationKey as matched when the same record lists both", () => {
+  const data: CatalogData = {
+    records: [makeRecord("ALIASKEY", "lee2024alias")],
+    attachments: [makeAttachment("ALIASKEY", "lee2024alias", "/tmp/alias.pdf")],
+  };
+  const excludes = new Set(["ALIASKEY", "lee2024alias"]);
+  const { filtered, stats } = applyExcludes(data, excludes);
+  assert.equal(filtered.records.length, 0);
+  assert.equal(filtered.attachments.length, 0);
+  assert.deepEqual(stats.matchedKeys.sort(), ["ALIASKEY", "lee2024alias"].sort());
+  // Critical: the alias must NOT be reported as unmatched even though only one
+  // alias is needed to drop the record.
+  assert.deepEqual(stats.unmatchedKeys, []);
+});
