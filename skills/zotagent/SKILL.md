@@ -166,7 +166,7 @@ zotagent recent --limit 20 --sort modified
 - **`--key` accepts `itemKey` or `citationKey`**, with or without a leading `@` (so Pandoc `@citekey` pastes straight in). Output always identifies items by `itemKey` only — `citationKey` is accepted as input but never emitted, so chain subsequent calls on `itemKey`.
 - **`search-in` on a chapter key may miss.** `SEARCH_IN_FAILED: No indexed attachment found` usually means the chapter's PDF is indexed only inside its parent volume. Look the parent up with `metadata`, then `search-in` against the parent's key and locate the chapter by its heading. Common for edited collections and proceedings.
 - **`search-in` returns block-level matches; `search` returns one passage per item.** A `search-in` row is a single block satisfying the query (operators always evaluate per block); a single quoted phrase that wraps across paragraphs — e.g. a citation breaking mid-line — naturally appears in the windowed passage of one row. A `search` result means *this document* matches and here is one representative passage. When the user asks "does this paper say X" or "where in this paper does Y appear", reach for `search-in`.
-- **`search-in --limit` truncates the result list, not the FTS search itself.** Default 10 is usually enough — you're already scoped to one document. Re-running with a bigger limit can never reveal hits the first call missed; change the query, not the limit.
+- **`search-in --limit` caps the returned matching blocks.** Default 10 is usually enough — you're already scoped to one document. Increase it to inspect more lower-ranked matches; change the query when the returned blocks do not match the user's intent.
 
 ## Index freshness
 

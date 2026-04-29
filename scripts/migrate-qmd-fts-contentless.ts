@@ -13,7 +13,7 @@
  *   --rollback : restore from <db>.bak (the existing post-migration db is moved aside)
  *
  * Safety:
- *   - --apply copies qmd.sqlite -> qmd.sqlite.bak before any change
+ *   - --apply writes a SQLite-consistent qmd.sqlite.bak before any change
  *   - schema swap runs inside a transaction; rebuild + vacuum run after
  *   - rebuild row count is compared against active documents to catch drift
  *   - idempotent: --apply on an already-migrated DB is a no-op
@@ -28,7 +28,8 @@
 
 import Database from "better-sqlite3";
 import { copyFileSync, existsSync, renameSync, statSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 type Mode = "dry-run" | "apply" | "verify" | "rollback";
 
@@ -154,6 +155,7 @@ const TRIGGER_AI_SQL = `
 
 const TRIGGER_AD_SQL = `
   CREATE TRIGGER documents_ad AFTER DELETE ON documents
+  WHEN old.active = 1
   BEGIN
     INSERT INTO documents_fts (documents_fts, rowid, filepath, title, body)
     VALUES ('delete', old.id,
@@ -192,7 +194,7 @@ function dropOldFtsAndTriggers(db: Database.Database): void {
   `);
 }
 
-function createNewSchema(db: Database.Database): void {
+export function createNewSchema(db: Database.Database): void {
   db.exec(VIEW_SQL);
   db.exec(NEW_FTS_SQL);
   db.exec(TRIGGER_AI_SQL);
@@ -209,6 +211,10 @@ function ftsRowCount(db: Database.Database): number {
   // External-content FTS5 supports COUNT via a scan of the inverted index.
   const row = db.prepare(`SELECT COUNT(*) AS n FROM documents_fts`).get();
   return (row as { n: number }).n;
+}
+
+export function createConsistentBackup(db: Database.Database, backupPath: string): void {
+  db.prepare("VACUUM main INTO ?").run(backupPath);
 }
 
 function dryRun(args: Args): void {
@@ -260,10 +266,10 @@ function applyMigration(args: Args): void {
     console.error(`if you previously ran --apply, run --rollback or delete the backup manually`);
     process.exit(1);
   }
-  copyFileSync(dbPath, bakPath);
+  const db = new Database(dbPath);
+  createConsistentBackup(db, bakPath);
   console.log(`backup ok\n`);
 
-  const db = new Database(dbPath);
   db.pragma("journal_mode = WAL");
   reportSizes("BEFORE", db);
   const expectedRows = activeDocCount(db);
@@ -371,4 +377,10 @@ function main(): void {
   else if (args.mode === "rollback") rollback(args);
 }
 
-main();
+function isMainModule(): boolean {
+  return process.argv[1] ? fileURLToPath(import.meta.url) === resolve(process.argv[1]) : false;
+}
+
+if (isMainModule()) {
+  main();
+}
