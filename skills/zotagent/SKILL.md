@@ -66,9 +66,14 @@ zotagent blocks --key KG326EEI --offset-block 120 --limit-blocks 30
 `search-in` is the right tool whenever the user has already pinned a specific item — "does this book cite X?", "find Y in chapter 3", "where does the author talk about Z in the paper I just opened?". It runs the same FTS5 syntax as `search` but evaluates the query per block, so each returned passage individually satisfies the query rather than being a doc-level approximation.
 
 ```bash
-# "Does this book cite Acemoglu's 2012 work?" — quote the citation form so
-# partial-token matches do not over-claim. Multi-token quoted phrases also
-# catch citations that wrap across paragraph breaks in the references list.
+# "Does this book cite Acemoglu's 2012 work?" — start with the bare surname.
+# In-text references use the parenthetical form (Acemoglu and Robinson 2012)
+# while the bibliography entry uses Acemoglu, Daron. 2012. — the bare token
+# matches both. Reach for a full quoted citation only to verify the exact
+# title or to disambiguate when one author has multiple bibliography entries
+# (multi-token quoted phrases also catch citations that wrap across paragraph
+# breaks in the references list).
+zotagent search-in 'Acemoglu' --key CMJ3N8TL --limit 10
 zotagent search-in '"Acemoglu, Daron. 2012"' --key CMJ3N8TL --limit 5
 
 # Proximity inside a single paper — find blocks where two anchor terms co-occur
@@ -83,6 +88,8 @@ zotagent expand --key CMJ3N8TL --block-start 2192 --radius 1
 ```
 
 If `search-in` returns nothing for a citation-style query, do not silently widen — say "not cited in this attachment" and offer to try a looser shape (drop the year, prefix the surname, switch to `search` across the whole library).
+
+`search-in --limit` defaults to 10 and rarely needs to go higher: you are already scoped to one document. The limit truncates the result list, not the underlying FTS search, so re-running the same query with a bigger `--limit` can never reveal hits that the first call missed — if the count looks short, change the query, not the limit.
 
 ### Add a paper to Zotero
 
