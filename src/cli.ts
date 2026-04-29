@@ -11,6 +11,7 @@ import {
 } from "./add.js";
 import { ConfigCommandError, runConfigCommand } from "./config-command.js";
 import { getDataPaths, resolveConfig, type ConfigOverrides } from "./config.js";
+import { diagnoseExtraction } from "./diagnose.js";
 import { expandDocument, fullTextDocument, getDocumentBlocks, getIndexStatus, searchLiterature, searchWithinDocuments } from "./engine.js";
 import { emitError, emitOk } from "./json.js";
 import { JsonInputError, mapLenientItem, readJsonInput, type AddJsonInput } from "./json-input.js";
@@ -32,6 +33,7 @@ interface ParsedArgs {
 
 const BOOLEAN_FLAGS = new Set([
   "abstract",
+  "all",
   "clean",
   "has-file",
   "help",
@@ -74,6 +76,7 @@ const COMMAND_FLAG_ALLOWLIST: Record<string, ReadonlyArray<string>> = {
   blocks: ["key", "offset-block", "limit-blocks"],
   fulltext: ["key", "clean"],
   expand: ["key", "block-start", "block-end", "radius"],
+  diagnose: ["limit", "all", "threshold-avg", "threshold-median"],
 };
 
 const GLOBAL_OVERRIDE_FLAGS: ReadonlyArray<string> = [
@@ -338,6 +341,18 @@ Retrieval
         --block-start <n>           Start block for expand.
         --block-end <n>             End block for expand. Default: block-start.
         --radius <n>                Include n blocks before and after. Default: 2.
+
+Diagnostics
+  diagnose [--limit <n>] [--all] [--threshold-avg <n>] [--threshold-median <n>]
+      Scan all indexed manifests and surface documents whose extracted blocks
+      look anomalously short — usually an upstream extraction failure (per-word
+      English, per-character vertical CJK, scanned non-OCR PDFs, multi-column
+      gazetteers). Output identifies the affected itemKeys so you can re-extract
+      those PDFs (e.g. ocrmypdf, pdftotext -layout) and re-sync.
+        --limit <n>                 Cap the result list. Default: 50.
+        --all                       Include "ok" docs too. Default: only suspicious + borderline.
+        --threshold-avg <n>         Suspicious avg-chars-per-block threshold. Default: 15.
+        --threshold-median <n>      Suspicious median-chars-per-block threshold. Default: 10.
 
 Document selector (used by search-in, blocks, fulltext, expand)
   --key <key>                   Resolve an item by itemKey or citationKey. A leading @ is
@@ -1006,6 +1021,52 @@ async function main(): Promise<void> {
           emitDocumentLookupError("EXPAND", error);
           return;
         }
+      }
+
+      case "diagnose": {
+        if (parsed.positionals.length > 1) {
+          emitError("UNEXPECTED_ARGUMENT", "diagnose does not accept positional arguments.");
+          return;
+        }
+        const limitInput = parseNumericFlag(parsed.flags, "limit", {
+          requirement: "a positive integer",
+          constraint: "a positive integer",
+          integer: true,
+          min: 1,
+        });
+        if (limitInput.error) {
+          emitError("INVALID_ARGUMENT", limitInput.error);
+          return;
+        }
+        const thresholdAvgInput = parseNumericFlag(parsed.flags, "threshold-avg", {
+          requirement: "a positive number",
+          constraint: "a positive number",
+          min: 0,
+        });
+        if (thresholdAvgInput.error) {
+          emitError("INVALID_ARGUMENT", thresholdAvgInput.error);
+          return;
+        }
+        const thresholdMedianInput = parseNumericFlag(parsed.flags, "threshold-median", {
+          requirement: "a positive number",
+          constraint: "a positive number",
+          min: 0,
+        });
+        if (thresholdMedianInput.error) {
+          emitError("INVALID_ARGUMENT", thresholdMedianInput.error);
+          return;
+        }
+        const data = await diagnoseExtraction(
+          {
+            ...(limitInput.value !== undefined ? { limit: limitInput.value } : {}),
+            showAll: getBooleanFlag(parsed.flags, "all"),
+            ...(thresholdAvgInput.value !== undefined ? { thresholdAvg: thresholdAvgInput.value } : {}),
+            ...(thresholdMedianInput.value !== undefined ? { thresholdMedian: thresholdMedianInput.value } : {}),
+          },
+          overrides,
+        );
+        emitOk(data, { elapsedMs: Date.now() - startedAt });
+        return;
       }
 
       default:
