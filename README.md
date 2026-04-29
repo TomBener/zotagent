@@ -12,7 +12,7 @@ Search and retrieval are the core features. Both read from a local index that `s
 
 ### Search
 
-- `search` — FTS5 keyword search (default) with porter stemming. Supports `"exact phrase"`, `OR`, `NOT`, `term NEAR/<n> term`, and `prefix*`. Chinese, Japanese, and Korean (CJK) text is supported with accurate phrase matching and built-in false-positive filtering.
+- `search` — FTS5 keyword search (default) over indexed attachment text, not item titles, with porter stemming. Supports `"exact phrase"`, `OR`, `NOT`, `term NEAR/<n> term`, and `prefix*`. Chinese, Japanese, and Korean (CJK) text is supported with accurate phrase matching.
 - `search --semantic` — vector search over [qmd](https://github.com/tobi/qmd) embeddings with LLM query expansion; slower and heavier than keyword search.
 - `search-in` — scope a text query to a single indexed item's attachments, addressed by `itemKey` or `citationKey` (auto-detected). Uses the same FTS5 keyword syntax as `search` (`"exact phrase"`, `OR`, `NOT`, `term NEAR/<n> term`, `prefix*`), evaluated per block so each returned passage actually satisfies the query.
 - `metadata` — search the Zotero bibliography (Better CSL JSON) across `title`, `author`, `year`, `abstract`, `journal`, and `publisher`. `--field` narrows the fields the positional query hits; per-field filters (`--author`, `--year`, `--title`, `--journal`, `--publisher`) AND together and can replace the positional query entirely (e.g. `metadata --author "Pratt" --year "1985"`); `--has-file` keeps only items with an indexed attachment.
@@ -24,6 +24,10 @@ Search and retrieval are the core features. Both read from a local index that `s
 - `expand` — pull context around a block range, typically a search hit, with a configurable `--radius`.
 
 All three address an item by `--key`, which accepts either `itemKey` or `citationKey`. A leading `@` is stripped before dispatch, so Pandoc-style citations can be pasted directly. Values matching `[A-Z0-9]{8}` are dispatched as `itemKey`; anything else is treated as `citationKey`. When one item has multiple indexed attachments, they are merged into one logical document with monotonic block indices and `# Attachment: <name>` dividers. Output always identifies items by `itemKey` only — citationKey is accepted as input but never emitted, so downstream chaining stays on a single stable key.
+
+### Diagnostics
+
+- `diagnose` — scan indexed manifests for anomalously fragmented extraction output, such as per-word English blocks, per-character vertical CJK, scanned non-OCR PDFs, or multi-column gazetteers. Use the returned `itemKey`s to re-extract or exclude bad PDFs before re-syncing.
 
 ### Add to Zotero
 
@@ -121,6 +125,11 @@ Index
         --pdf-batch-size <n>        Override the maximum number of PDFs per extraction batch.
         --pdf-concurrency <n>       Run N extraction batches in parallel (default 2). Each batch
                                     spawns its own java process; tune with available CPU and RAM.
+      Auto-loads ~/.zotagent/excludes.txt if present: one itemKey or citationKey per line,
+      `#` comments allowed, blank lines ignored. Listed items are skipped entirely (no
+      extraction, no manifest, no normalized text, no keyword/qmd indexing). Use `zotagent
+      diagnose` to find candidate itemKeys to exclude (picture books, OCR-failed scans,
+      vertical-CJK PDFs that the extractor can't handle).
 
   status
       Show attachment counts, local index paths, and qmd status.
@@ -184,6 +193,18 @@ Retrieval
         --block-end <n>             End block for expand. Default: block-start.
         --radius <n>                Include n blocks before and after. Default: 2.
 
+Diagnostics
+  diagnose [--limit <n>] [--all] [--threshold-avg <n>] [--threshold-median <n>]
+      Scan all indexed manifests and surface documents whose extracted blocks
+      look anomalously short — usually an upstream extraction failure (per-word
+      English, per-character vertical CJK, scanned non-OCR PDFs, multi-column
+      gazetteers). Output identifies the affected itemKeys so you can re-extract
+      those PDFs (e.g. ocrmypdf, pdftotext -layout) and re-sync.
+        --limit <n>                 Cap the result list. Default: 50.
+        --all                       Include "ok" docs too. Default: only suspicious + borderline.
+        --threshold-avg <n>         Suspicious avg-chars-per-block threshold. Default: 15.
+        --threshold-median <n>      Suspicious median-chars-per-block threshold. Default: 10.
+
 Document selector (used by search-in, blocks, fulltext, expand)
   --key <key>                   Resolve an item by itemKey or citationKey. A leading @ is
                                 stripped before dispatch; values matching [A-Z0-9]{8} are
@@ -239,9 +260,10 @@ Add to Zotero
 A few behaviors worth knowing:
 
 - `add` does not deduplicate against your existing Zotero library — it is speed-first and returns `itemKey` immediately. New items are tagged `Added by AI Agent`.
-- `search` truncates each hit's `passage` at 500 tokens so bulk results stay compact regardless of language; use `expand` to pull full context around a block range. `metadata` omits `abstract` by default for the same reason — pass `--abstract` to include it.
+- `search` truncates each hit's `passage` at 500 tokens so bulk results stay compact regardless of language; use `expand` to pull full context around a block range. Title-driven lookups belong in `metadata`, not `search`, because keyword search indexes attachment body text only. `metadata` omits `abstract` by default for the same compactness reason — pass `--abstract` to include it.
 - Traditional Chinese is folded to simplified at both index and query time. This applies to `search`, `search-in`, and `metadata`; `search --semantic` does not fold. Returned text (`passage`, `blocks`, `fulltext`, `expand`) preserves the original form as stored in the attachment.
 - `sync` skips files that fail extraction, records them as `error`, and continues. Re-runs skip unchanged errors; pass `--retry-errors` to retry. When an item has both a PDF and an EPUB, only the EPUB is indexed (both files stay attached in Zotero).
+- `sync` auto-loads `~/.zotagent/excludes.txt` when present. Put one `itemKey` or `citationKey` per line; blank lines and `#` comments are ignored. Excluded items are skipped entirely and removed from local keyword/qmd indexing on the next sync.
 - `sync` detects attachments renamed or moved inside `attachmentsRoot` by matching `(itemKey, size, mtimeMs)` and migrates the cached `normalized/<docKey>.md` + `manifests/<docKey>.json.gz` to the new `docKey` — no re-extract, no re-embed.
 - `sync` is crash-safe across indexer-state changes: the progress catalog keeps the previous embed model and indexer signature until stored vectors have actually been cleared, so interrupting `sync` never leaves the index in a "claims fresh / is stale" state.
 - `search`, `blocks`, `fulltext`, and `expand` work entirely on the local index — run `sync` first when the library has changed.
