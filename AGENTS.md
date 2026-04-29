@@ -10,10 +10,6 @@
 - `blocks` and `expand` read local manifests directly; they do not depend on the search backend.
 - Long-lived indexes live in the iCloud-backed `dataDir`. Do not move persistent index files into `/tmp`.
 
-## Local Environment
-
-- Java is only needed for `sync` (PDF extraction via OpenDataLoader). OpenJDK is installed via Homebrew but not on the default PATH. Prepend before running `sync`: `export PATH="/opt/homebrew/opt/openjdk/bin:$PATH"`
-
 ## Development Principles
 
 - Avoid unnecessary fallbacks or compatibility layers. When you change CLI or config behavior, switch cleanly and update help text, tests, and docs in the same change.
