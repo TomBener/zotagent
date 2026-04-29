@@ -34,7 +34,16 @@ export interface KeywordIndexClient {
 }
 
 export type KeywordIndexFactory = (config: AppConfig) => Promise<KeywordIndexClient>;
-export const KEYWORD_INDEX_SCHEMA_VERSION = "keyword-fts5-porter-unicode61-contentless-tradsimp-v4-blockonly";
+export const KEYWORD_INDEX_SCHEMA_VERSION = "keyword-fts5-porter-unicode61-contentless-tradsimp-v5-rowid-encoded";
+
+// Pack (docId, blockIndex) into the FTS5 rowid: docId * 2^24 + blockIndex.
+// 24 bits for blockIndex covers the largest doc observed in the wild
+// (~134k blocks) with margin to ~16M; the high bits hold docId, indexed via
+// keyword_doc_lookup. SQLite rowids are 64-bit signed, so the upper 39 bits
+// give docId effectively unbounded headroom.
+const BLOCK_INDEX_BITS = 24;
+const BLOCK_INDEX_MAX = (1 << BLOCK_INDEX_BITS) - 1;
+const DOC_ID_MULTIPLIER = 1 << BLOCK_INDEX_BITS;
 
 export class KeywordQuerySyntaxError extends Error {
   constructor(message: string) {
@@ -45,16 +54,17 @@ export class KeywordQuerySyntaxError extends Error {
 
 function ensureSchema(db: Database.Database): void {
   // v3-blockindex left behind a doc-level keyword_fts(title, body) and its
-  // keyword_docs shadow. v4-blockonly drops both — title search lives in the
-  // metadata command, and body content is fully captured in keyword_block_fts.
+  // keyword_docs shadow. v4-blockonly removed those.
   db.exec("DROP TABLE IF EXISTS keyword_fts");
   db.exec("DROP TABLE IF EXISTS keyword_docs");
+  // v4 → v5: the per-row (docKey, blockIndex) shadow is replaced by encoding
+  // both into the FTS5 rowid; only a tiny docId → docKey lookup remains.
+  db.exec("DROP TABLE IF EXISTS keyword_blocks");
 
   db.exec(`
-    CREATE TABLE IF NOT EXISTS keyword_blocks (
-      rowid INTEGER PRIMARY KEY,
-      docKey TEXT NOT NULL,
-      blockIndex INTEGER NOT NULL
+    CREATE TABLE IF NOT EXISTS keyword_doc_lookup (
+      docId INTEGER PRIMARY KEY,
+      docKey TEXT NOT NULL UNIQUE
     )
   `);
   const blockFtsExists = db.prepare(
@@ -107,12 +117,12 @@ function rebuildTable(db: Database.Database, readyEntries: CatalogEntry[]): void
       content=''
     )
   `);
-  db.exec("DELETE FROM keyword_blocks");
+  db.exec("DELETE FROM keyword_doc_lookup");
 
-  const insertBlock = db.prepare("INSERT INTO keyword_blocks (rowid, docKey, blockIndex) VALUES (?, ?, ?)");
+  const insertLookup = db.prepare("INSERT INTO keyword_doc_lookup (docId, docKey) VALUES (?, ?)");
   const insertBlockFts = db.prepare("INSERT INTO keyword_block_fts (rowid, text) VALUES (?, ?)");
 
-  let blockRowid = 1;
+  let nextDocId = 1;
   for (const entry of readyEntries) {
     if (!entry.manifestPath || !exists(entry.manifestPath)) continue;
     const manifest = readManifestFile(entry.manifestPath);
@@ -121,10 +131,19 @@ function rebuildTable(db: Database.Database, readyEntries: CatalogEntry[]): void
       .filter((b) => b.indexed.length > 0);
     if (indexedBlocks.length === 0) continue;
 
+    const docId = nextDocId++;
+    insertLookup.run(docId, entry.docKey);
     for (const b of indexedBlocks) {
-      insertBlock.run(blockRowid, entry.docKey, b.blockIndex);
-      insertBlockFts.run(blockRowid, b.indexed);
-      blockRowid += 1;
+      if (b.blockIndex < 0 || b.blockIndex > BLOCK_INDEX_MAX) {
+        // Should never happen: blockIndex is a positive int from the manifest
+        // pipeline, and 24 bits gives ~16M of headroom. Guard against silent
+        // corruption if a future extractor produces extreme values.
+        throw new Error(
+          `blockIndex ${b.blockIndex} out of 24-bit range for docKey ${entry.docKey}`,
+        );
+      }
+      const rowid = docId * DOC_ID_MULTIPLIER + b.blockIndex;
+      insertBlockFts.run(rowid, b.indexed);
     }
   }
 }
@@ -242,6 +261,22 @@ export function buildFtsQuery(query: string): string {
   return parts.join(" ").replace(/\s{2,}/g, " ").trim();
 }
 
+// Translate user-supplied docKeys into the docId integers used by the FTS5
+// rowid encoding. Returns:
+//   - []   when no filter is requested (caller leaves the query unconstrained)
+//   - null when the caller specified docKeys but none are indexed (search is
+//          guaranteed to return no rows; caller should short-circuit)
+//   - [id, ...] otherwise
+function resolveDocIds(db: Database.Database, docKeys: string[] | undefined): number[] | null {
+  if (!docKeys || docKeys.length === 0) return [];
+  const placeholders = docKeys.map(() => "?").join(",");
+  const rows = db.prepare(
+    `SELECT docId FROM keyword_doc_lookup WHERE docKey IN (${placeholders})`,
+  ).all(...docKeys) as Array<{ docId: number }>;
+  if (rows.length === 0) return null;
+  return rows.map((r) => r.docId);
+}
+
 export async function openKeywordIndex(config: AppConfig): Promise<KeywordIndexClient> {
   const paths = getDataPaths(config.dataDir);
   ensureDir(paths.indexDir);
@@ -258,37 +293,40 @@ export async function openKeywordIndex(config: AppConfig): Promise<KeywordIndexC
     },
 
     isEmpty: async () => {
-      const blockRow = db.prepare("SELECT 1 FROM keyword_blocks LIMIT 1").get();
-      return blockRow === undefined;
+      const row = db.prepare("SELECT 1 FROM keyword_doc_lookup LIMIT 1").get();
+      return row === undefined;
     },
 
     searchDocs: async (query, limit, options) => {
       if (query.trim().length === 0) {
         throw new Error("Search text cannot be empty.");
       }
-      const docKeys = options?.docKeys;
+      const docIds = resolveDocIds(db, options?.docKeys);
+      if (docIds === null) return [];
 
-      const docKeyFilter = docKeys && docKeys.length > 0
-        ? `AND b.docKey IN (${docKeys.map(() => "?").join(",")})`
+      const docIdFilter = docIds.length > 0
+        ? `AND (f.rowid >> ${BLOCK_INDEX_BITS}) IN (${docIds.map(() => "?").join(",")})`
         : "";
-      // GROUP BY docKey + MIN(rank): SQLite picks blockIndex from the row that
-      // produced the minimum rank (bare-column-with-min behavior), giving us
-      // each doc's best matching block in one query.
+      // GROUP BY d.docId + MIN(rank): SQLite's bare-column-with-min rule
+      // returns f.rowid from the input row that produced the minimum rank,
+      // and blockIndex decodes from the low bits.
       const sql = `
-        SELECT b.docKey, b.blockIndex, MIN(f.rank) AS rank
+        SELECT
+          d.docKey,
+          (f.rowid & ${BLOCK_INDEX_MAX}) AS blockIndex,
+          MIN(f.rank) AS rank
         FROM keyword_block_fts f
-        JOIN keyword_blocks b ON b.rowid = f.rowid
+        JOIN keyword_doc_lookup d ON d.docId = (f.rowid >> ${BLOCK_INDEX_BITS})
         WHERE keyword_block_fts MATCH ?
-        ${docKeyFilter}
-        GROUP BY b.docKey
+        ${docIdFilter}
+        GROUP BY d.docId
         ORDER BY rank
         LIMIT ?
       `;
-      const docKeyParams = docKeys && docKeys.length > 0 ? docKeys : [];
 
       const ftsQuery = buildFtsQuery(query);
       try {
-        const rows = db.prepare(sql).all(ftsQuery, ...docKeyParams, limit) as Array<{ docKey: string; blockIndex: number; rank: number }>;
+        const rows = db.prepare(sql).all(ftsQuery, ...docIds, limit) as Array<{ docKey: string; blockIndex: number; rank: number }>;
         return rows.map((row) => ({ docKey: row.docKey, blockIndex: row.blockIndex, score: -row.rank }));
       } catch (error) {
         if (error instanceof KeywordQuerySyntaxError) {
@@ -299,7 +337,7 @@ export async function openKeywordIndex(config: AppConfig): Promise<KeywordIndexC
           throw new Error("Search text cannot be empty.");
         }
         const fallback = buildFtsQuery(sanitized);
-        const rows = db.prepare(sql).all(fallback, ...docKeyParams, limit) as Array<{ docKey: string; blockIndex: number; rank: number }>;
+        const rows = db.prepare(sql).all(fallback, ...docIds, limit) as Array<{ docKey: string; blockIndex: number; rank: number }>;
         return rows.map((row) => ({ docKey: row.docKey, blockIndex: row.blockIndex, score: -row.rank }));
       }
     },
@@ -308,25 +346,28 @@ export async function openKeywordIndex(config: AppConfig): Promise<KeywordIndexC
       if (query.trim().length === 0) {
         throw new Error("Search text cannot be empty.");
       }
-      const docKeys = options?.docKeys;
+      const docIds = resolveDocIds(db, options?.docKeys);
+      if (docIds === null) return [];
 
-      const docKeyFilter = docKeys && docKeys.length > 0
-        ? `AND b.docKey IN (${docKeys.map(() => "?").join(",")})`
+      const docIdFilter = docIds.length > 0
+        ? `AND (f.rowid >> ${BLOCK_INDEX_BITS}) IN (${docIds.map(() => "?").join(",")})`
         : "";
       const sql = `
-        SELECT b.docKey, b.blockIndex, f.rank
+        SELECT
+          d.docKey,
+          (f.rowid & ${BLOCK_INDEX_MAX}) AS blockIndex,
+          f.rank
         FROM keyword_block_fts f
-        JOIN keyword_blocks b ON b.rowid = f.rowid
+        JOIN keyword_doc_lookup d ON d.docId = (f.rowid >> ${BLOCK_INDEX_BITS})
         WHERE keyword_block_fts MATCH ?
-        ${docKeyFilter}
+        ${docIdFilter}
         ORDER BY f.rank
         LIMIT ?
       `;
-      const docKeyParams = docKeys && docKeys.length > 0 ? docKeys : [];
 
       const ftsQuery = buildFtsQuery(query);
       try {
-        const rows = db.prepare(sql).all(ftsQuery, ...docKeyParams, limit) as Array<{ docKey: string; blockIndex: number; rank: number }>;
+        const rows = db.prepare(sql).all(ftsQuery, ...docIds, limit) as Array<{ docKey: string; blockIndex: number; rank: number }>;
         return rows.map((row) => ({ docKey: row.docKey, blockIndex: row.blockIndex, score: -row.rank }));
       } catch (error) {
         if (error instanceof KeywordQuerySyntaxError) {
@@ -337,7 +378,7 @@ export async function openKeywordIndex(config: AppConfig): Promise<KeywordIndexC
           throw new Error("Search text cannot be empty.");
         }
         const fallback = buildFtsQuery(sanitized);
-        const rows = db.prepare(sql).all(fallback, ...docKeyParams, limit) as Array<{ docKey: string; blockIndex: number; rank: number }>;
+        const rows = db.prepare(sql).all(fallback, ...docIds, limit) as Array<{ docKey: string; blockIndex: number; rank: number }>;
         return rows.map((row) => ({ docKey: row.docKey, blockIndex: row.blockIndex, score: -row.rank }));
       }
     },
