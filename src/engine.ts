@@ -251,6 +251,28 @@ function extractQueryTerms(query: string): string[] {
   return stripFtsOperators(query).toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
 }
 
+/**
+ * If the query is a single quoted multi-token phrase (e.g. `"Ho, Peter. 2017"`)
+ * with no operators or other content outside the quotes, return the inner
+ * phrase text; otherwise null. Used to gate the supplemental cross-block
+ * phrase scan in search-in: any other query shape is FTS5's responsibility,
+ * and stripping operators to manufacture a substring would resurface blocks
+ * FTS5 legitimately excluded (e.g. `alpha NOT beta`). Single-token quoted
+ * queries are skipped because per-block FTS already finds every occurrence
+ * of a single token, and substring matching on a short token would falsely
+ * "hit" prefixes of unrelated words like `how` for `ho`.
+ */
+function singleQuotedPhrase(query: string): string | null {
+  const { masked, phrases } = maskQuotedPhrases(query);
+  if (phrases.length !== 1) return null;
+  const remainder = masked.replace(/\uE000Q\d+\uE001/gu, "").trim();
+  if (remainder.length > 0) return null;
+  const inner = phrases[0]!.slice(1, -1);
+  const tokens = inner.match(/[\p{L}\p{N}]+/gu) ?? [];
+  if (tokens.length < 2) return null;
+  return inner;
+}
+
 function tokenizeKeywordText(text: string): string[] {
   return text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
 }
@@ -755,23 +777,27 @@ export async function searchWithinDocuments(
 
     // FTS5 phrase queries do not cross row boundaries, so a citation that
     // wraps mid-line into the next paragraph would be missed by per-block
-    // FTS alone. Re-use the manifest-level scanner to surface cross-block
-    // exact-phrase matches as supplemental high-priority candidates. Only
-    // run for multi-token queries: the scanner does substring containment,
-    // and a single short token (e.g. `ho`) would falsely "hit" prefixes of
-    // unrelated words like `how` or `household`.
-    const keywordQuery = buildKeywordQueryProfile(query);
-    const phraseTokens = keywordQuery.normalizedQuery.split(" ").filter((t) => t.length > 0);
-    if (phraseTokens.length >= 2) {
-      for (const entry of entries) {
-        const manifest = readManifestCached(entry, manifestCache);
-        const exactRange = findExactPhraseBlockRange(manifest, keywordQuery.normalizedQuery);
-        if (exactRange) {
-          const offset = offsetByDocKey.get(entry.docKey) ?? 0;
-          mapped.push(buildSearchRow(
-            entry, manifest, exactRange, offset,
-            100 - (exactRange.blockEnd - exactRange.blockStart),
-          ));
+    // FTS alone. Run the manifest-level scanner only when the query is a
+    // single quoted phrase: that is the unambiguous "find this string"
+    // intent, and FTS5 handles every other case (operators, multiple
+    // phrases, bare multi-word queries) correctly on its own. Stripping
+    // operators to manufacture a substring would resurface blocks FTS5
+    // legitimately excluded — e.g. `alpha NOT beta` would otherwise pull
+    // in any block containing `alpha beta`.
+    const singlePhrase = singleQuotedPhrase(query);
+    if (singlePhrase) {
+      const normalizedPhrase = normalizeExactText(singlePhrase);
+      if (normalizedPhrase) {
+        for (const entry of entries) {
+          const manifest = readManifestCached(entry, manifestCache);
+          const exactRange = findExactPhraseBlockRange(manifest, normalizedPhrase);
+          if (exactRange) {
+            const offset = offsetByDocKey.get(entry.docKey) ?? 0;
+            mapped.push(buildSearchRow(
+              entry, manifest, exactRange, offset,
+              100 - (exactRange.blockEnd - exactRange.blockStart),
+            ));
+          }
         }
       }
     }

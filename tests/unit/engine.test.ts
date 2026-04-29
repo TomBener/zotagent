@@ -1596,6 +1596,110 @@ test("searchWithinDocuments positive phrase requires the literal phrase, not its
   assert.equal(result.results[0]!.blockStart, 1);
 });
 
+test("searchWithinDocuments NOT does not resurface blocks via cross-block phrase scan", async () => {
+  // Repro from Codex review: stripping operators turns `alpha NOT beta` into
+  // the substring `alpha beta`. The previous code happily ran the cross-block
+  // exact-phrase scan on that stripped form and returned a block FTS5 had
+  // legitimately excluded. The cross-block scan is now gated to single quoted
+  // phrase queries only.
+  const root = mkdtempSync(join(tmpdir(), "zotagent-search-in-not-cross-"));
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docKey = "z".repeat(40);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
+
+  writeManifest(manifestPath, {
+    docKey, itemKey: "ITEMZ000", title: "NOT cross", authors: ["A"],
+    filePath: "/tmp/notcross.pdf",
+    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+    blocks: [
+      {
+        // Contains literal "alpha beta" — must be excluded by NOT beta.
+        blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"],
+        text: "Here alpha beta appears together exactly once in this paragraph.",
+        charStart: 0, charEnd: 64, lineStart: 1, lineEnd: 1, isReferenceLike: false,
+      },
+    ],
+  });
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [{
+      docKey, itemKey: "ITEMZ000", title: "NOT cross", authors: ["A"],
+      filePath: "/tmp/notcross.pdf", fileExt: "pdf", exists: true, supported: true,
+      extractStatus: "ready", size: 1, mtimeMs: 1, sourceHash: "hash-notcross",
+      lastIndexedAt: new Date().toISOString(),
+      normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+      manifestPath,
+    }],
+  });
+
+  const result = await searchWithinDocuments(
+    'alpha NOT beta',
+    { key: "ITEMZ000" },
+    10,
+    { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir },
+  );
+  assert.equal(result.results.length, 0, "block containing alpha beta must be excluded by NOT");
+});
+
+test("searchWithinDocuments cross-block phrase scan only runs for a single quoted phrase", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-search-in-multi-phrase-"));
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docKey = "w".repeat(40);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
+
+  // The block contains the substring "alpha beta gamma" but does NOT have
+  // both quoted phrases as required by `"alpha beta" AND "delta epsilon"`.
+  // The cross-block scan would otherwise concatenate the stripped query into
+  // "alpha beta delta epsilon" — present nowhere — but if it had naively
+  // matched the first phrase alone it could over-claim. Verify nothing
+  // surfaces and the FTS gate alone decides.
+  writeManifest(manifestPath, {
+    docKey, itemKey: "ITEMW000", title: "Multi phrase", authors: ["A"],
+    filePath: "/tmp/multi.pdf",
+    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+    blocks: [
+      {
+        blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"],
+        text: "alpha beta gamma in one sentence with no other relevant tokens.",
+        charStart: 0, charEnd: 63, lineStart: 1, lineEnd: 1, isReferenceLike: false,
+      },
+    ],
+  });
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [{
+      docKey, itemKey: "ITEMW000", title: "Multi phrase", authors: ["A"],
+      filePath: "/tmp/multi.pdf", fileExt: "pdf", exists: true, supported: true,
+      extractStatus: "ready", size: 1, mtimeMs: 1, sourceHash: "hash-multi",
+      lastIndexedAt: new Date().toISOString(),
+      normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+      manifestPath,
+    }],
+  });
+
+  const result = await searchWithinDocuments(
+    '"alpha beta" AND "delta epsilon"',
+    { key: "ITEMW000" },
+    10,
+    { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir },
+  );
+  assert.equal(result.results.length, 0, "FTS gate alone decides; cross-block scan must not fire");
+});
+
 test("searchWithinDocuments NEAR returns empty when terms straddle block boundaries", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-search-in-cross-"));
   const dataDir = join(root, "data");
