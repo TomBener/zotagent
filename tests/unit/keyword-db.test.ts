@@ -514,6 +514,73 @@ test("search filters to a single docKey when docKeys is provided", async () => {
   }
 });
 
+test("searchBlocks returns block-level hits filtered by docKeys", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-db-blocks-"));
+  const dataDir = join(root, "data");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docOne = "8".repeat(40);
+  const docTwo = "9".repeat(40);
+  const manifestOne = join(manifestsDir, `${docOne}${MANIFEST_EXT}`);
+  const manifestTwo = join(manifestsDir, `${docTwo}${MANIFEST_EXT}`);
+
+  writeManifestFile(manifestOne, {
+    docKey: docOne, itemKey: "ITEMA", title: "Doc A", authors: ["A"],
+    filePath: "/tmp/a.pdf", normalizedPath: join(dataDir, "normalized", `${docOne}.md`),
+    blocks: [
+      { blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"],
+        text: "Property rights and rural land tenure are central themes.",
+        charStart: 0, charEnd: 60, lineStart: 1, lineEnd: 1, isReferenceLike: false },
+      { blockIndex: 1, blockType: "paragraph", sectionPath: ["Body"],
+        text: "An unrelated paragraph about something else entirely.",
+        charStart: 62, charEnd: 115, lineStart: 3, lineEnd: 3, isReferenceLike: false },
+    ],
+  });
+  writeManifestFile(manifestTwo, {
+    docKey: docTwo, itemKey: "ITEMB", title: "Doc B", authors: ["B"],
+    filePath: "/tmp/b.pdf", normalizedPath: join(dataDir, "normalized", `${docTwo}.md`),
+    blocks: [
+      { blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"],
+        text: "Property rights regimes vary across jurisdictions.",
+        charStart: 0, charEnd: 50, lineStart: 1, lineEnd: 1, isReferenceLike: false },
+    ],
+  });
+
+  const entries = [
+    readyEntry(dataDir, docOne, "ITEMA", "Doc A", "/tmp/a.pdf", manifestOne),
+    readyEntry(dataDir, docTwo, "ITEMB", "Doc B", "/tmp/b.pdf", manifestTwo),
+  ];
+  const client = await openKeywordIndex(createConfig(dataDir));
+  try {
+    await client.rebuildIndex(entries);
+
+    // No docKeys filter: hits across both docs.
+    const all = await client.searchBlocks("property", 10);
+    assert.equal(all.length, 2);
+    const allKeys = new Set(all.map((r) => r.docKey));
+    assert.ok(allKeys.has(docOne) && allKeys.has(docTwo));
+
+    // Filtered to docOne: only the matching block in that doc.
+    const filtered = await client.searchBlocks("property", 10, { docKeys: [docOne] });
+    assert.equal(filtered.length, 1);
+    assert.equal(filtered[0]!.docKey, docOne);
+    assert.equal(filtered[0]!.blockIndex, 0);
+
+    // Phrase query within one block.
+    const phrase = await client.searchBlocks('"rural land"', 10, { docKeys: [docOne] });
+    assert.equal(phrase.length, 1);
+    assert.equal(phrase[0]!.blockIndex, 0);
+
+    // Phrase that does not appear in any block: no hit (phrase queries do not
+    // cross block rows).
+    const noMatch = await client.searchBlocks('"unrelated property"', 10, { docKeys: [docOne] });
+    assert.equal(noMatch.length, 0);
+  } finally {
+    await client.close();
+  }
+});
+
 test("search handles malformed FTS5 queries gracefully", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-db-malformed-"));
   const dataDir = join(root, "data");

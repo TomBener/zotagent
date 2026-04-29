@@ -1082,6 +1082,8 @@ test("searchWithinDocuments returns passages from the selected attachment", asyn
     rebuildIndex: async () => {},
     search: async (_query: string, _limit: number, options?: { docKeys?: string[] }) =>
       (options?.docKeys ?? [docKey]).map((k) => ({ docKey: k, score: 1 })),
+    searchBlocks: async (_query: string, _limit: number, options?: { docKeys?: string[] }) =>
+      (options?.docKeys ?? [docKey]).map((k) => ({ docKey: k, blockIndex: 1, score: 1 })),
     isEmpty: async () => false,
     close: async () => {},
   });
@@ -1210,6 +1212,8 @@ test("searchWithinDocuments searches across multiple attachments for the same ke
     rebuildIndex: async () => {},
     search: async (_query: string, _limit: number, options?: { docKeys?: string[] }) =>
       (options?.docKeys ?? [docOne, docTwo]).map((k) => ({ docKey: k, score: 1 })),
+    searchBlocks: async (_query: string, _limit: number, options?: { docKeys?: string[] }) =>
+      (options?.docKeys ?? [docOne, docTwo]).map((k) => ({ docKey: k, blockIndex: 0, score: 1 })),
     isEmpty: async () => false,
     close: async () => {},
   });
@@ -1592,7 +1596,7 @@ test("searchWithinDocuments positive phrase requires the literal phrase, not its
   assert.equal(result.results[0]!.blockStart, 1);
 });
 
-test("searchWithinDocuments returns a fallback when terms span block boundaries", async () => {
+test("searchWithinDocuments NEAR returns empty when terms straddle block boundaries", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-search-in-cross-"));
   const dataDir = join(root, "data");
   const indexDir = join(dataDir, "index");
@@ -1603,10 +1607,10 @@ test("searchWithinDocuments returns a fallback when terms span block boundaries"
   const docKey = "x".repeat(40);
   const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
 
-  // alpha is in block 0, beta in block 1, neither block has both. The
-  // (real) FTS gate accepts the doc on `alpha NEAR/10 beta`; the per-block
-  // gate strictly rejects each individual block. We must still surface
-  // something — the fallback candidate.
+  // FTS5 NEAR is positional within a single FTS row. The per-block index
+  // stores one row per block, so terms that appear in different blocks
+  // never satisfy NEAR. This test pins the honest behavior — no fabricated
+  // cross-block "fallback" hit, since FTS itself cannot prove the proximity.
   writeManifest(manifestPath, {
     docKey,
     itemKey: "ITEMX000",
@@ -1647,9 +1651,7 @@ test("searchWithinDocuments returns a fallback when terms span block boundaries"
     10,
     { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir },
   );
-  // FTS matched the doc, no block satisfied strict constraints — fallback
-  // must surface at least one block instead of returning empty.
-  assert.ok(result.results.length >= 1, "fallback should surface a candidate when terms span blocks");
+  assert.equal(result.results.length, 0);
 });
 
 test("searchWithinDocuments OR with phrase requires each branch to actually match", async () => {

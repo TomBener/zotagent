@@ -490,178 +490,6 @@ function scoreKeywordText(text: string, query: KeywordQueryProfile): number {
   );
 }
 
-interface SearchInBranch {
-  requiredStems: Set<string>;
-  excludedStems: Set<string>;
-  /** Multi-token quoted phrases stored as normalized substring checks. */
-  requiredPhrases: string[];
-  excludedPhrases: string[];
-  requiredCjk: string[];
-  excludedCjk: string[];
-}
-
-interface SearchInConstraints {
-  /**
-   * One entry per top-level OR alternative. A null entry means the branch
-   * still contained nested OR (e.g. inside parens) and could not be analyzed,
-   * so any block matching the FTS gate satisfies it.
-   */
-  branches: Array<SearchInBranch | null>;
-}
-
-/**
- * Split a query on top-level OR boundaries, ignoring OR tokens that appear
- * inside parentheses or quoted phrases. Returns the original query as a
- * single-element array when no top-level OR is present.
- */
-function splitTopLevelOr(query: string): string[] {
-  const { masked, phrases } = maskQuotedPhrases(query);
-  const positions: number[] = [];
-  let depth = 0;
-  for (let i = 0; i < masked.length; i += 1) {
-    const ch = masked[i]!;
-    if (ch === "(") { depth += 1; continue; }
-    if (ch === ")") { if (depth > 0) depth -= 1; continue; }
-    if (depth !== 0) continue;
-    if ((ch === "O" || ch === "o")
-        && i + 1 < masked.length
-        && (masked[i + 1] === "R" || masked[i + 1] === "r")) {
-      const prevCh = i > 0 ? masked[i - 1]! : " ";
-      const nextCh = i + 2 < masked.length ? masked[i + 2]! : " ";
-      if (!/[A-Za-z0-9_]/u.test(prevCh) && !/[A-Za-z0-9_]/u.test(nextCh)) {
-        positions.push(i);
-      }
-    }
-  }
-  if (positions.length === 0) return [query];
-  const branches: string[] = [];
-  let prev = 0;
-  for (const pos of positions) {
-    branches.push(unmaskQuotedPhrases(masked.slice(prev, pos), phrases).trim());
-    prev = pos + 2;
-  }
-  branches.push(unmaskQuotedPhrases(masked.slice(prev), phrases).trim());
-  return branches.filter((s) => s.length > 0);
-}
-
-/**
- * Analyze a single OR branch (a sub-query with no top-level OR) into the
- * required/excluded stem and phrase sets used by the per-block gate. Returns
- * null when the branch still contains OR (e.g. nested inside parens), in
- * which case the caller treats the branch as "any block matches".
- *
- * Quoted multi-word phrases are kept as composite units rather than decomposed
- * into stems — otherwise `alpha NOT "beta gamma"` would wrongly exclude any
- * block mentioning beta in isolation, and `"alpha beta"` would wrongly accept
- * blocks containing those words far apart.
- */
-function analyzeSearchInBranch(branchQuery: string): SearchInBranch | null {
-  const simplified = toSimplified(branchQuery);
-  const { masked } = maskQuotedPhrases(simplified);
-  if (/\bOR\b/u.test(masked)) return null;
-
-  const stripped = simplified
-    .replace(/\bNEAR\s*\(\s*([^()]+?)\s*(?:,\s*\d+\s*)?\)/gi, " $1 ")
-    .replace(/\bNEAR(?:\/\d+)?\b/gi, " ")
-    .replace(/[()]/g, " ");
-
-  const requiredStems = new Set<string>();
-  const excludedStems = new Set<string>();
-  const requiredPhrases: string[] = [];
-  const excludedPhrases: string[] = [];
-  const requiredCjk: string[] = [];
-  const excludedCjk: string[] = [];
-
-  const addToken = (token: string, negative: boolean): void => {
-    if (CJK_CHAR_RE.test(token)) {
-      (negative ? excludedCjk : requiredCjk).push(token);
-    } else {
-      (negative ? excludedStems : requiredStems).add(stemKeywordToken(token));
-    }
-  };
-
-  let pendingNegative = false;
-  const unitRe = /"([^"]*)"|([\p{L}\p{N}]+)/giu;
-  let m: RegExpExecArray | null;
-  while ((m = unitRe.exec(stripped)) !== null) {
-    const phrase = m[1];
-    const word = m[2];
-    if (phrase !== undefined) {
-      const tokens = phrase.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
-      if (tokens.length === 0) {
-        pendingNegative = false;
-        continue;
-      }
-      if (tokens.length === 1) {
-        addToken(tokens[0]!, pendingNegative);
-      } else {
-        (pendingNegative ? excludedPhrases : requiredPhrases).push(tokens.join(" "));
-      }
-      pendingNegative = false;
-      continue;
-    }
-    if (word) {
-      const upper = word.toUpperCase();
-      if (upper === "NOT") { pendingNegative = true; continue; }
-      if (upper === "AND") { pendingNegative = false; continue; }
-      addToken(word.toLowerCase(), pendingNegative);
-      pendingNegative = false;
-    }
-  }
-
-  return { requiredStems, excludedStems, requiredPhrases, excludedPhrases, requiredCjk, excludedCjk };
-}
-
-function analyzeSearchInConstraints(query: string): SearchInConstraints {
-  const branchQueries = splitTopLevelOr(query);
-  return { branches: branchQueries.map(analyzeSearchInBranch) };
-}
-
-function branchSatisfied(blockText: string, branch: SearchInBranch | null): boolean {
-  if (branch === null) return true;
-
-  const stems = new Set<string>();
-  for (const tok of tokenizeKeywordText(blockText)) {
-    stems.add(stemKeywordToken(tok));
-  }
-  for (const req of branch.requiredStems) {
-    if (!stems.has(req)) return false;
-  }
-  for (const exc of branch.excludedStems) {
-    if (stems.has(exc)) return false;
-  }
-
-  const needsNormalized =
-    branch.requiredPhrases.length > 0
-    || branch.excludedPhrases.length > 0
-    || branch.requiredCjk.length > 0
-    || branch.excludedCjk.length > 0;
-  if (needsNormalized) {
-    const normalized = normalizeExactText(blockText);
-    for (const req of branch.requiredPhrases) {
-      if (!normalized.includes(req)) return false;
-    }
-    for (const exc of branch.excludedPhrases) {
-      if (normalized.includes(exc)) return false;
-    }
-    for (const req of branch.requiredCjk) {
-      if (!normalized.includes(req)) return false;
-    }
-    for (const exc of branch.excludedCjk) {
-      if (normalized.includes(exc)) return false;
-    }
-  }
-  return true;
-}
-
-function blockSatisfiesConstraints(blockText: string, constraints: SearchInConstraints): boolean {
-  if (constraints.branches.length === 0) return true;
-  for (const branch of constraints.branches) {
-    if (branchSatisfied(blockText, branch)) return true;
-  }
-  return false;
-}
-
 function findBestBlockByTerms(
   manifest: AttachmentManifest,
   query: KeywordQueryProfile,
@@ -906,20 +734,15 @@ export async function searchWithinDocuments(
   const manifestCache = new Map<string, AttachmentManifest>();
   const mapped: VerifiedSearchRow[] = [];
 
-  const ftsOptions = { docKeys: targetDocKeys, bodyOnly: true };
+  const ftsOptions = { docKeys: targetDocKeys };
   const keywordIndex = await keywordFactory(config);
   try {
-    let ftsResults = await keywordIndex.search(query, Math.max(targetDocKeys.length, 1), ftsOptions);
-    if (ftsResults.length === 0 && readyEntries.length > 0 && (await keywordIndex.isEmpty())) {
+    let blockResults = await keywordIndex.searchBlocks(query, limit, ftsOptions);
+    if (blockResults.length === 0 && readyEntries.length > 0 && (await keywordIndex.isEmpty())) {
       await keywordIndex.rebuildIndex(readyEntries);
-      ftsResults = await keywordIndex.search(query, Math.max(targetDocKeys.length, 1), ftsOptions);
-    }
-    if (ftsResults.length === 0) {
-      return { results: [], warnings: config.warnings };
+      blockResults = await keywordIndex.searchBlocks(query, limit, ftsOptions);
     }
 
-    const keywordQuery = buildKeywordQueryProfile(query);
-    const constraints = analyzeSearchInConstraints(query);
     const entryByDocKey = new Map(entries.map((entry) => [entry.docKey, entry]));
     const offsetByDocKey = new Map<string, number>();
     let runningOffset = 0;
@@ -930,69 +753,52 @@ export async function searchWithinDocuments(
       runningOffset += manifest.blocks.length + (i < entries.length - 1 ? 1 : 0);
     }
 
-    for (const ftsResult of ftsResults) {
-      const entry = entryByDocKey.get(ftsResult.docKey);
+    // FTS5 phrase queries do not cross row boundaries, so a citation that
+    // wraps mid-line into the next paragraph would be missed by per-block
+    // FTS alone. Re-use the manifest-level scanner to surface cross-block
+    // exact-phrase matches as supplemental high-priority candidates. Only
+    // run for multi-token queries: the scanner does substring containment,
+    // and a single short token (e.g. `ho`) would falsely "hit" prefixes of
+    // unrelated words like `how` or `household`.
+    const keywordQuery = buildKeywordQueryProfile(query);
+    const phraseTokens = keywordQuery.normalizedQuery.split(" ").filter((t) => t.length > 0);
+    if (phraseTokens.length >= 2) {
+      for (const entry of entries) {
+        const manifest = readManifestCached(entry, manifestCache);
+        const exactRange = findExactPhraseBlockRange(manifest, keywordQuery.normalizedQuery);
+        if (exactRange) {
+          const offset = offsetByDocKey.get(entry.docKey) ?? 0;
+          mapped.push(buildSearchRow(
+            entry, manifest, exactRange, offset,
+            100 - (exactRange.blockEnd - exactRange.blockStart),
+          ));
+        }
+      }
+    }
+
+    for (const result of blockResults) {
+      const entry = entryByDocKey.get(result.docKey);
       if (!entry) continue;
       const manifest = readManifestCached(entry, manifestCache);
       const offset = offsetByDocKey.get(entry.docKey) ?? 0;
-
-      type Candidate = { range: { blockStart: number; blockEnd: number }; score: number };
-      const candidates = new Map<number, Candidate>();
-      let crossBlockFallback: Candidate | null = null;
-
-      const exactRange = keywordQuery.normalizedQuery
-        ? findExactPhraseBlockRange(manifest, keywordQuery.normalizedQuery)
-        : null;
-      if (exactRange) {
-        candidates.set(exactRange.blockStart, {
-          range: exactRange,
-          score: 100 - (exactRange.blockEnd - exactRange.blockStart),
-        });
-      }
-
-      for (const block of manifest.blocks) {
-        const blockHaystack = `${block.sectionPath.join(" ")} ${block.text}`;
-        const baseScore = scoreKeywordText(blockHaystack, keywordQuery);
-        if (baseScore <= 0) continue;
-        const adjusted = baseScore + (block.blockType === "heading" ? 0.5 : 0);
-        if (blockSatisfiesConstraints(blockHaystack, constraints)) {
-          // Boost so strict matches always outrank the cross-block fallback.
-          const boosted = adjusted + 50;
-          const existing = candidates.get(block.blockIndex);
-          if (!existing || boosted > existing.score) {
-            candidates.set(block.blockIndex, {
-              range: { blockStart: block.blockIndex, blockEnd: block.blockIndex },
-              score: boosted,
-            });
-          }
-        } else if (!crossBlockFallback || adjusted > crossBlockFallback.score) {
-          crossBlockFallback = {
-            range: { blockStart: block.blockIndex, blockEnd: block.blockIndex },
-            score: adjusted,
-          };
-        }
-      }
-
-      // FTS already accepted this doc, so always surface something. If no block
-      // satisfied the strict constraint and no exact-phrase candidate fired
-      // (e.g. NEAR/N matched across block boundaries), fall back to the best
-      // partial-match block at half score so it ranks below true matches.
-      if (candidates.size === 0 && crossBlockFallback) {
-        candidates.set(crossBlockFallback.range.blockStart, {
-          range: crossBlockFallback.range,
-          score: crossBlockFallback.score * 0.5,
-        });
-      }
-
-      for (const candidate of candidates.values()) {
-        mapped.push(buildSearchRow(entry, manifest, candidate.range, offset, candidate.score));
-      }
+      const range = { blockStart: result.blockIndex, blockEnd: result.blockIndex };
+      mapped.push(buildSearchRow(entry, manifest, range, offset, result.score));
     }
   } finally {
     await keywordIndex.close();
   }
 
-  const ordered = [...mapped].sort((a, b) => b.score - a.score || a.blockStart - b.blockStart);
+  // Dedupe by (itemKey, blockStart, blockEnd) — exact-phrase scan and per-block
+  // FTS may surface the same block; keep the higher-scored row.
+  const seen = new Map<string, VerifiedSearchRow>();
+  for (const row of mapped) {
+    const key = `${row.itemKey}:${row.blockStart}:${row.blockEnd}`;
+    const existing = seen.get(key);
+    if (!existing || row.score > existing.score) {
+      seen.set(key, row);
+    }
+  }
+  const ordered = [...seen.values()].sort((a, b) => b.score - a.score || a.blockStart - b.blockStart);
 
   return {
     results: ordered.slice(0, limit).map(({ referenceOnly: _referenceOnly, ...row }) => row),
