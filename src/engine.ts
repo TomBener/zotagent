@@ -790,7 +790,7 @@ export async function searchWithinDocuments(
       if (normalizedPhrase) {
         for (const entry of entries) {
           const manifest = readManifestCached(entry, manifestCache);
-          const exactRange = findExactPhraseBlockRange(manifest, normalizedPhrase);
+          const exactRange = findExactPhraseBlockRange(manifest, normalizedPhrase, { tokenBoundaries: true });
           if (exactRange) {
             const offset = offsetByDocKey.get(entry.docKey) ?? 0;
             mapped.push(buildSearchRow(

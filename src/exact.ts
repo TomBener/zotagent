@@ -3,6 +3,39 @@ import { toSimplified } from "./zh-convert.js";
 
 const SINGLE_CJK_TOKEN = /^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]$/u;
 
+type ExactPhraseOptions = {
+  tokenBoundaries?: boolean;
+};
+
+function isCjkChar(ch: string | undefined): boolean {
+  return ch !== undefined && SINGLE_CJK_TOKEN.test(ch);
+}
+
+function hasTokenBoundaryBefore(text: string, offset: number, firstQueryChar: string): boolean {
+  if (offset <= 0) return true;
+  if (isCjkChar(firstQueryChar)) return true;
+  const prev = text[offset - 1];
+  return prev === " " || isCjkChar(prev);
+}
+
+function hasTokenBoundaryAfter(text: string, offset: number, lastQueryChar: string): boolean {
+  if (offset >= text.length) return true;
+  if (isCjkChar(lastQueryChar)) return true;
+  const next = text[offset];
+  return next === " " || isCjkChar(next);
+}
+
+function satisfiesTokenBoundaries(text: string, start: number, query: string): boolean {
+  const first = query[0];
+  const last = query[query.length - 1];
+  if (first === undefined || last === undefined) return false;
+  const endExclusive = start + query.length;
+  return (
+    hasTokenBoundaryBefore(text, start, first)
+    && hasTokenBoundaryAfter(text, endExclusive, last)
+  );
+}
+
 function collapseSegmentedCjkRuns(normalized: string): string {
   if (normalized.length === 0) return normalized;
 
@@ -65,6 +98,7 @@ export function countExactMatches(haystack: string, needle: string): number {
 export function findExactPhraseBlockRange(
   manifest: AttachmentManifest,
   query: string,
+  options: ExactPhraseOptions = {},
 ): { blockStart: number; blockEnd: number } | null {
   const normalizedQuery = normalizeExactText(query);
   if (normalizedQuery.length === 0) return null;
@@ -117,6 +151,11 @@ export function findExactPhraseBlockRange(
   let matchStart = normalizedBody.indexOf(normalizedQuery);
 
   while (matchStart !== -1) {
+    if (options.tokenBoundaries && !satisfiesTokenBoundaries(normalizedBody, matchStart, normalizedQuery)) {
+      matchStart = normalizedBody.indexOf(normalizedQuery, matchStart + 1);
+      continue;
+    }
+
     const matchEnd = matchStart + normalizedQuery.length - 1;
     const blockStart = findBlockForOffset(matchStart);
     const blockEnd = findBlockForOffset(matchEnd);

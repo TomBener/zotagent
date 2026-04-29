@@ -50,6 +50,24 @@ test("findExactPhraseBlockRange finds phrases across block boundaries", () => {
   assert.deepEqual(result, { blockStart: 10, blockEnd: 20 });
 });
 
+test("findExactPhraseBlockRange can require token-boundary phrase matches", () => {
+  const doc = manifest([
+    block(10, "Here alpha beta appears together."),
+    block(20, "党 委 书 记 是 关 键 岗 位"),
+  ]);
+
+  assert.deepEqual(
+    findExactPhraseBlockRange(doc, "alpha beta", { tokenBoundaries: true }),
+    { blockStart: 10, blockEnd: 10 },
+  );
+  assert.equal(findExactPhraseBlockRange(doc, "lpha beta", { tokenBoundaries: true }), null);
+  assert.equal(findExactPhraseBlockRange(doc, "alpha bet", { tokenBoundaries: true }), null);
+  assert.deepEqual(
+    findExactPhraseBlockRange(doc, "委书", { tokenBoundaries: true }),
+    { blockStart: 20, blockEnd: 20 },
+  );
+});
+
 test("findExactPhraseBlockRange returns the narrowest matching block span", () => {
   const result = findExactPhraseBlockRange(
     manifest([

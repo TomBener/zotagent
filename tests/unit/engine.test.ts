@@ -1594,6 +1594,22 @@ test("searchWithinDocuments positive phrase requires the literal phrase, not its
   );
   assert.ok(result.results.length >= 1);
   assert.equal(result.results[0]!.blockStart, 1);
+
+  const missingPrefix = await searchWithinDocuments(
+    '"lpha beta"',
+    { key: "ITEMR000" },
+    10,
+    { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir },
+  );
+  assert.equal(missingPrefix.results.length, 0, "quoted phrases must not match inside the first token");
+
+  const missingSuffix = await searchWithinDocuments(
+    '"alpha bet"',
+    { key: "ITEMR000" },
+    10,
+    { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir },
+  );
+  assert.equal(missingSuffix.results.length, 0, "quoted phrases must not match inside the last token");
 });
 
 test("searchWithinDocuments NOT does not resurface blocks via cross-block phrase scan", async () => {
