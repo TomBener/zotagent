@@ -18,6 +18,7 @@ import { createRequire } from "node:module";
 
 import { loadCatalog } from "./catalog.js";
 import { getDataPaths, resolveConfig, type ConfigOverrides } from "./config.js";
+import { applyExcludes, getExcludesPath, loadExcludedKeys } from "./excludes.js";
 import { buildMarkdownManifest, buildPdfManifest } from "./manifest.js";
 import { extractEpub } from "./epub.js";
 import { extractHtml } from "./html-extract.js";
@@ -1154,10 +1155,21 @@ export async function runSync(
     ensureDir(paths.logsDir);
     logger.info("Prepared data directories.");
 
-    const catalogData = loadCatalog(config);
+    const rawCatalogData = loadCatalog(config);
     logger.info(
-      `Loaded bibliography with ${catalogData.records.length} records and ${catalogData.attachments.length} attachments.`,
+      `Loaded bibliography with ${rawCatalogData.records.length} records and ${rawCatalogData.attachments.length} attachments.`,
     );
+    const excludedKeys = loadExcludedKeys();
+    const { filtered: catalogData, stats: excludeStats } = applyExcludes(rawCatalogData, excludedKeys);
+    if (excludeStats.excludedRecords > 0 || excludeStats.unmatchedKeys.length > 0) {
+      logger.info(
+        `Excludes from ${getExcludesPath()}: ${excludeStats.excludedRecords} record(s) and ${excludeStats.excludedAttachments} attachment(s) skipped`
+        + (excludeStats.unmatchedKeys.length > 0
+          ? `; ${excludeStats.unmatchedKeys.length} key(s) in the file did not match any bibliography entry: ${excludeStats.unmatchedKeys.join(", ")}`
+          : ""),
+        { console: true },
+      );
+    }
     const previousCatalog = readCatalogFile(paths.catalogPath);
     const previousByDocKey = mapEntriesByDocKey(previousCatalog);
     // Paths the current bibliography still references. Used when building the

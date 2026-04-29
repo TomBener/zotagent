@@ -279,6 +279,11 @@ Index
         --pdf-batch-size <n>        Override the maximum number of PDFs per extraction batch.
         --pdf-concurrency <n>       Run N extraction batches in parallel (default 2). Each batch
                                     spawns its own java process; tune with available CPU and RAM.
+      Auto-loads ~/.zotagent/excludes.txt if present: one itemKey or citationKey per line,
+      \`#\` comments allowed, blank lines ignored. Listed items are skipped entirely (no
+      extraction, no manifest, no normalized text, no keyword/qmd indexing). Use \`zotagent
+      diagnose\` to find candidate itemKeys to exclude (picture books, OCR-failed scans,
+      vertical-CJK PDFs that the extractor can't handle).
 
   status
       Show attachment counts, local index paths, and qmd status.
