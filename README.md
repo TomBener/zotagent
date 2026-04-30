@@ -8,22 +8,32 @@
 
 ## Features
 
-Search and retrieval are the core features. Both read from a local index that `sync` builds from PDF, EPUB, HTML, and TXT attachments in a Zotero library — PDFs via an OpenDataLoader cascade with `pdftotext` fallback; EPUB and HTML extracted in-process.
+`zotagent` is built around a local, agent-friendly Zotero index plus a small set of Zotero Web API helpers. Local lookup commands read artifacts under `dataDir`; API commands write or inspect the live Zotero library.
+
+### Indexing
+
+- `sync` — build or refresh local keyword, semantic, manifest, and normalized-markdown indexes from a Better CSL JSON bibliography and supported Zotero attachments: PDF, EPUB, HTML, and TXT.
+- PDF extraction runs through [OpenDataLoader PDF](https://github.com/opendataloader-project/opendataloader-pdf), retries failed batches one PDF at a time, and falls back to text-only / `pdftotext` paths for known structural, empty-output, or timeout failures. EPUB and HTML are extracted in-process; TXT is indexed directly.
+- Incremental sync skips unchanged ready files and unchanged extraction errors, unless `--retry-errors` is passed. It also detects attachments renamed or moved inside `attachmentsRoot` and migrates cached artifacts instead of re-extracting and re-embedding.
+- Operational controls include `--attachments-root`, `--pdf-timeout-ms`, `--pdf-batch-size`, `--pdf-concurrency`, sync logs under `logs/`, `status` for index counts and paths, and `syncEnabled: false` for read-only hosts.
+- `~/.zotagent/excludes.txt` can exclude noisy or broken items by `itemKey` or `citationKey`; excluded items are removed from keyword and qmd indexing on the next sync.
 
 ### Search
 
-- `search` — FTS5 keyword search (default) over indexed attachment text, not item titles, with porter stemming. Supports `"exact phrase"`, `OR`, `NOT`, `term NEAR/<n> term`, and `prefix*`. Chinese, Japanese, and Korean (CJK) text is supported with accurate phrase matching.
-- `search --semantic` — vector search over [qmd](https://github.com/tobi/qmd) embeddings with LLM query expansion; slower and heavier than keyword search.
-- `search-in` — scope a text query to a single indexed item's attachments, addressed by `itemKey` or `citationKey` (auto-detected). Uses the same FTS5 keyword syntax as `search` (`"exact phrase"`, `OR`, `NOT`, `term NEAR/<n> term`, `prefix*`), evaluated per block so each returned passage actually satisfies the query.
-- `metadata` — search the Zotero bibliography (Better CSL JSON) across `title`, `author`, `year`, `abstract`, `journal`, and `publisher`. `--field` narrows the fields the positional query hits; per-field filters (`--author`, `--year`, `--title`, `--journal`, `--publisher`) AND together and can replace the positional query entirely (e.g. `metadata --author "Pratt" --year "1985"`); `--has-file` keeps only items with an indexed attachment.
+- `search` — FTS5 keyword search (default) over indexed attachment text, with porter stemming and per-block ranking. Supports `"exact phrase"`, `OR`, `NOT`, `term NEAR/<n> term`, and `prefix*`.
+- `search --semantic` — vector search over [QMD](https://github.com/tobi/qmd) embeddings with LLM query expansion; slower and heavier than keyword search. `--min-score` can filter both keyword and semantic results before mapping.
+- CJK search is handled explicitly: Chinese, Japanese, and Korean text is segmented for FTS, Traditional Chinese is folded to Simplified at index and query time for keyword search, and exact CJK phrase matching remains accurate while returned text preserves the source form.
+- `search-in` — scope a text query to one indexed item, addressed by `itemKey` or `citationKey` (auto-detected). It uses the same FTS5 syntax as `search` and adds a manifest-level cross-block scan for a single quoted phrase.
+- `metadata` — search the Zotero bibliography (Better CSL JSON) across `title`, `author`, `year`, `abstract`, `journal`, and `publisher`. `--field` narrows the positional query; per-field filters (`--author`, `--year`, `--title`, `--journal`, `--publisher`) AND together and can replace the positional query entirely; `--has-file` keeps only items with supported attachments and `--abstract` opts into bulkier abstract output.
+- Search results return compact passages centered on the hit, stable `itemKey`s, internal `charOffset`s for `expand`, and page hints (`pageStart` / `pageEnd`) when the extractor recorded them.
 
 ### Retrieve
 
-- `blocks` — paginate blocks from one item's manifest with `--offset-block` / `--limit-blocks`.
-- `fulltext` — return the full normalized markdown for one item. `--clean` drops duplicate blocks and common boilerplate (citation notices, TOC lines).
-- `expand` — pull context around a search result's `charOffset`, with a configurable character `--radius`.
+- `blocks` — paginate one item's manifest chunks (paragraph / heading / list-item blocks) with `--offset-block` / `--limit-blocks`, including section paths and page hints when available.
+- `fulltext` — return full normalized markdown for one item. `--clean` rebuilds text from the manifest while dropping duplicate blocks and common boilerplate such as citation notices and table-of-contents lines.
+- `expand` — pull a continuous rendered-markdown slice around a search result's `charOffset`, with configurable `--radius` and returned passage bounds.
 
-All three address an item by `--key`, which accepts either `itemKey` or `citationKey`. A leading `@` is stripped before dispatch, so Pandoc-style citations can be pasted directly. Values matching `[A-Z0-9]{8}` are dispatched as `itemKey`; anything else is treated as `citationKey`. When one item has multiple indexed attachments, they are merged into one logical document with monotonic block indices/character offsets and `# Attachment: <name>` dividers. Output always identifies items by `itemKey` only — citationKey is accepted as input but never emitted, so downstream chaining stays on a single stable key.
+All three address an item by `--key`, which accepts either `itemKey` or `citationKey`. A leading `@` is stripped before dispatch, so Pandoc-style citations can be pasted directly. Values matching `[A-Z0-9]{8}` are dispatched as `itemKey`; anything else is treated as `citationKey`. When one item has multiple indexed attachments, they are merged into one logical document with monotonic `blockIndex` / `charOffset` coordinates and `# Attachment: <name>` dividers. Output always identifies items by `itemKey` only — citationKey is accepted as input but never emitted, so downstream chaining stays on a single stable key.
 
 ### Diagnostics
 
@@ -31,8 +41,10 @@ All three address an item by `--key`, which accepts either `itemKey` or `citatio
 
 ### Add to Zotero
 
-- `add` — create an item by DOI, by basic fields, or by piping pre-shaped JSON via `--json` (single object or batch). Returns the new `itemKey` immediately.
-- `s2` — search Semantic Scholar; pipe a returned `paperId` into `add --s2-paper-id`.
+- `add` — create Zotero items by DOI, by basic fields, from Semantic Scholar (`--s2-paper-id`), or by piping pre-shaped JSON via `--json` (single object or batch). New items are tagged `Added by AI Agent`, collection routing can come from config or `--collection-key`, and `add` returns the new `itemKey` immediately.
+- `add --json` — accepts lenient Zotero-like metadata (`authors`, `keywords`, `abstract`, `doi`, `year`, collections, and direct Zotero fields), returns an array in all cases, and reports per-item failures without aborting the rest of a batch.
+- `--attach-file` / per-item `attachFile` — attach a local file as a Zotero `linked_file` child, with known content types for PDF, EPUB, HTML, and TXT. Paths under `attachmentsRoot` are stored with Zotero's portable `attachments:<rel>` form; invalid paths fail before parent creation.
+- `s2` — search Semantic Scholar; pipe a returned `paperId` into `add --s2-paper-id`. Imported papers prefer DOI metadata when available and fall back to Semantic Scholar metadata otherwise.
 - `recent` — list regular top-level items most recently added or modified, straight from the Zotero Web API (no local index needed). Useful for confirming an `add` landed or orienting an agent in the library.
 
 All commands write JSON to stdout and are designed to be chained by AI agents.
