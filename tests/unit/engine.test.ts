@@ -113,6 +113,89 @@ test("searchLiterature keyword mode uses the keyword index and skips qmd", async
   assert.match(result.results[0]!.passage, /dangwei shuji/i);
 });
 
+test("searchLiterature reflows PDF line breaks in result passages", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-reflow-"));
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docKey = "f".repeat(40);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
+  const text = "This para-\ngraph wraps\nacross PDF\nlines, with dangwei shuji.";
+
+  writeManifest(manifestPath, {
+    docKey,
+    itemKey: "ITEMFLOW",
+    title: "Reflow fixture",
+    authors: ["A"],
+    filePath: "/tmp/reflow.pdf",
+    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+    blocks: [
+      {
+        blockIndex: 0,
+        blockType: "paragraph",
+        sectionPath: ["Body"],
+        text,
+        charStart: 0,
+        charEnd: text.length,
+        lineStart: 1,
+        lineEnd: 4,
+        isReferenceLike: false,
+      },
+    ],
+  });
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [
+      {
+        docKey,
+        itemKey: "ITEMFLOW",
+        title: "Reflow fixture",
+        authors: ["A"],
+        filePath: "/tmp/reflow.pdf",
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: 1,
+        mtimeMs: 1,
+        sourceHash: "hash-reflow",
+        lastIndexedAt: new Date().toISOString(),
+        normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+        manifestPath,
+      },
+    ],
+  });
+
+  const fakeKeywordFactory = async () => ({
+    rebuildIndex: async () => {},
+    searchDocs: async () => [{ docKey, blockIndex: 0, score: 1.5 }],
+    searchBlocks: async () => [],
+    isEmpty: async () => false,
+    close: async () => {},
+  });
+  const unusedQmdFactory = async () => {
+    throw new Error("qmd search should not run in keyword mode");
+  };
+
+  const result = await searchLiterature(
+    "dangwei shuji",
+    10,
+    { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir },
+    unusedQmdFactory,
+    {},
+    fakeKeywordFactory,
+  );
+
+  assert.equal(result.results.length, 1);
+  assert.doesNotMatch(result.results[0]!.passage, /\n/u);
+  assert.match(result.results[0]!.passage, /This paragraph wraps across PDF lines, with dangwei shuji\./u);
+});
+
 test("searchLiterature keyword mode restricts searches to filtered item keys", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-tag-filter-"));
   const dataDir = join(root, "data");
@@ -1766,7 +1849,7 @@ test("searchWithinDocuments finds quoted CJK phrases across block boundaries", a
   );
 
   assert.equal(result.results.length, 1);
-  assert.match(result.results[0]!.passage, /开发\n\n新疆/u);
+  assert.match(result.results[0]!.passage, /开发\s+新疆/u);
 });
 
 test("searchWithinDocuments NOT does not resurface blocks via cross-block phrase scan", async () => {

@@ -177,6 +177,19 @@ function truncateSearchPassage(text: string): string {
   return enc.decode(tokens.slice(0, SEARCH_PASSAGE_MAX_TOKENS)) + "…";
 }
 
+function reflowSearchPassage(text: string): string {
+  const leadingEllipsis = text.startsWith("…");
+  const trailingEllipsis = text.endsWith("…");
+  const core = text
+    .replace(/^…/u, "")
+    .replace(/…$/u, "")
+    .replace(/([A-Za-z])-\s*\n+\s*([a-z])/gu, "$1$2")
+    .replace(/\s*\n+\s*/gu, " ")
+    .replace(/[ \t]{2,}/gu, " ")
+    .trim();
+  return `${leadingEllipsis ? "…" : ""}${core}${trailingEllipsis ? "…" : ""}`;
+}
+
 // Half-window for the search-result passage, in characters of the rendered
 // markdown. Combined with truncateSearchPassage's token cap, this gives the
 // agent a continuous slice centered on the hit that fits within ~500 tokens
@@ -431,7 +444,7 @@ function buildSearchRow(
     title: entry.title,
     authors: entry.authors,
     ...(entry.year ? { year: entry.year } : {}),
-    passage: truncateSearchPassage(passage),
+    passage: truncateSearchPassage(reflowSearchPassage(passage)),
     charOffset: spanCenter,
     ...(startBlock.pageStart !== undefined ? { pageStart: startBlock.pageStart } : {}),
     ...(endBlock.pageEnd !== undefined ? { pageEnd: endBlock.pageEnd } : {}),
