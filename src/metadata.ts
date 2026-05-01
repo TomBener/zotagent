@@ -19,6 +19,7 @@ interface MetadataSearchOptions {
   hasFile?: boolean;
   includeAbstract?: boolean;
   filters?: Partial<Record<MetadataField, string>>;
+  itemKeys?: string[];
 }
 
 function includesNormalizedText(text: string | undefined, query: string): boolean {
@@ -99,7 +100,8 @@ export async function searchMetadata(
     .map(([field, value]) => [field, normalizeExactText(value)] as const)
     .filter(([, normalized]) => normalized.length > 0);
   const hasQuery = normalizedQuery.length > 0;
-  const hasFilters = filterEntries.length > 0;
+  const itemKeyFilter = options.itemKeys !== undefined ? new Set(options.itemKeys) : undefined;
+  const hasFilters = filterEntries.length > 0 || itemKeyFilter !== undefined;
 
   if (!hasQuery && !hasFilters) {
     throw new Error("Metadata search requires a query or at least one field filter.");
@@ -110,6 +112,7 @@ export async function searchMetadata(
   const filterFieldSet = new Set(filterEntries.map(([field]) => field));
   const { records } = loadCatalog(config);
   const results = records
+    .filter((record) => !itemKeyFilter || itemKeyFilter.has(record.itemKey))
     .filter((record) => !options.hasFile || record.hasSupportedFile)
     .filter((record) =>
       filterEntries.every(([field, normalized]) => matchesField(record, field, normalized)),

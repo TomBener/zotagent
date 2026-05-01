@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { expandDocument, fullTextDocument, getDocumentBlocks, searchLiterature, searchWithinDocuments } from "../../src/engine.js";
+import type { KeywordSearchOptions } from "../../src/keyword-db.js";
 import { writeCatalogFile } from "../../src/state.js";
 import type { AttachmentManifest, CatalogFile } from "../../src/types.js";
 import { MANIFEST_EXT, writeManifestFile } from "../../src/utils.js";
@@ -110,6 +111,134 @@ test("searchLiterature keyword mode uses the keyword index and skips qmd", async
   assert.equal(result.results.length, 1);
   assert.equal(result.results[0]!.itemKey, "ITEM9000");
   assert.match(result.results[0]!.passage, /dangwei shuji/i);
+});
+
+test("searchLiterature keyword mode restricts searches to filtered item keys", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-tag-filter-"));
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const taggedDocKey = "a".repeat(40);
+  const otherDocKey = "b".repeat(40);
+  const taggedManifestPath = join(manifestsDir, `${taggedDocKey}${MANIFEST_EXT}`);
+  const otherManifestPath = join(manifestsDir, `${otherDocKey}${MANIFEST_EXT}`);
+
+  writeManifest(taggedManifestPath, {
+    docKey: taggedDocKey,
+    itemKey: "TAGGED01",
+    title: "Tagged thesis",
+    authors: ["A"],
+    filePath: "/tmp/tagged.pdf",
+    normalizedPath: join(dataDir, "normalized", `${taggedDocKey}.md`),
+    blocks: [
+      {
+        blockIndex: 0,
+        blockType: "paragraph",
+        sectionPath: ["Body"],
+        text: "This thesis discusses local fiscal capacity.",
+        charStart: 0,
+        charEnd: 43,
+        lineStart: 1,
+        lineEnd: 1,
+        isReferenceLike: false,
+      },
+    ],
+  });
+  writeManifest(otherManifestPath, {
+    docKey: otherDocKey,
+    itemKey: "OTHER001",
+    title: "Other article",
+    authors: ["B"],
+    filePath: "/tmp/other.pdf",
+    normalizedPath: join(dataDir, "normalized", `${otherDocKey}.md`),
+    blocks: [
+      {
+        blockIndex: 0,
+        blockType: "paragraph",
+        sectionPath: ["Body"],
+        text: "This article also discusses local fiscal capacity.",
+        charStart: 0,
+        charEnd: 49,
+        lineStart: 1,
+        lineEnd: 1,
+        isReferenceLike: false,
+      },
+    ],
+  });
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [
+      {
+        docKey: taggedDocKey,
+        itemKey: "TAGGED01",
+        title: "Tagged thesis",
+        authors: ["A"],
+        filePath: "/tmp/tagged.pdf",
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: 1,
+        mtimeMs: 1,
+        sourceHash: "hash-tagged",
+        lastIndexedAt: new Date().toISOString(),
+        normalizedPath: join(dataDir, "normalized", `${taggedDocKey}.md`),
+        manifestPath: taggedManifestPath,
+      },
+      {
+        docKey: otherDocKey,
+        itemKey: "OTHER001",
+        title: "Other article",
+        authors: ["B"],
+        filePath: "/tmp/other.pdf",
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: 1,
+        mtimeMs: 1,
+        sourceHash: "hash-other",
+        lastIndexedAt: new Date().toISOString(),
+        normalizedPath: join(dataDir, "normalized", `${otherDocKey}.md`),
+        manifestPath: otherManifestPath,
+      },
+    ],
+  });
+
+  let capturedOptions: KeywordSearchOptions | undefined;
+  const fakeKeywordFactory = async () => ({
+    rebuildIndex: async () => {},
+    searchDocs: async (_query: string, _limit: number, options?: KeywordSearchOptions) => {
+      capturedOptions = options;
+      return [{ docKey: taggedDocKey, blockIndex: 0, score: 2 }];
+    },
+    searchBlocks: async () => [],
+    isEmpty: async () => false,
+    close: async () => {},
+  });
+  const unusedQmdFactory = async () => {
+    throw new Error("qmd search should not run in keyword mode");
+  };
+
+  const result = await searchLiterature(
+    "local fiscal capacity",
+    10,
+    { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir },
+    unusedQmdFactory,
+    { itemKeys: ["TAGGED01"] },
+    fakeKeywordFactory,
+  );
+
+  assert.deepEqual(capturedOptions?.docKeys, [taggedDocKey]);
+  assert.deepEqual(
+    result.results.map((row) => row.itemKey),
+    ["TAGGED01"],
+  );
 });
 
 test("searchLiterature keyword mode anchors long-block passages on the matched query", async () => {

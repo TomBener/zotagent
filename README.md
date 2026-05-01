@@ -20,11 +20,11 @@
 
 ### Search
 
-- `search` — FTS5 keyword search (default) over indexed attachment text, with porter stemming and per-block ranking. Supports `"exact phrase"`, `OR`, `NOT`, `term NEAR/<n> term`, and `prefix*`.
+- `search` — FTS5 keyword search (default) over indexed attachment text, with porter stemming and per-block ranking. Supports `"exact phrase"`, `OR`, `NOT`, `term NEAR/<n> term`, and `prefix*`. `--tag` restricts keyword search to top-level Zotero items with matching tags.
 - `search --semantic` — vector search over [QMD](https://github.com/tobi/qmd) embeddings with LLM query expansion; slower and heavier than keyword search. `--min-score` can filter both keyword and semantic results before mapping.
 - CJK search is handled explicitly: Chinese, Japanese, and Korean text is segmented for FTS, Traditional Chinese is folded to Simplified at index and query time for keyword search, and exact CJK phrase matching remains accurate while returned text preserves the source form.
 - `search-in` — scope a text query to one indexed item, addressed by `itemKey` or `citationKey` (auto-detected). It uses the same FTS5 syntax as `search` and adds a manifest-level cross-block scan for a single quoted phrase.
-- `metadata` — search the Zotero bibliography (Better CSL JSON) across `title`, `author`, `year`, `abstract`, `journal`, and `publisher`. `--field` narrows the positional query; per-field filters (`--author`, `--year`, `--title`, `--journal`, `--publisher`) AND together and can replace the positional query entirely; `--has-file` keeps only items with supported attachments and `--abstract` opts into bulkier abstract output.
+- `metadata` — search the Zotero bibliography (Better CSL JSON) across `title`, `author`, `year`, `abstract`, `journal`, and `publisher`. `--field` narrows the positional query; per-field filters (`--author`, `--year`, `--title`, `--journal`, `--publisher`) AND together and can replace the positional query entirely; `--tag` fetches matching top-level item keys from the Zotero Web API and filters locally; `--has-file` keeps only items with supported attachments and `--abstract` opts into bulkier abstract output.
 - Search results return compact passages centered on the hit, stable `itemKey`s, internal `charOffset`s for `expand`, and page hints (`pageStart` / `pageEnd`) when the extractor recorded them.
 
 ### Retrieve
@@ -153,7 +153,7 @@ Index
       Interactively set ~/.zotagent/config.json.
 
 Search
-  search "<text>" [--keyword | --semantic] [--limit <n>] [--min-score <n>]
+  search "<text>" [--keyword | --semantic] [--limit <n>] [--min-score <n>] [--tag <tag>]
       Search indexed documents. Pass at most one of --keyword (default) or --semantic.
       Default is keyword search (FTS5 with porter stemming): "exact phrase", OR, NOT,
       term NEAR/<n> term, prefix*. Use NEAR/50 for proximity; NEAR(...) is not accepted.
@@ -161,6 +161,8 @@ Search
       --semantic uses qmd vector search with LLM query expansion (slower, heavier).
         --limit <n>                 Return up to n search results. Default: 10 for search, 20 for metadata.
         --min-score <n>             Drop lower-scoring search hits before mapping.
+        --tag <tag>                 Restrict keyword search to top-level Zotero items with this tag.
+                                    Repeatable; requires Zotero read API config.
 
   search-in "<text>" --key <key> [--limit <n>]
       Search within one indexed item's attachments. Uses the same FTS5 keyword
@@ -168,11 +170,12 @@ Search
       Requires a populated keyword index (run `zotagent sync` first).
 
   metadata ["<text>"] [--limit <n>] [--field <field>] [--has-file] [--abstract]
-           [--author <text>] [--year <text>] [--title <text>] [--journal <text>] [--publisher <text>]
+           [--author <text>] [--year <text>] [--title <text>] [--journal <text>] [--publisher <text>] [--tag <tag>]
       Search Zotero bibliography metadata read from bibliographyJsonPath.
       Provide a positional query, one or more field filters, or both. The
       positional query is substring-matched across --field selections; each
-      filter flag adds an AND constraint on that specific field.
+      filter flag adds an AND constraint on that specific field. --tag fetches
+      matching top-level item keys from the Zotero Web API, then filters locally.
         --field <field>             Limit the positional query to title, author, year, abstract,
                                     journal, or publisher. Repeatable.
         --author <text>             Filter by author substring.
@@ -180,6 +183,8 @@ Search
         --title <text>              Filter by title substring.
         --journal <text>            Filter by journal substring.
         --publisher <text>          Filter by publisher substring.
+        --tag <tag>                 Filter by top-level Zotero item tag. Repeatable; requires
+                                    Zotero read API config.
         --has-file                  Keep only metadata results with a supported indexed attachment.
         --abstract                  Include the abstract in each result. Omitted by default to keep
                                     bulk responses compact for agents.
@@ -271,6 +276,7 @@ Add to Zotero
 A few behaviors worth knowing:
 
 - `add` does not deduplicate against your existing Zotero library — it is speed-first and returns `itemKey` immediately. New items are tagged `Added by AI Agent`.
+- `--tag` on `search` and `metadata` calls the Zotero Web API to resolve top-level item keys, then filters local results. Repeating `--tag` ANDs the tags. It requires Zotero read API config and applies to keyword search only; `--tag` cannot be combined with `search --semantic`.
 - `search` returns a compact character-windowed `passage` centered on the hit and capped at 500 tokens; use `expand --key <key> --offset <charOffset>` to pull fuller context. Title-driven lookups belong in `metadata`, not `search`, because keyword search indexes attachment body text only. `metadata` omits `abstract` by default for the same compactness reason — pass `--abstract` to include it.
 - Traditional Chinese is folded to simplified at both index and query time. This applies to `search`, `search-in`, and `metadata`; `search --semantic` does not fold. Returned text (`passage`, `blocks`, `fulltext`, `expand`) preserves the original form as stored in the attachment.
 - `sync` skips files that fail extraction, records them as `error`, and continues. Re-runs skip unchanged errors; pass `--retry-errors` to retry. When an item has both a PDF and an EPUB, only the EPUB is indexed (both files stay attached in Zotero).

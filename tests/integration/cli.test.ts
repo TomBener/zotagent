@@ -286,13 +286,13 @@ test("help summarizes current commands and keeps config-only overrides out of th
   assert.match(result.stdout, /s2 "<text>" \[--limit <n>\]/);
   assert.match(result.stdout, /recent \[--limit <n>\] \[--sort added\|modified\]/);
   assert.match(result.stdout, /^Search$/m);
-  assert.match(result.stdout, /search "<text>" \[--keyword \| --semantic\] \[--limit <n>\] \[--min-score <n>\]/);
+  assert.match(result.stdout, /search "<text>" \[--keyword \| --semantic\] \[--limit <n>\] \[--min-score <n>\] \[--tag <tag>\]/);
   assert.match(
     result.stdout,
     /search-in "<text>" --key <key> \[--limit <n>\]/,
   );
   assert.match(result.stdout, /metadata \["<text>"\] \[--limit <n>\] \[--field <field>\] \[--has-file\]/);
-  assert.match(result.stdout, /\[--author <text>\] \[--year <text>\] \[--title <text>\] \[--journal <text>\] \[--publisher <text>\]/);
+  assert.match(result.stdout, /\[--author <text>\] \[--year <text>\] \[--title <text>\] \[--journal <text>\] \[--publisher <text>\] \[--tag <tag>\]/);
   assert.match(result.stdout, /^Retrieval$/m);
   assert.match(
     result.stdout,
@@ -322,6 +322,7 @@ test("help summarizes current commands and keeps config-only overrides out of th
   );
   assert.match(result.stdout, /Default is keyword search/);
   assert.match(result.stdout, /--field <field>\s+Limit the positional query to/);
+  assert.match(result.stdout, /--tag <tag>\s+Filter by top-level Zotero item tag/);
   assert.match(result.stdout, /--has-file\s+Keep only metadata results/);
   assert.match(result.stdout, /--abstract\s+Include the abstract in each result/);
   assert.match(result.stdout, /--clean\s+Apply heuristic cleanup/);
@@ -460,7 +461,23 @@ test("metadata rejects search-only flags", () => {
 
   assert.equal(result.status, 1);
   assert.match(result.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
-  assert.match(result.stdout, /metadata only supports --limit, --field, --has-file, --abstract, --author, --year, --title, --journal, --publisher\. Remove: --keyword/);
+  assert.match(result.stdout, /metadata only supports --limit, --field, --has-file, --abstract, --author, --year, --title, --journal, --publisher, --tag\. Remove: --keyword/);
+});
+
+test("search rejects tag filtering in semantic mode", () => {
+  const result = runCli(["search", "--semantic", "--tag", "PhD Thesis", "local state capacity"]);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
+  assert.match(result.stdout, /`--tag` cannot be combined with `--semantic`/);
+});
+
+test("tag filters require values", () => {
+  const result = runCli(["metadata", "--tag"]);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /"code": "INVALID_ARGUMENT"/);
+  assert.match(result.stdout, /`--tag` requires a value/);
 });
 
 test("s2 rejects metadata and search-only flags", () => {

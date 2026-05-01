@@ -13,14 +13,15 @@ Don't invent citation keys, item keys, or passage text. If a query returns nothi
 
 | Command | Searches over | Good for |
 |---|---|---|
-| `zotagent search "<q>" [--semantic] [--limit n] [--min-score n]` | Indexed full text only — body, not title (FTS5 keyword by default; qmd vector search + LLM query expansion with `--semantic`) | Finding passages that discuss a topic across the library |
+| `zotagent search "<q>" [--semantic] [--tag <tag>] [--limit n] [--min-score n]` | Indexed full text only — body, not title (FTS5 keyword by default; qmd vector search with `--semantic`; optional Zotero tag filter for keyword search) | Finding passages that discuss a topic across the library or within a tagged subset |
 | `zotagent search-in "<q>" --key <k> [--limit n]` | Full text of one item's indexed attachments | Drilling into a single paper for terms or quoted phrases |
-| `zotagent metadata ["<q>"] [metadata filters...] [--field f] [--abstract] [--has-file] [--limit n]` | Bibliography fields: title / author / year / journal / publisher / abstract | Finding papers by metadata or by title, verifying existence, resolving an `itemKey` |
+| `zotagent metadata ["<q>"] [metadata filters...] [--tag <tag>] [--field f] [--abstract] [--has-file] [--limit n]` | Bibliography fields: title / author / year / journal / publisher / abstract, optionally filtered by Zotero tags | Finding papers by metadata or by title, verifying existence, resolving an `itemKey` |
 
 Metadata quick rules:
 
 - Positional query, field filters (`--author` / `--year` / `--title` / `--journal` / `--publisher`), or both are valid.
 - `--field` scopes only the positional query; filter flags AND together.
+- `--tag "PhD Thesis"` fetches matching top-level item keys from the Zotero Web API, then filters local results. Repeat `--tag` to AND tags. Requires Zotero read API config.
 - `--abstract` includes abstract text in the output. To search abstract text, use a positional query with `--field abstract`.
 - `metadata "Pratt 1985"` generally returns empty (year is not OR'd in) — split into `--author "Pratt" --year "1985"`.
 
@@ -39,7 +40,7 @@ Both `search` and `search-in` evaluate most queries against per-block FTS. `sear
 
 **`NEAR/<n>` is the best first pass** when you have 2–3 anchor terms that should co-occur but not necessarily adjacent — e.g. `"土地" NEAR/20 "利用"`. It is usually more precise than plain keyword and much faster than `--semantic`.
 
-Keyword vs semantic heuristic: start with keyword (exact phrases, `OR`, `NEAR`) for names, anchor terms, or quotations; switch to `--semantic` when phrasing is fuzzy or you want conceptual neighbors. `NEAR/<n>` is especially useful on OCR'd or scanned materials (Republican China vertical-layout texts, old gazetteers, etc.), where one keyword often drowns in noise.
+Keyword vs semantic heuristic: start with keyword (exact phrases, `OR`, `NEAR`) for names, anchor terms, quotations, or `--tag` scoping; switch to `--semantic` when phrasing is fuzzy or you want conceptual neighbors. `--tag` cannot be combined with `--semantic`. `NEAR/<n>` is especially useful on OCR'd or scanned materials (Republican China vertical-layout texts, old gazetteers, etc.), where one keyword often drowns in noise.
 
 Chinese trad/simp folding: keyword `search`, `search-in`, and `metadata` match across 繁 ↔ 简 both ways (汉字 ≡ 漢字), so one form is enough. `search --semantic` does NOT fold because it uses qmd embeddings over the source text. Returned text (`passage`, `blocks`, `fulltext`, `expand`) preserves the original form as stored in the attachment.
 
@@ -65,6 +66,7 @@ Don't invent quotes. If the returned `passage` looks truncated (`…` markers) o
 # Library-wide search — keyword by default; --semantic for fuzzy/conceptual queries
 zotagent search "party secretary governance"
 zotagent search "informal political networks in contemporary China" --semantic --limit 20
+zotagent search "local fiscal capacity" --tag "PhD Thesis"
 
 # Drill into one paper. A bare surname catches both in-text "Acemoglu and
 # Robinson 2012" and bibliography "Acemoglu, Daron. 2012".
@@ -91,6 +93,10 @@ zotagent metadata --author "Pratt" --year "198"
 
 # Combine a positional query with a filter
 zotagent metadata "imperial" --author "Pratt"
+
+# Narrow to manually tagged Zotero items
+zotagent metadata --tag "PhD Thesis"
+zotagent metadata "land reform" --tag "PhD Thesis"
 
 # Keep only indexed items; include abstract text only when needed
 zotagent metadata "dangwei shuji" --has-file
@@ -179,6 +185,7 @@ zotagent diagnose --limit 20
 - **`charOffset` is item-global, not per-attachment.** When an item has multiple indexed attachments, offsets run monotonically across them with `# Attachment: <name>` dividers in the merged markdown. Feed `charOffset` from any search result straight into `expand`.
 - **`pageStart` / `pageEnd` may be absent** (EPUB, some old scans, multi-attachment items where the hit lives near a separator). Fall back to `[@itemKey]` without a locator in that case.
 - **`metadata` omits `abstract` by default** to keep bulk responses compact. Pass `--abstract` when you need it.
+- **`--tag` filters top-level Zotero items only.** Put manual workflow tags on the parent item, not just the PDF attachment. It uses the Zotero Web API to resolve item keys but still searches local metadata/full-text indexes.
 - **`--key` accepts `itemKey` or `citationKey`**, with or without a leading `@` (so Pandoc `@citekey` pastes straight in). Output always identifies items by `itemKey` only — `citationKey` is accepted as input but never emitted, so chain subsequent calls on `itemKey`.
 - **`search-in` on a chapter key may miss.** `SEARCH_IN_FAILED: No indexed attachment found` usually means the chapter's PDF is indexed only inside its parent volume. Look the parent up with `metadata`, then `search-in` against the parent's key and locate the chapter by its heading. Common for edited collections and proceedings.
 - **`search-in` returns scoped matches; `search` returns one passage per item.** Most `search-in` rows are single-block FTS matches; a single quoted phrase can span blocks via the manifest-level exact scanner. A `search` result means *this document* matches and here is one representative passage. When the user asks "does this paper say X" or "where in this paper does Y appear", reach for `search-in`.

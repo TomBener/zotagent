@@ -313,6 +313,53 @@ test("searchMetadata field-filter flags AND across fields and allow empty query"
   );
 });
 
+test("searchMetadata filters locally by Zotero item keys", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-metadata-item-key-filter-"));
+  const { attachmentsRoot } = createFixturePaths(root);
+  const { bibliographyPath, dataDir } = writeBibliography(root, [
+    {
+      id: "thesis2026",
+      title: "Local State Capacity in Late Qing China",
+      author: [{ family: "Wang", given: "Lin" }],
+      issued: { "date-parts": [[2026]] },
+      type: "thesis",
+      "zotero-item-key": "THESIS01",
+    },
+    {
+      id: "article2025",
+      title: "Local State Capacity in Comparative Perspective",
+      author: [{ family: "Smith", given: "Jane" }],
+      issued: { "date-parts": [[2025]] },
+      type: "article-journal",
+      "zotero-item-key": "ARTICLE1",
+    },
+  ]);
+
+  const overrides = { bibliographyJsonPath: bibliographyPath, attachmentsRoot, dataDir };
+
+  const taggedQuery = await searchMetadata("local state capacity", 10, overrides, {
+    itemKeys: ["THESIS01"],
+  });
+  assert.deepEqual(
+    taggedQuery.results.map((row) => row.itemKey),
+    ["THESIS01"],
+  );
+
+  const tagOnly = await searchMetadata("", 10, overrides, {
+    itemKeys: ["ARTICLE1"],
+  });
+  assert.deepEqual(
+    tagOnly.results.map((row) => row.itemKey),
+    ["ARTICLE1"],
+  );
+  assert.deepEqual(tagOnly.results[0]?.matchedFields, []);
+
+  const noTaggedItems = await searchMetadata("", 10, overrides, {
+    itemKeys: [],
+  });
+  assert.deepEqual(noTaggedItems.results, []);
+});
+
 test("searchMetadata exposes publisher for thesis, report, and paper-conference items", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-metadata-publisher-types-"));
   const { attachmentsRoot } = createFixturePaths(root);

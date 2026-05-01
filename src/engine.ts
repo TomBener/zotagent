@@ -18,6 +18,7 @@ interface SearchBehaviorOptions {
   semantic?: boolean;
   minScore?: number;
   progress?: (message: string) => void;
+  itemKeys?: string[];
 }
 
 const ITEM_KEY_RE = /^[A-Z0-9]{8}$/;
@@ -565,9 +566,28 @@ export async function searchLiterature(
   const config = resolveConfig(overrides);
   const paths = getDataPaths(config.dataDir);
   const catalog = readCatalogFile(paths.catalogPath);
-  const readyEntries = getReadyEntries(catalog);
-  if (readyEntries.length === 0) {
+  const allReadyEntries = getReadyEntries(catalog);
+  const itemKeyFilter = behavior.itemKeys !== undefined ? new Set(behavior.itemKeys) : undefined;
+  if (behavior.semantic && itemKeyFilter !== undefined) {
+    throw new Error("Tag filtering is currently supported for keyword search only.");
+  }
+  if (itemKeyFilter !== undefined && itemKeyFilter.size === 0) {
+    return {
+      results: [],
+      ...(config.warnings.length > 0 ? { warnings: config.warnings } : {}),
+    };
+  }
+  if (allReadyEntries.length === 0) {
     throw new Error("No indexed documents found. Run `zotagent sync` first.");
+  }
+  const readyEntries = itemKeyFilter
+    ? allReadyEntries.filter((entry) => itemKeyFilter.has(entry.itemKey))
+    : allReadyEntries;
+  if (readyEntries.length === 0) {
+    return {
+      results: [],
+      ...(config.warnings.length > 0 ? { warnings: config.warnings } : {}),
+    };
   }
 
   const entryByDocKey = new Map(readyEntries.map((entry) => [entry.docKey, entry]));
@@ -609,10 +629,11 @@ export async function searchLiterature(
     const keywordIndex = await keywordFactory(config);
     try {
       // Bootstrap the keyword index lazily if it is empty (e.g. first search after upgrade).
-      let results = await keywordIndex.searchDocs(query, limit);
-      if (results.length === 0 && readyEntries.length > 0 && (await keywordIndex.isEmpty())) {
-        await keywordIndex.rebuildIndex(readyEntries);
-        results = await keywordIndex.searchDocs(query, limit);
+      const ftsOptions = itemKeyFilter ? { docKeys: readyEntries.map((entry) => entry.docKey) } : undefined;
+      let results = await keywordIndex.searchDocs(query, limit, ftsOptions);
+      if (results.length === 0 && allReadyEntries.length > 0 && (await keywordIndex.isEmpty())) {
+        await keywordIndex.rebuildIndex(allReadyEntries);
+        results = await keywordIndex.searchDocs(query, limit, ftsOptions);
       }
       mapped = results
         .filter((result) => behavior.minScore === undefined || result.score >= behavior.minScore)
