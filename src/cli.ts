@@ -23,6 +23,7 @@ import { searchSemanticScholar } from "./s2.js";
 import { runSync } from "./sync.js";
 import type { MetadataField } from "./types.js";
 import { compactHomePath } from "./utils.js";
+import { getReadConfig } from "./zotero-read.js";
 import { fetchTopLevelItemKeysByTags, normalizeTagFilters } from "./zotero-tags.js";
 
 type FlagValue = string | string[] | boolean;
@@ -824,7 +825,7 @@ async function main(): Promise<void> {
         const limit = limitInput.value ?? 10;
         const minScore = minScoreInput.value;
         const tagItemKeys = tagInput.tags
-          ? (await fetchTopLevelItemKeysByTags(tagInput.tags, overrides)).itemKeys
+          ? await fetchTopLevelItemKeysByTags(tagInput.tags, getReadConfig(resolveConfig(overrides)))
           : undefined;
         const data = await searchLiterature(query, limit, overrides, openQmdClient, {
           ...(semantic ? { semantic: true } : {}),
@@ -930,7 +931,7 @@ async function main(): Promise<void> {
         }
         const limit = limitInput.value ?? 20;
         const tagItemKeys = tagInput.tags
-          ? (await fetchTopLevelItemKeysByTags(tagInput.tags, overrides)).itemKeys
+          ? await fetchTopLevelItemKeysByTags(tagInput.tags, getReadConfig(resolveConfig(overrides)))
           : undefined;
         const data = await searchMetadata(query, limit, overrides, {
           ...(requestedFields.length > 0 ? { fields: requestedFields as MetadataField[] } : {}),

@@ -241,6 +241,102 @@ test("searchLiterature keyword mode restricts searches to filtered item keys", a
   );
 });
 
+test("searchLiterature returns empty results and warns when tag-matched items are not indexed", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-tag-missing-"));
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const indexedDocKey = "c".repeat(40);
+  const indexedManifestPath = join(manifestsDir, `${indexedDocKey}${MANIFEST_EXT}`);
+  writeManifest(indexedManifestPath, {
+    docKey: indexedDocKey,
+    itemKey: "INDEXED1",
+    title: "Indexed item",
+    authors: ["A"],
+    filePath: "/tmp/indexed.pdf",
+    normalizedPath: join(dataDir, "normalized", `${indexedDocKey}.md`),
+    blocks: [
+      {
+        blockIndex: 0,
+        blockType: "paragraph",
+        sectionPath: ["Body"],
+        text: "Indexed body text.",
+        charStart: 0,
+        charEnd: 18,
+        lineStart: 1,
+        lineEnd: 1,
+        isReferenceLike: false,
+      },
+    ],
+  });
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [
+      {
+        docKey: indexedDocKey,
+        itemKey: "INDEXED1",
+        title: "Indexed item",
+        authors: ["A"],
+        filePath: "/tmp/indexed.pdf",
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: 1,
+        mtimeMs: 1,
+        sourceHash: "hash-indexed",
+        lastIndexedAt: new Date().toISOString(),
+        normalizedPath: join(dataDir, "normalized", `${indexedDocKey}.md`),
+        manifestPath: indexedManifestPath,
+      },
+    ],
+  });
+
+  let keywordSearchCalled = false;
+  const fakeKeywordFactory = async () => ({
+    rebuildIndex: async () => {},
+    searchDocs: async () => {
+      keywordSearchCalled = true;
+      return [];
+    },
+    searchBlocks: async () => [],
+    isEmpty: async () => false,
+    close: async () => {},
+  });
+  const unusedQmdFactory = async () => {
+    throw new Error("qmd search should not run in keyword mode");
+  };
+
+  const overrides = { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir };
+
+  const allMissing = await searchLiterature(
+    "anything",
+    10,
+    overrides,
+    unusedQmdFactory,
+    { itemKeys: ["MISSING1", "MISSING2"] },
+    fakeKeywordFactory,
+  );
+  assert.deepEqual(allMissing.results, []);
+  assert.equal(keywordSearchCalled, false);
+  assert.ok(allMissing.warnings?.some((w) => /2 of 2 tag-matched items are not indexed locally/u.test(w)));
+
+  const partial = await searchLiterature(
+    "anything",
+    10,
+    overrides,
+    unusedQmdFactory,
+    { itemKeys: ["INDEXED1", "MISSING1"] },
+    fakeKeywordFactory,
+  );
+  assert.ok(partial.warnings?.some((w) => /1 of 2 tag-matched items is not indexed locally/u.test(w)));
+});
+
 test("searchLiterature keyword mode anchors long-block passages on the matched query", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-long-anchor-"));
   const dataDir = join(root, "data");

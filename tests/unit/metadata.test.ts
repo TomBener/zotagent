@@ -358,6 +358,17 @@ test("searchMetadata filters locally by Zotero item keys", async () => {
     itemKeys: [],
   });
   assert.deepEqual(noTaggedItems.results, []);
+
+  const partial = await searchMetadata("", 10, overrides, {
+    itemKeys: ["THESIS01", "MISSING1"],
+  });
+  assert.deepEqual(
+    partial.results.map((row) => row.itemKey),
+    ["THESIS01"],
+  );
+  assert.ok(
+    partial.warnings?.some((w) => /1 of 2 tag-matched items is missing from the bibliography/u.test(w)),
+  );
 });
 
 test("searchMetadata exposes publisher for thesis, report, and paper-conference items", async () => {

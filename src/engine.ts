@@ -569,13 +569,17 @@ export async function searchLiterature(
   const allReadyEntries = getReadyEntries(catalog);
   const itemKeyFilter = behavior.itemKeys !== undefined ? new Set(behavior.itemKeys) : undefined;
   if (behavior.semantic && itemKeyFilter !== undefined) {
+    // Defensive: cli.ts rejects this combination earlier; kept so direct
+    // library callers cannot quietly bypass the constraint.
     throw new Error("Tag filtering is currently supported for keyword search only.");
   }
+  const warnings: string[] = [...config.warnings];
+  const wrap = (results: SearchResultRow[]) => ({
+    results,
+    ...(warnings.length > 0 ? { warnings } : {}),
+  });
   if (itemKeyFilter !== undefined && itemKeyFilter.size === 0) {
-    return {
-      results: [],
-      ...(config.warnings.length > 0 ? { warnings: config.warnings } : {}),
-    };
+    return wrap([]);
   }
   if (allReadyEntries.length === 0) {
     throw new Error("No indexed documents found. Run `zotagent sync` first.");
@@ -583,11 +587,17 @@ export async function searchLiterature(
   const readyEntries = itemKeyFilter
     ? allReadyEntries.filter((entry) => itemKeyFilter.has(entry.itemKey))
     : allReadyEntries;
+  if (itemKeyFilter !== undefined) {
+    const indexedItemKeys = new Set(readyEntries.map((entry) => entry.itemKey));
+    const missing = itemKeyFilter.size - indexedItemKeys.size;
+    if (missing > 0) {
+      warnings.push(
+        `${missing} of ${itemKeyFilter.size} tag-matched item${itemKeyFilter.size === 1 ? "" : "s"} ${missing === 1 ? "is" : "are"} not indexed locally; run \`zotagent sync\` to include ${missing === 1 ? "it" : "them"}.`,
+      );
+    }
+  }
   if (readyEntries.length === 0) {
-    return {
-      results: [],
-      ...(config.warnings.length > 0 ? { warnings: config.warnings } : {}),
-    };
+    return wrap([]);
   }
 
   const entryByDocKey = new Map(readyEntries.map((entry) => [entry.docKey, entry]));
@@ -650,10 +660,7 @@ export async function searchLiterature(
     }
   }
 
-  return {
-    results: mapped.slice(0, limit),
-    ...(config.warnings.length > 0 ? { warnings: config.warnings } : {}),
-  };
+  return wrap(mapped.slice(0, limit));
 }
 
 export async function searchWithinDocuments(

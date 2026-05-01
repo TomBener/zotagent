@@ -2,6 +2,19 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { fetchTopLevelItemKeysByTags, normalizeTagFilters } from "../../src/zotero-tags.js";
+import type { ResolvedReadConfig } from "../../src/zotero-read.js";
+
+const userReadConfig: ResolvedReadConfig = {
+  apiKey: "secret",
+  libraryId: "123456",
+  libraryType: "user",
+};
+
+const groupReadConfig: ResolvedReadConfig = {
+  apiKey: "secret",
+  libraryId: "7890",
+  libraryType: "group",
+};
 
 test("normalizeTagFilters trims, drops blanks, and deduplicates tags", () => {
   assert.deepEqual(
@@ -16,21 +29,17 @@ test("fetchTopLevelItemKeysByTags requests top-level item keys for repeated tags
     requests.push({ url: String(input), init });
     return new Response("ITEM0001\nITEM0002\n", {
       status: 200,
-      headers: { "Content-Type": "text/plain" },
+      headers: { "Content-Type": "text/plain", "Total-Results": "2" },
     });
   };
 
-  const result = await fetchTopLevelItemKeysByTags(
+  const itemKeys = await fetchTopLevelItemKeysByTags(
     ["PhD Thesis", " Core ", "PhD Thesis"],
-    {
-      zoteroLibraryId: "123456",
-      zoteroLibraryType: "user",
-      zoteroApiKey: "secret",
-    },
+    userReadConfig,
     fetchMock,
   );
 
-  assert.deepEqual(result.itemKeys, ["ITEM0001", "ITEM0002"]);
+  assert.deepEqual(itemKeys, ["ITEM0001", "ITEM0002"]);
   assert.equal(requests.length, 1);
 
   const url = new URL(requests[0]!.url);
@@ -54,15 +63,20 @@ test("fetchTopLevelItemKeysByTags uses group library URLs", async () => {
     return new Response("", { status: 200 });
   };
 
-  const result = await fetchTopLevelItemKeysByTags(
-    ["PhD Thesis"],
-    {
-      zoteroLibraryId: "7890",
-      zoteroLibraryType: "group",
-      zoteroApiKey: "secret",
-    },
-    fetchMock,
-  );
+  const itemKeys = await fetchTopLevelItemKeysByTags(["PhD Thesis"], groupReadConfig, fetchMock);
 
-  assert.deepEqual(result.itemKeys, []);
+  assert.deepEqual(itemKeys, []);
+});
+
+test("fetchTopLevelItemKeysByTags throws if Total-Results exceeds the parsed count", async () => {
+  const fetchMock: typeof fetch = async () =>
+    new Response("ITEM0001\nITEM0002\n", {
+      status: 200,
+      headers: { "Content-Type": "text/plain", "Total-Results": "5" },
+    });
+
+  await assert.rejects(
+    () => fetchTopLevelItemKeysByTags(["PhD Thesis"], userReadConfig, fetchMock),
+    /Zotero returned 2 of 5 matching item keys/u,
+  );
 });

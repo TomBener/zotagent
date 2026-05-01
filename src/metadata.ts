@@ -111,6 +111,18 @@ export async function searchMetadata(
   const includeAbstract = options.includeAbstract ?? false;
   const filterFieldSet = new Set(filterEntries.map(([field]) => field));
   const { records } = loadCatalog(config);
+  const warnings: string[] = [...config.warnings];
+  if (itemKeyFilter !== undefined && itemKeyFilter.size > 0) {
+    const knownItemKeys = new Set(
+      records.filter((record) => itemKeyFilter.has(record.itemKey)).map((record) => record.itemKey),
+    );
+    const missing = itemKeyFilter.size - knownItemKeys.size;
+    if (missing > 0) {
+      warnings.push(
+        `${missing} of ${itemKeyFilter.size} tag-matched item${itemKeyFilter.size === 1 ? "" : "s"} ${missing === 1 ? "is" : "are"} missing from the bibliography; re-export bibliographyJsonPath to include ${missing === 1 ? "it" : "them"}.`,
+      );
+    }
+  }
   const results = records
     .filter((record) => !itemKeyFilter || itemKeyFilter.has(record.itemKey))
     .filter((record) => !options.hasFile || record.hasSupportedFile)
@@ -135,6 +147,6 @@ export async function searchMetadata(
 
   return {
     results,
-    ...(config.warnings.length > 0 ? { warnings: config.warnings } : {}),
+    ...(warnings.length > 0 ? { warnings } : {}),
   };
 }
