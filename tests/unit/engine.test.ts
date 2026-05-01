@@ -196,6 +196,94 @@ test("searchLiterature reflows PDF line breaks in result passages", async () => 
   assert.match(result.results[0]!.passage, /This paragraph wraps across PDF lines, with dangwei shuji\./u);
 });
 
+test("searchLiterature reflow joins CJK across line breaks without inserting spaces", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-reflow-cjk-"));
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docKey = "e".repeat(40);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
+  // Two paragraphs whose CJK content runs across the block break. The reflow
+  // must drop the inserted space because Chinese never separates characters
+  // with whitespace.
+  writeManifest(manifestPath, {
+    docKey,
+    itemKey: "ITEMCJK0",
+    title: "CJK reflow fixture",
+    authors: ["A"],
+    filePath: "/tmp/reflow-cjk.pdf",
+    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+    blocks: [
+      {
+        blockIndex: 0,
+        blockType: "paragraph",
+        sectionPath: ["Body"],
+        text: "本文讨论党委书记开发",
+        charStart: 0, charEnd: 10, lineStart: 1, lineEnd: 1, isReferenceLike: false,
+      },
+      {
+        blockIndex: 1,
+        blockType: "paragraph",
+        sectionPath: ["Body"],
+        text: "新疆的人力财力问题。",
+        charStart: 12, charEnd: 22, lineStart: 3, lineEnd: 3, isReferenceLike: false,
+      },
+    ],
+  });
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [
+      {
+        docKey,
+        itemKey: "ITEMCJK0",
+        title: "CJK reflow fixture",
+        authors: ["A"],
+        filePath: "/tmp/reflow-cjk.pdf",
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: 1,
+        mtimeMs: 1,
+        sourceHash: "hash-reflow-cjk",
+        lastIndexedAt: new Date().toISOString(),
+        normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+        manifestPath,
+      },
+    ],
+  });
+
+  const fakeKeywordFactory = async () => ({
+    rebuildIndex: async () => {},
+    searchDocs: async () => [{ docKey, blockIndex: 0, score: 1.5 }],
+    searchBlocks: async () => [],
+    isEmpty: async () => false,
+    close: async () => {},
+  });
+  const unusedQmdFactory = async () => {
+    throw new Error("qmd search should not run in keyword mode");
+  };
+
+  const result = await searchLiterature(
+    "党委书记",
+    10,
+    { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir },
+    unusedQmdFactory,
+    {},
+    fakeKeywordFactory,
+  );
+
+  assert.equal(result.results.length, 1);
+  assert.doesNotMatch(result.results[0]!.passage, /\n/u);
+  assert.match(result.results[0]!.passage, /开发新疆/u);
+  assert.doesNotMatch(result.results[0]!.passage, /开发\s+新疆/u);
+});
+
 test("searchLiterature keyword mode restricts searches to filtered item keys", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-tag-filter-"));
   const dataDir = join(root, "data");
@@ -1849,7 +1937,7 @@ test("searchWithinDocuments finds quoted CJK phrases across block boundaries", a
   );
 
   assert.equal(result.results.length, 1);
-  assert.match(result.results[0]!.passage, /开发\s+新疆/u);
+  assert.match(result.results[0]!.passage, /开发新疆/u);
 });
 
 test("searchWithinDocuments NOT does not resurface blocks via cross-block phrase scan", async () => {

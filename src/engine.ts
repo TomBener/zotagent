@@ -177,6 +177,16 @@ function truncateSearchPassage(text: string): string {
   return enc.decode(tokens.slice(0, SEARCH_PASSAGE_MAX_TOKENS)) + "…";
 }
 
+// Reflow PDF-style hard wraps and Markdown block breaks into continuous prose
+// before the token cap runs, so the agent does not waste budget on `\n\n`
+// joiners and the passage reads as a single thought. CJK-adjacent newlines
+// drop the inserted space because Chinese/Japanese/Korean text never uses one.
+const CJK_SCRIPTS_RE_SOURCE = "[\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}\\p{Script=Hangul}]";
+const CJK_NEWLINE_JOIN_RE = new RegExp(
+  `(${CJK_SCRIPTS_RE_SOURCE})\\s*\\n+\\s*(${CJK_SCRIPTS_RE_SOURCE})`,
+  "gu",
+);
+
 function reflowSearchPassage(text: string): string {
   const leadingEllipsis = text.startsWith("…");
   const trailingEllipsis = text.endsWith("…");
@@ -184,6 +194,7 @@ function reflowSearchPassage(text: string): string {
     .replace(/^…/u, "")
     .replace(/…$/u, "")
     .replace(/([A-Za-z])-\s*\n+\s*([a-z])/gu, "$1$2")
+    .replace(CJK_NEWLINE_JOIN_RE, "$1$2")
     .replace(/\s*\n+\s*/gu, " ")
     .replace(/[ \t]{2,}/gu, " ")
     .trim();
