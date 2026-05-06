@@ -412,7 +412,7 @@ test("searchLiterature keyword mode restricts searches to filtered item keys", a
   );
 });
 
-test("searchLiterature returns empty results and warns when tag-matched items are not indexed", async () => {
+test("searchLiterature returns empty results and warns when matched items are not indexed", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-tag-missing-"));
   const dataDir = join(root, "data");
   const indexDir = join(dataDir, "index");
@@ -495,7 +495,7 @@ test("searchLiterature returns empty results and warns when tag-matched items ar
   );
   assert.deepEqual(allMissing.results, []);
   assert.equal(keywordSearchCalled, false);
-  assert.ok(allMissing.warnings?.some((w) => /2 of 2 tag-matched items are not indexed locally/u.test(w)));
+  assert.ok(allMissing.warnings?.some((w) => /2 of 2 matched items are not indexed locally/u.test(w)));
 
   const partial = await searchLiterature(
     "anything",
@@ -505,7 +505,7 @@ test("searchLiterature returns empty results and warns when tag-matched items ar
     { itemKeys: ["INDEXED1", "MISSING1"] },
     fakeKeywordFactory,
   );
-  assert.ok(partial.warnings?.some((w) => /1 of 2 tag-matched items is not indexed locally/u.test(w)));
+  assert.ok(partial.warnings?.some((w) => /1 of 2 matched items is not indexed locally/u.test(w)));
 });
 
 test("searchLiterature keyword mode anchors long-block passages on the matched query", async () => {

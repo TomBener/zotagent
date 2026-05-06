@@ -616,7 +616,7 @@ export async function searchLiterature(
     const missing = itemKeyFilter.size - indexedItemKeys.size;
     if (missing > 0) {
       warnings.push(
-        `${missing} of ${itemKeyFilter.size} tag-matched item${itemKeyFilter.size === 1 ? "" : "s"} ${missing === 1 ? "is" : "are"} not indexed locally; run \`zotagent sync\` to include ${missing === 1 ? "it" : "them"}.`,
+        `${missing} of ${itemKeyFilter.size} matched item${itemKeyFilter.size === 1 ? "" : "s"} ${missing === 1 ? "is" : "are"} not indexed locally; run \`zotagent sync\` to include ${missing === 1 ? "it" : "them"}.`,
       );
     }
   }

@@ -367,7 +367,7 @@ test("searchMetadata filters locally by Zotero item keys", async () => {
     ["THESIS01"],
   );
   assert.ok(
-    partial.warnings?.some((w) => /1 of 2 tag-matched items is missing from the bibliography/u.test(w)),
+    partial.warnings?.some((w) => /1 of 2 matched items is missing from the bibliography/u.test(w)),
   );
 });
 

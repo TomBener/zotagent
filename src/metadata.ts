@@ -119,7 +119,7 @@ export async function searchMetadata(
     const missing = itemKeyFilter.size - knownItemKeys.size;
     if (missing > 0) {
       warnings.push(
-        `${missing} of ${itemKeyFilter.size} tag-matched item${itemKeyFilter.size === 1 ? "" : "s"} ${missing === 1 ? "is" : "are"} missing from the bibliography; re-export bibliographyJsonPath to include ${missing === 1 ? "it" : "them"}.`,
+        `${missing} of ${itemKeyFilter.size} matched item${itemKeyFilter.size === 1 ? "" : "s"} ${missing === 1 ? "is" : "are"} missing from the bibliography; re-export bibliographyJsonPath to include ${missing === 1 ? "it" : "them"}.`,
       );
     }
   }
