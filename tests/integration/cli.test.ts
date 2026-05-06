@@ -286,13 +286,22 @@ test("help summarizes current commands and keeps config-only overrides out of th
   assert.match(result.stdout, /s2 "<text>" \[--limit <n>\]/);
   assert.match(result.stdout, /recent \[--limit <n>\] \[--sort added\|modified\]/);
   assert.match(result.stdout, /^Search$/m);
-  assert.match(result.stdout, /search "<text>" \[--keyword \| --semantic\] \[--limit <n>\] \[--min-score <n>\] \[--tag <tag>\]/);
+  assert.match(result.stdout, /search "<text>" \[--keyword \| --semantic\] \[--limit <n>\] \[--min-score <n>\] \[--tag <tag>\] \[--collection-key <key>\]/);
   assert.match(
     result.stdout,
     /search-in "<text>" --key <key> \[--limit <n>\]/,
   );
   assert.match(result.stdout, /metadata \["<text>"\] \[--limit <n>\] \[--field <field>\] \[--has-file\]/);
-  assert.match(result.stdout, /\[--author <text>\] \[--year <text>\] \[--title <text>\] \[--journal <text>\] \[--publisher <text>\] \[--tag <tag>\]/);
+  assert.match(result.stdout, /\[--author <text>\] \[--year <text>\] \[--title <text>\] \[--journal <text>\] \[--publisher <text>\]/);
+  assert.match(result.stdout, /\[--tag <tag>\] \[--collection-key <key>\]/);
+  assert.match(
+    result.stdout,
+    /--collection-key <key>\s+Restrict keyword search to top-level items directly in this Zotero/,
+  );
+  assert.match(
+    result.stdout,
+    /--collection-key <key>\s+Filter by top-level items directly in this Zotero collection\./,
+  );
   assert.match(result.stdout, /^Retrieval$/m);
   assert.match(
     result.stdout,
@@ -461,7 +470,7 @@ test("metadata rejects search-only flags", () => {
 
   assert.equal(result.status, 1);
   assert.match(result.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
-  assert.match(result.stdout, /metadata only supports --limit, --field, --has-file, --abstract, --author, --year, --title, --journal, --publisher, --tag\. Remove: --keyword/);
+  assert.match(result.stdout, /metadata only supports --limit, --field, --has-file, --abstract, --author, --year, --title, --journal, --publisher, --tag, --collection-key\. Remove: --keyword/);
 });
 
 test("search rejects tag filtering in semantic mode", () => {
@@ -478,6 +487,37 @@ test("tag filters require values", () => {
   assert.equal(result.status, 1);
   assert.match(result.stdout, /"code": "INVALID_ARGUMENT"/);
   assert.match(result.stdout, /`--tag` requires a value/);
+});
+
+test("search rejects --collection-key in semantic mode", () => {
+  const result = runCli([
+    "search",
+    "--semantic",
+    "--collection-key",
+    "ABCD1234",
+    "local state capacity",
+  ]);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
+  assert.match(result.stdout, /`--collection-key` cannot be combined with `--semantic`/);
+});
+
+test("--collection-key requires a value", () => {
+  const result = runCli(["metadata", "--collection-key"]);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /"code": "INVALID_ARGUMENT"/);
+  assert.match(result.stdout, /`--collection-key` requires a value/);
+});
+
+test("--collection-key rejects malformed keys", () => {
+  const result = runCli(["search", "--collection-key", "not-a-key", "anything"]);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /"code": "INVALID_ARGUMENT"/);
+  assert.match(result.stdout, /must be 8-character Zotero keys/);
+  assert.match(result.stdout, /Invalid: not-a-key/);
 });
 
 test("s2 rejects metadata and search-only flags", () => {

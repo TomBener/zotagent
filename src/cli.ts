@@ -23,7 +23,12 @@ import { searchSemanticScholar } from "./s2.js";
 import { runSync } from "./sync.js";
 import type { MetadataField } from "./types.js";
 import { compactHomePath } from "./utils.js";
-import { getReadConfig } from "./zotero-read.js";
+import {
+  fetchTopLevelItemKeysByCollections,
+  isValidCollectionKey,
+  normalizeCollectionFilters,
+} from "./zotero-collections.js";
+import { getReadConfig, type ResolvedReadConfig } from "./zotero-read.js";
 import { fetchTopLevelItemKeysByTags, normalizeTagFilters } from "./zotero-tags.js";
 
 type FlagValue = string | string[] | boolean;
@@ -72,9 +77,9 @@ const COMMAND_FLAG_ALLOWLIST: Record<string, ReadonlyArray<string>> = {
   ],
   s2: ["limit"],
   recent: ["limit", "sort"],
-  search: ["keyword", "semantic", "limit", "min-score", "tag"],
+  search: ["keyword", "semantic", "limit", "min-score", "tag", "collection-key"],
   "search-in": ["key", "limit"],
-  metadata: ["limit", "field", "has-file", "abstract", "author", "year", "title", "journal", "publisher", "tag"],
+  metadata: ["limit", "field", "has-file", "abstract", "author", "year", "title", "journal", "publisher", "tag", "collection-key"],
   blocks: ["key", "offset-block", "limit-blocks"],
   fulltext: ["key", "clean"],
   expand: ["key", "offset", "radius"],
@@ -217,6 +222,37 @@ function parseTagFilters(flags: Record<string, FlagValue>): { tags?: string[]; e
   return { tags };
 }
 
+function parseCollectionFilters(
+  flags: Record<string, FlagValue>,
+): { collectionKeys?: string[]; error?: string } {
+  if (!("collection-key" in flags)) return {};
+  if (flags["collection-key"] === true) return { error: "`--collection-key` requires a value." };
+  const keys = normalizeCollectionFilters(getStringListFlag(flags, "collection-key"));
+  if (keys.length === 0) return { error: "`--collection-key` requires a non-empty value." };
+  const invalid = keys.filter((key) => !isValidCollectionKey(key));
+  if (invalid.length > 0) {
+    return {
+      error: `\`--collection-key\` values must be 8-character Zotero keys (uppercase A–Z and digits). Invalid: ${invalid.join(", ")}`,
+    };
+  }
+  return { collectionKeys: keys };
+}
+
+async function resolveItemKeyFilter(
+  tags: string[] | undefined,
+  collectionKeys: string[] | undefined,
+  readConfig: ResolvedReadConfig,
+): Promise<string[] | undefined> {
+  const tagItemKeys = tags ? await fetchTopLevelItemKeysByTags(tags, readConfig) : undefined;
+  const collectionItemKeys = collectionKeys
+    ? await fetchTopLevelItemKeysByCollections(collectionKeys, readConfig)
+    : undefined;
+  if (tagItemKeys === undefined) return collectionItemKeys;
+  if (collectionItemKeys === undefined) return tagItemKeys;
+  const collectionSet = new Set(collectionItemKeys);
+  return tagItemKeys.filter((key) => collectionSet.has(key));
+}
+
 interface NumericFlagOptions {
   requirement: string;
   constraint: string;
@@ -309,7 +345,7 @@ Index
       Interactively set ~/.zotagent/config.json.
 
 Search
-  search "<text>" [--keyword | --semantic] [--limit <n>] [--min-score <n>] [--tag <tag>]
+  search "<text>" [--keyword | --semantic] [--limit <n>] [--min-score <n>] [--tag <tag>] [--collection-key <key>]
       Search indexed documents. Pass at most one of --keyword (default) or --semantic.
       Default is keyword search (FTS5 with porter stemming): "exact phrase", OR, NOT,
       term NEAR/<n> term, prefix*. Use NEAR/50 for proximity; NEAR(...) is not accepted.
@@ -319,6 +355,9 @@ Search
         --min-score <n>             Drop lower-scoring search hits before mapping.
         --tag <tag>                 Restrict keyword search to top-level Zotero items with this tag.
                                     Repeatable; requires Zotero read API config.
+        --collection-key <key>      Restrict keyword search to top-level items directly in this Zotero
+                                    collection. Repeatable (union); combinable with --tag (intersection);
+                                    requires Zotero read API config.
 
   search-in "<text>" --key <key> [--limit <n>]
       Search within one indexed item's attachments. Uses the same FTS5 keyword
@@ -326,12 +365,14 @@ Search
       Requires a populated keyword index (run zotagent sync first).
 
   metadata ["<text>"] [--limit <n>] [--field <field>] [--has-file] [--abstract]
-           [--author <text>] [--year <text>] [--title <text>] [--journal <text>] [--publisher <text>] [--tag <tag>]
+           [--author <text>] [--year <text>] [--title <text>] [--journal <text>] [--publisher <text>]
+           [--tag <tag>] [--collection-key <key>]
       Search Zotero bibliography metadata read from bibliographyJsonPath.
       Provide a positional query, one or more field filters, or both. The
       positional query is substring-matched across --field selections; each
-      filter flag adds an AND constraint on that specific field. --tag fetches
-      matching top-level item keys from the Zotero Web API, then filters locally.
+      filter flag adds an AND constraint on that specific field. --tag and
+      --collection-key fetch matching top-level item keys from the Zotero Web
+      API, then filter locally.
         --field <field>             Limit the positional query to title, author, year, abstract,
                                     journal, or publisher. Repeatable.
         --author <text>             Filter by author substring.
@@ -341,6 +382,9 @@ Search
         --publisher <text>          Filter by publisher substring.
         --tag <tag>                 Filter by top-level Zotero item tag. Repeatable; requires
                                     Zotero read API config.
+        --collection-key <key>      Filter by top-level items directly in this Zotero collection.
+                                    Repeatable (union); combinable with --tag (intersection);
+                                    requires Zotero read API config.
         --has-file                  Keep only metadata results with a supported indexed attachment.
         --abstract                  Include the abstract in each result. Omitted by default to keep
                                     bulk responses compact for agents.
@@ -800,8 +844,17 @@ async function main(): Promise<void> {
           emitError("INVALID_ARGUMENT", tagInput.error);
           return;
         }
+        const collectionInput = parseCollectionFilters(parsed.flags);
+        if (collectionInput.error) {
+          emitError("INVALID_ARGUMENT", collectionInput.error);
+          return;
+        }
         if (semantic && tagInput.tags) {
           emitError("UNEXPECTED_ARGUMENT", "`--tag` cannot be combined with `--semantic`; tag filtering currently works with keyword search.");
+          return;
+        }
+        if (semantic && collectionInput.collectionKeys) {
+          emitError("UNEXPECTED_ARGUMENT", "`--collection-key` cannot be combined with `--semantic`; collection filtering currently works with keyword search.");
           return;
         }
         const limitInput = parseNumericFlag(parsed.flags, "limit", {
@@ -824,13 +877,18 @@ async function main(): Promise<void> {
         }
         const limit = limitInput.value ?? 10;
         const minScore = minScoreInput.value;
-        const tagItemKeys = tagInput.tags
-          ? await fetchTopLevelItemKeysByTags(tagInput.tags, getReadConfig(resolveConfig(overrides)))
-          : undefined;
+        const itemKeys =
+          tagInput.tags || collectionInput.collectionKeys
+            ? await resolveItemKeyFilter(
+                tagInput.tags,
+                collectionInput.collectionKeys,
+                getReadConfig(resolveConfig(overrides)),
+              )
+            : undefined;
         const data = await searchLiterature(query, limit, overrides, openQmdClient, {
           ...(semantic ? { semantic: true } : {}),
           ...(minScore !== undefined ? { minScore } : {}),
-          ...(tagItemKeys !== undefined ? { itemKeys: tagItemKeys } : {}),
+          ...(itemKeys !== undefined ? { itemKeys } : {}),
           ...(semantic ? { progress: (message: string) => process.stderr.write(`${message}\n`) } : {}),
         });
         emitOk(data, { elapsedMs: Date.now() - startedAt });
@@ -900,11 +958,19 @@ async function main(): Promise<void> {
           emitError("INVALID_ARGUMENT", tagInput.error);
           return;
         }
-        const hasFilters = Object.keys(filters).length > 0 || tagInput.tags !== undefined;
+        const collectionInput = parseCollectionFilters(parsed.flags);
+        if (collectionInput.error) {
+          emitError("INVALID_ARGUMENT", collectionInput.error);
+          return;
+        }
+        const hasFilters =
+          Object.keys(filters).length > 0 ||
+          tagInput.tags !== undefined ||
+          collectionInput.collectionKeys !== undefined;
         if (!query && !hasFilters) {
           emitError(
             "MISSING_ARGUMENT",
-            'Provide a positional query or at least one field/tag filter. Use: zotagent metadata "<text>" [--author/--year/--title/--journal/--publisher/--tag <value>]',
+            'Provide a positional query or at least one field/tag/collection filter. Use: zotagent metadata "<text>" [--author/--year/--title/--journal/--publisher/--tag/--collection-key <value>]',
           );
           return;
         }
@@ -930,15 +996,20 @@ async function main(): Promise<void> {
           return;
         }
         const limit = limitInput.value ?? 20;
-        const tagItemKeys = tagInput.tags
-          ? await fetchTopLevelItemKeysByTags(tagInput.tags, getReadConfig(resolveConfig(overrides)))
-          : undefined;
+        const itemKeys =
+          tagInput.tags || collectionInput.collectionKeys
+            ? await resolveItemKeyFilter(
+                tagInput.tags,
+                collectionInput.collectionKeys,
+                getReadConfig(resolveConfig(overrides)),
+              )
+            : undefined;
         const data = await searchMetadata(query, limit, overrides, {
           ...(requestedFields.length > 0 ? { fields: requestedFields as MetadataField[] } : {}),
           ...(getBooleanFlag(parsed.flags, "has-file") ? { hasFile: true } : {}),
           ...(getBooleanFlag(parsed.flags, "abstract") ? { includeAbstract: true } : {}),
           ...(hasFilters ? { filters } : {}),
-          ...(tagItemKeys !== undefined ? { itemKeys: tagItemKeys } : {}),
+          ...(itemKeys !== undefined ? { itemKeys } : {}),
         });
         emitOk(data, { elapsedMs: Date.now() - startedAt });
         return;
