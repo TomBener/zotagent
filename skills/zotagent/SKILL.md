@@ -13,15 +13,16 @@ Don't invent citation keys, item keys, or passage text. If a query returns nothi
 
 | Command | Searches over | Good for |
 |---|---|---|
-| `zotagent search "<q>" [--semantic] [--tag <tag>] [--limit n] [--min-score n]` | Indexed full text only — body, not title (FTS5 keyword by default; qmd vector search with `--semantic`; optional Zotero tag filter for keyword search) | Finding passages that discuss a topic across the library or within a tagged subset |
+| `zotagent search "<q>" [--semantic] [--tag <tag>] [--collection-key <key>] [--limit n] [--min-score n]` | Indexed full text only — body, not title (FTS5 keyword by default; qmd vector search with `--semantic`; optional Zotero tag and/or collection filter for keyword search) | Finding passages that discuss a topic across the library or within a tagged or collection-scoped subset |
 | `zotagent search-in "<q>" --key <k> [--limit n]` | Full text of one item's indexed attachments | Drilling into a single paper for terms or quoted phrases |
-| `zotagent metadata ["<q>"] [metadata filters...] [--tag <tag>] [--field f] [--abstract] [--has-file] [--limit n]` | Bibliography fields: title / author / year / journal / publisher / abstract, optionally filtered by Zotero tags | Finding papers by metadata or by title, verifying existence, resolving an `itemKey` |
+| `zotagent metadata ["<q>"] [metadata filters...] [--tag <tag>] [--collection-key <key>] [--field f] [--abstract] [--has-file] [--limit n]` | Bibliography fields: title / author / year / journal / publisher / abstract, optionally filtered by Zotero tags or collections | Finding papers by metadata or by title, verifying existence, resolving an `itemKey` |
 
 Metadata quick rules:
 
 - Positional query, field filters (`--author` / `--year` / `--title` / `--journal` / `--publisher`), or both are valid.
 - `--field` scopes only the positional query; filter flags AND together.
 - `--tag "PhD Thesis"` fetches matching top-level item keys from the Zotero Web API, then filters local results. Repeat `--tag` to AND tags. Requires Zotero read API config.
+- `--collection-key ABCD1234` filters to top-level items directly in the named Zotero collection (the 8-char key shown at the end of `zotero.org/<user>/collections/<key>`). Repeat `--collection-key` to union across collections; combine with `--tag` for an intersection. Direct members only — sub-collections are not included. Requires Zotero read API config.
 - `--abstract` includes abstract text in the output. To search abstract text, use a positional query with `--field abstract`.
 - `metadata "Pratt 1985"` generally returns empty (year is not OR'd in) — split into `--author "Pratt" --year "1985"`.
 
@@ -40,7 +41,7 @@ Both `search` and `search-in` evaluate most queries against per-block FTS. `sear
 
 **`NEAR/<n>` is the best first pass** when you have 2–3 anchor terms that should co-occur but not necessarily adjacent — e.g. `"土地" NEAR/20 "利用"`. It is usually more precise than plain keyword and much faster than `--semantic`.
 
-Keyword vs semantic heuristic: start with keyword (exact phrases, `OR`, `NEAR`) for names, anchor terms, quotations, or `--tag` scoping; switch to `--semantic` when phrasing is fuzzy or you want conceptual neighbors. `--tag` cannot be combined with `--semantic`. `NEAR/<n>` is especially useful on OCR'd or scanned materials (Republican China vertical-layout texts, old gazetteers, etc.), where one keyword often drowns in noise.
+Keyword vs semantic heuristic: start with keyword (exact phrases, `OR`, `NEAR`) for names, anchor terms, quotations, or `--tag` / `--collection-key` scoping; switch to `--semantic` when phrasing is fuzzy or you want conceptual neighbors. `--tag` and `--collection-key` cannot be combined with `--semantic`. `NEAR/<n>` is especially useful on OCR'd or scanned materials (Republican China vertical-layout texts, old gazetteers, etc.), where one keyword often drowns in noise.
 
 Chinese trad/simp folding: keyword `search`, `search-in`, and `metadata` match across 繁 ↔ 简 both ways (汉字 ≡ 漢字), so one form is enough. `search --semantic` does NOT fold because it uses qmd embeddings over the source text. Returned text (`passage`, `blocks`, `fulltext`, `expand`) preserves the original form as stored in the attachment.
 
@@ -67,6 +68,11 @@ Don't invent quotes. If the returned `passage` looks truncated (`…` markers) o
 zotagent search "party secretary governance"
 zotagent search "informal political networks in contemporary China" --semantic --limit 20
 zotagent search "local fiscal capacity" --tag "PhD Thesis"
+
+# Scope by Zotero collection key (8-char ID at the end of the collection URL).
+# Repeatable for union; combine with --tag for an intersection.
+zotagent search "local fiscal capacity" --collection-key ABCD1234
+zotagent search "land reform" --collection-key ABCD1234 --tag "PhD Thesis"
 
 # Drill into one paper. A bare surname catches both in-text "Acemoglu and
 # Robinson 2012" and bibliography "Acemoglu, Daron. 2012".
@@ -97,6 +103,10 @@ zotagent metadata "imperial" --author "Pratt"
 # Narrow to manually tagged Zotero items
 zotagent metadata --tag "PhD Thesis"
 zotagent metadata "land reform" --tag "PhD Thesis"
+
+# Narrow to a Zotero collection (or intersect a collection with a tag)
+zotagent metadata --collection-key ABCD1234
+zotagent metadata "land reform" --collection-key ABCD1234 --tag "PhD Thesis"
 
 # Keep only indexed items; include abstract text only when needed
 zotagent metadata "dangwei shuji" --has-file
