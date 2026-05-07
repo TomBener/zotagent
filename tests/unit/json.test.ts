@@ -19,7 +19,7 @@ function captureConsole(run: () => void): string {
   return messages.join("\n");
 }
 
-test("emitOk omits empty meta", () => {
+test("emitOk emits a success envelope", () => {
   const output = captureConsole(() => emitOk({ results: [] }));
   const parsed = JSON.parse(output) as { ok: boolean; data: unknown; meta?: unknown };
 
@@ -28,7 +28,20 @@ test("emitOk omits empty meta", () => {
   assert.equal("meta" in parsed, false);
 });
 
-test("emitError omits empty meta", () => {
+test("emitOk includes non-empty meta", () => {
+  const output = captureConsole(() => emitOk({ totalRecords: 0 }, { elapsedMs: 12 }));
+  const parsed = JSON.parse(output) as {
+    ok: boolean;
+    data: unknown;
+    meta?: { elapsedMs?: number };
+  };
+
+  assert.equal(parsed.ok, true);
+  assert.deepEqual(parsed.data, { totalRecords: 0 });
+  assert.equal(parsed.meta?.elapsedMs, 12);
+});
+
+test("emitError emits an error envelope", () => {
   const output = captureConsole(() => emitError("TEST", "failed"));
   const parsed = JSON.parse(output) as { ok: boolean; error: { code: string; message: string }; meta?: unknown };
 

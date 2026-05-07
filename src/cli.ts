@@ -315,8 +315,11 @@ function printHelp(): void {
 Usage: zotagent <command> [flags]
 
 All commands emit pretty-printed JSON on stdout. Success payloads are
-{ok: true, data, meta?}; failures are {ok: false, error: {code, message, details?},
-meta?} with exit code 1. Missing credentials fail fast with a JSON error.
+{ok: true, data, meta?}; failures are {ok: false, error: {code, message, details?}}
+with exit code 1. Missing credentials fail fast with a JSON error. sync includes
+meta.elapsedMs because it can be long-running.
+Local search payloads (search, search-in, metadata) include data.query once
+alongside data.results.
 
 Index
   sync [--attachments-root <path>] [--retry-errors] [--pdf-timeout-ms <n>] [--pdf-batch-size <n>]
@@ -497,7 +500,6 @@ function emitDocumentLookupError(prefix: "SEARCH_IN" | "BLOCKS" | "FULLTEXT" | "
 }
 
 async function main(): Promise<void> {
-  const startedAt = Date.now();
   const parsed = parseArgs(process.argv.slice(2));
   const [command] = parsed.positionals;
   const overrides = overridesFromFlags(parsed.flags);
@@ -520,6 +522,7 @@ async function main(): Promise<void> {
     }
     switch (command) {
       case "sync": {
+        const syncStartedAt = Date.now();
         if (parsed.positionals.length > 1) {
           emitError(
             "UNEXPECTED_ARGUMENT",
@@ -575,7 +578,7 @@ async function main(): Promise<void> {
             warnings: result.config.warnings,
             paths: compactPathMap(getDataPaths(result.config.dataDir)),
           },
-          { elapsedMs: Date.now() - startedAt },
+          { elapsedMs: Date.now() - syncStartedAt },
         );
         return;
       }
@@ -587,7 +590,6 @@ async function main(): Promise<void> {
             ...status,
             paths: compactPathMap(status.paths),
           },
-          { elapsedMs: Date.now() - startedAt },
         );
         return;
       }
@@ -604,12 +606,11 @@ async function main(): Promise<void> {
               ...result,
               path: compactHomePath(result.path),
             },
-            { elapsedMs: Date.now() - startedAt },
           );
           return;
         } catch (error) {
           if (error instanceof ConfigCommandError) {
-            emitError(error.code, error.message, undefined, { elapsedMs: Date.now() - startedAt });
+            emitError(error.code, error.message);
             return;
           }
           throw error;
@@ -712,18 +713,14 @@ async function main(): Promise<void> {
             const merged: AddJsonItemResult[] = stages.map((stage) =>
               stage.kind === "ready" ? successResults[resultCursor++] : stage.failure,
             );
-            emitOk(merged, { elapsedMs: Date.now() - startedAt });
+            emitOk(merged);
           } catch (error) {
             if (error instanceof JsonInputError) {
-              emitError("INVALID_ARGUMENT", error.message, error.details, {
-                elapsedMs: Date.now() - startedAt,
-              });
+              emitError("INVALID_ARGUMENT", error.message, error.details);
               return;
             }
             const message = error instanceof Error ? error.message : String(error);
-            emitError("ADD_JSON_FAILED", message, undefined, {
-              elapsedMs: Date.now() - startedAt,
-            });
+            emitError("ADD_JSON_FAILED", message);
           }
           return;
         }
@@ -764,7 +761,7 @@ async function main(): Promise<void> {
         const data = s2PaperId
           ? await addS2PaperToZotero(s2PaperId, sharedInput, overrides)
           : await addToZotero(sharedInput, overrides);
-        emitOk(data, { elapsedMs: Date.now() - startedAt });
+        emitOk(data);
         return;
       }
 
@@ -801,7 +798,7 @@ async function main(): Promise<void> {
           return;
         }
         const data = await listRecentItems({ limit, sort }, overrides);
-        emitOk(data, { elapsedMs: Date.now() - startedAt });
+        emitOk(data);
         return;
       }
 
@@ -823,7 +820,7 @@ async function main(): Promise<void> {
         }
         const limit = limitInput.value ?? 10;
         const data = await searchSemanticScholar(query, limit, overrides);
-        emitOk(data, { elapsedMs: Date.now() - startedAt });
+        emitOk(data);
         return;
       }
 
@@ -891,7 +888,7 @@ async function main(): Promise<void> {
           ...(itemKeys !== undefined ? { itemKeys } : {}),
           ...(semantic ? { progress: (message: string) => process.stderr.write(`${message}\n`) } : {}),
         });
-        emitOk(data, { elapsedMs: Date.now() - startedAt });
+        emitOk(data);
         return;
       }
 
@@ -923,7 +920,7 @@ async function main(): Promise<void> {
             limitInput.value ?? 10,
             overrides,
           );
-          emitOk(data, { elapsedMs: Date.now() - startedAt });
+          emitOk(data);
           return;
         } catch (error) {
           if (error instanceof KeywordQuerySyntaxError) {
@@ -1011,7 +1008,7 @@ async function main(): Promise<void> {
           ...(hasFilters ? { filters } : {}),
           ...(itemKeys !== undefined ? { itemKeys } : {}),
         });
-        emitOk(data, { elapsedMs: Date.now() - startedAt });
+        emitOk(data);
         return;
       }
 
@@ -1050,7 +1047,7 @@ async function main(): Promise<void> {
             },
             overrides,
           );
-          emitOk(data, { elapsedMs: Date.now() - startedAt });
+          emitOk(data);
           return;
         } catch (error) {
           emitDocumentLookupError("BLOCKS", error);
@@ -1072,7 +1069,7 @@ async function main(): Promise<void> {
             },
             overrides,
           );
-          emitOk(data, { elapsedMs: Date.now() - startedAt });
+          emitOk(data);
           return;
         } catch (error) {
           emitDocumentLookupError("FULLTEXT", error);
@@ -1118,7 +1115,7 @@ async function main(): Promise<void> {
             },
             overrides,
           );
-          emitOk(data, { elapsedMs: Date.now() - startedAt });
+          emitOk(data);
           return;
         } catch (error) {
           emitDocumentLookupError("EXPAND", error);
@@ -1170,7 +1167,7 @@ async function main(): Promise<void> {
           },
           overrides,
         );
-        emitOk(data, { elapsedMs: Date.now() - startedAt });
+        emitOk(data);
         return;
       }
 
@@ -1183,16 +1180,12 @@ async function main(): Promise<void> {
       emitError(
         "INVALID_ARGUMENT",
         error.message,
-        undefined,
-        { elapsedMs: Date.now() - startedAt },
       );
       return;
     }
     emitError(
       "UNEXPECTED_ERROR",
       error instanceof Error ? error.message : String(error),
-      undefined,
-      { elapsedMs: Date.now() - startedAt },
     );
     return;
   }

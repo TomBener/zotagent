@@ -665,13 +665,40 @@ test("metadata accumulates repeated field filters", () => {
   const parsed = JSON.parse(result.stdout) as {
     ok: boolean;
     data: {
+      query: string;
       results: Array<{ itemKey: string }>;
     };
   };
   assert.equal(parsed.ok, true);
+  assert.equal(parsed.data.query, "needle");
   assert.deepEqual(
     parsed.data.results.map((row) => row.itemKey),
     ["ITEM1000", "ITEM2000"],
+  );
+
+  const filterOnly = runCli([
+    "metadata",
+    "--author",
+    "Smith",
+    "--bibliography",
+    bibliographyPath,
+    "--attachments-root",
+    attachmentsRoot,
+    "--data-dir",
+    join(root, "data"),
+  ]);
+
+  assert.equal(filterOnly.status, 0);
+  const filterOnlyParsed = JSON.parse(filterOnly.stdout) as {
+    data: {
+      query: string;
+      results: Array<{ itemKey: string }>;
+    };
+  };
+  assert.equal(filterOnlyParsed.data.query, "");
+  assert.deepEqual(
+    filterOnlyParsed.data.results.map((row) => row.itemKey),
+    ["ITEM1000"],
   );
 });
 
@@ -726,7 +753,7 @@ test("metadata omits abstract by default and includes it with --abstract", () =>
   );
 });
 
-test("search keyword returns elapsedMs in meta", async () => {
+test("search keyword returns query and omits meta", async () => {
   const fixture = await createIndexedFixture();
 
   const result = runCli([
@@ -744,13 +771,15 @@ test("search keyword returns elapsedMs in meta", async () => {
   const parsed = JSON.parse(result.stdout) as {
     ok: boolean;
     data: {
+      query: string;
       results: Array<{ itemKey: string }>;
     };
-    meta?: { elapsedMs?: number };
+    meta?: unknown;
   };
   assert.equal(parsed.ok, true);
+  assert.equal(parsed.data.query, "dangwei shuji");
   assert.deepEqual(parsed.data.results.map((row) => row.itemKey), ["ITEM9000"]);
-  assert.equal(typeof parsed.meta?.elapsedMs, "number");
+  assert.equal("meta" in parsed, false);
 });
 
 test("search rejects non-canonical NEAR syntax with an argument error", async () => {
@@ -845,21 +874,23 @@ test("search-in returns passages within a selected document", async () => {
   const parsed = JSON.parse(result.stdout) as {
     ok: boolean;
     data: {
+      query: string;
       results: Array<{
         itemKey: string;
         passage: string;
         charOffset: number;
       }>;
     };
-    meta?: { elapsedMs?: number };
+    meta?: unknown;
   };
   assert.equal(parsed.ok, true);
+  assert.equal(parsed.data.query, "dangwei shuji");
   assert.equal(parsed.data.results.length > 0, true);
   assert.equal(parsed.data.results[0]!.itemKey, "ITEM9000");
   assert.equal("file" in parsed.data.results[0]!, false);
   assert.match(parsed.data.results[0]!.passage, /dangwei shuji/i);
   assert.equal(typeof parsed.data.results[0]!.charOffset, "number");
-  assert.equal(typeof parsed.meta?.elapsedMs, "number");
+  assert.equal("meta" in parsed, false);
 });
 
 test("search-in searches across all attachments when one key maps to multiple PDFs", async () => {

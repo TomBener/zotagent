@@ -88,6 +88,7 @@ export async function searchMetadata(
   overrides: ConfigOverrides = {},
   options: MetadataSearchOptions = {},
 ): Promise<{
+  query: string;
   results: MetadataSearchResultRow[];
   warnings?: string[];
 }> {
@@ -146,6 +147,7 @@ export async function searchMetadata(
     .slice(0, limit);
 
   return {
+    query,
     results,
     ...(warnings.length > 0 ? { warnings } : {}),
   };

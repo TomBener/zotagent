@@ -17,7 +17,6 @@ export function emitError(
   code: string,
   message: string,
   details?: unknown,
-  meta: Record<string, unknown> = {},
 ): void {
   console.log(
     JSON.stringify(
@@ -28,7 +27,6 @@ export function emitError(
           message,
           ...(details !== undefined ? { details } : {}),
         },
-        ...(Object.keys(meta).length > 0 ? { meta } : {}),
       },
       null,
       2,

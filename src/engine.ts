@@ -584,6 +584,7 @@ export async function searchLiterature(
   behavior: SearchBehaviorOptions = {},
   keywordFactory: KeywordIndexFactory = openKeywordIndex,
 ): Promise<{
+  query: string;
   results: SearchResultRow[];
   warnings?: string[];
 }> {
@@ -599,6 +600,7 @@ export async function searchLiterature(
   }
   const warnings: string[] = [...config.warnings];
   const wrap = (results: SearchResultRow[]) => ({
+    query,
     results,
     ...(warnings.length > 0 ? { warnings } : {}),
   });
@@ -694,6 +696,7 @@ export async function searchWithinDocuments(
   overrides: ConfigOverrides = {},
   keywordFactory: KeywordIndexFactory = openKeywordIndex,
 ): Promise<{
+  query: string;
   results: SearchResultRow[];
   warnings: string[];
 }> {
@@ -772,6 +775,7 @@ export async function searchWithinDocuments(
   const ordered = [...seen.values()].sort((a, b) => b.score - a.score || a.charOffset - b.charOffset);
 
   return {
+    query,
     results: ordered.slice(0, limit),
     warnings: config.warnings,
   };

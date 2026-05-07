@@ -123,8 +123,11 @@ zotagent — Zotero CLI for AI agents.
 Usage: zotagent <command> [flags]
 
 All commands emit pretty-printed JSON on stdout. Success payloads are
-{ok: true, data, meta?}; failures are {ok: false, error: {code, message, details?},
-meta?} with exit code 1. Missing credentials fail fast with a JSON error.
+{ok: true, data, meta?}; failures are {ok: false, error: {code, message, details?}}
+with exit code 1. Missing credentials fail fast with a JSON error. `sync` includes
+`meta.elapsedMs` because it can be long-running.
+Local search payloads (`search`, `search-in`, `metadata`) include `data.query`
+once alongside `data.results`.
 
 Index
   sync [--attachments-root <path>] [--retry-errors] [--pdf-timeout-ms <n>] [--pdf-batch-size <n>]
