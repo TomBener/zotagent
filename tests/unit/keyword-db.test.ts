@@ -159,6 +159,81 @@ test("rebuildIndex replaces old entries with new ones", async () => {
   }
 });
 
+test("updateIndex upserts changed entries and removes deleted docKeys", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-db-incremental-"));
+  const dataDir = join(root, "data");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const removedDocKey = "d".repeat(40);
+  const changedDocKey = "e".repeat(40);
+  const unchangedDocKey = "f".repeat(40);
+  const addedDocKey = "1".repeat(40);
+
+  const writeOneBlockManifest = (docKey: string, itemKey: string, text: string) => {
+    const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
+    writeManifestFile(manifestPath, {
+      docKey,
+      itemKey,
+      title: itemKey,
+      authors: ["A"],
+      filePath: `/tmp/${docKey}.pdf`,
+      normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+      blocks: [{ blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"],
+        text, charStart: 0, charEnd: text.length, lineStart: 1, lineEnd: 1, isReferenceLike: false }],
+    });
+    return manifestPath;
+  };
+
+  const removedEntry = readyEntry(
+    dataDir,
+    removedDocKey,
+    "REMOVED",
+    "Removed",
+    "/tmp/removed.pdf",
+    writeOneBlockManifest(removedDocKey, "REMOVED", "old removed token"),
+  );
+  const changedEntry = readyEntry(
+    dataDir,
+    changedDocKey,
+    "CHANGED",
+    "Changed",
+    "/tmp/changed.pdf",
+    writeOneBlockManifest(changedDocKey, "CHANGED", "old changed token"),
+  );
+  const unchangedEntry = readyEntry(
+    dataDir,
+    unchangedDocKey,
+    "UNCHANGED",
+    "Unchanged",
+    "/tmp/unchanged.pdf",
+    writeOneBlockManifest(unchangedDocKey, "UNCHANGED", "stable retained token"),
+  );
+
+  const client = await openKeywordIndex(createConfig(dataDir));
+  try {
+    await client.rebuildIndex([removedEntry, changedEntry, unchangedEntry]);
+    assert.equal((await client.searchDocs("removed", 10)).length, 1);
+    assert.equal((await client.searchDocs("changed", 10)).length, 1);
+    assert.equal((await client.searchDocs("retained", 10)).length, 1);
+
+    const changedManifestPath = writeOneBlockManifest(changedDocKey, "CHANGED", "fresh changed token");
+    const addedManifestPath = writeOneBlockManifest(addedDocKey, "ADDED", "newly added token");
+    const changedFreshEntry = readyEntry(dataDir, changedDocKey, "CHANGED", "Changed", "/tmp/changed.pdf", changedManifestPath);
+    const addedEntry = readyEntry(dataDir, addedDocKey, "ADDED", "Added", "/tmp/added.pdf", addedManifestPath);
+
+    await client.updateIndex([changedFreshEntry, addedEntry], [removedDocKey]);
+
+    assert.deepEqual(await client.searchDocs("removed", 10), []);
+    assert.deepEqual(await client.searchDocs('"old changed"', 10), []);
+    assert.equal((await client.searchDocs('"fresh changed"', 10)).length, 1);
+    assert.equal((await client.searchDocs('"newly added"', 10)).length, 1);
+    assert.equal((await client.searchDocs('"stable retained"', 10)).length, 1);
+  } finally {
+    await client.close();
+  }
+});
+
 test("search throws on empty query", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-db-empty-"));
   const dataDir = join(root, "data");

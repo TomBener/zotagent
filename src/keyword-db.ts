@@ -27,6 +27,7 @@ export interface KeywordBlockSearchOptions {
 
 export interface KeywordIndexClient {
   rebuildIndex(readyEntries: CatalogEntry[]): Promise<void>;
+  updateIndex(changedEntries: CatalogEntry[], removedDocKeys: string[]): Promise<void>;
   searchDocs(query: string, limit: number, options?: KeywordSearchOptions): Promise<KeywordSearchResult[]>;
   searchBlocks(query: string, limit: number, options?: KeywordBlockSearchOptions): Promise<KeywordBlockSearchResult[]>;
   isEmpty(): Promise<boolean>;
@@ -34,7 +35,7 @@ export interface KeywordIndexClient {
 }
 
 export type KeywordIndexFactory = (config: AppConfig) => Promise<KeywordIndexClient>;
-export const KEYWORD_INDEX_SCHEMA_VERSION = "keyword-fts5-porter-unicode61-contentless-tradsimp-v5-rowid-encoded";
+export const KEYWORD_INDEX_SCHEMA_VERSION = "keyword-fts5-porter-unicode61-contentless-delete-tradsimp-v6-rowid-encoded";
 
 // Pack (docId, blockIndex) into the FTS5 rowid: docId * 2^24 + blockIndex.
 // 24 bits for blockIndex covers the largest doc observed in the wild
@@ -52,6 +53,26 @@ export class KeywordQuerySyntaxError extends Error {
   }
 }
 
+function createKeywordBlockFts(db: Database.Database): void {
+  db.exec(`
+    CREATE VIRTUAL TABLE keyword_block_fts USING fts5(
+      text,
+      tokenize='porter unicode61',
+      content='',
+      contentless_delete=1
+    )
+  `);
+}
+
+function hasCurrentFtsSchema(db: Database.Database): boolean {
+  const row = db.prepare(
+    "SELECT sql FROM sqlite_master WHERE type='table' AND name='keyword_block_fts'",
+  ).get() as { sql: string } | undefined;
+  if (!row) return false;
+  const sql = row.sql.toLowerCase().replace(/\s+/g, "");
+  return sql.includes("content=''") && sql.includes("contentless_delete=1");
+}
+
 function ensureSchema(db: Database.Database): void {
   // v3-blockindex left behind a doc-level keyword_fts(title, body) and its
   // keyword_docs shadow. v4-blockonly removed those.
@@ -67,17 +88,10 @@ function ensureSchema(db: Database.Database): void {
       docKey TEXT NOT NULL UNIQUE
     )
   `);
-  const blockFtsExists = db.prepare(
-    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='keyword_block_fts'",
-  ).get();
-  if (!blockFtsExists) {
-    db.exec(`
-      CREATE VIRTUAL TABLE keyword_block_fts USING fts5(
-        text,
-        tokenize='porter unicode61',
-        content=''
-      )
-    `);
+  if (!hasCurrentFtsSchema(db)) {
+    db.exec("DROP TABLE IF EXISTS keyword_block_fts");
+    db.exec("DELETE FROM keyword_doc_lookup");
+    createKeywordBlockFts(db);
   }
 }
 
@@ -108,15 +122,76 @@ export function segmentCjk(text: string): string {
   return out.join("");
 }
 
-function rebuildTable(db: Database.Database, readyEntries: CatalogEntry[]): void {
+function resetFtsTable(db: Database.Database): void {
   db.exec("DROP TABLE IF EXISTS keyword_block_fts");
-  db.exec(`
-    CREATE VIRTUAL TABLE keyword_block_fts USING fts5(
-      text,
-      tokenize='porter unicode61',
-      content=''
-    )
-  `);
+  createKeywordBlockFts(db);
+}
+
+function indexedBlocksForEntry(entry: CatalogEntry): Array<{ blockIndex: number; indexed: string }> {
+  if (!entry.manifestPath || !exists(entry.manifestPath)) return [];
+  const manifest = readManifestFile(entry.manifestPath);
+  return manifest.blocks
+    .map((block) => ({ blockIndex: block.blockIndex, indexed: segmentCjk(toSimplified(block.text)) }))
+    .filter((b) => b.indexed.length > 0);
+}
+
+function assertBlockIndexInRange(docKey: string, blockIndex: number): void {
+  if (blockIndex < 0 || blockIndex > BLOCK_INDEX_MAX) {
+    // Should never happen: blockIndex is a positive int from the manifest
+    // pipeline, and 24 bits gives ~16M of headroom. Guard against silent
+    // corruption if a future extractor produces extreme values.
+    throw new Error(
+      `blockIndex ${blockIndex} out of 24-bit range for docKey ${docKey}`,
+    );
+  }
+}
+
+function deleteDocRows(db: Database.Database, docId: number): void {
+  db.prepare("DELETE FROM keyword_block_fts WHERE rowid >= ? AND rowid < ?")
+    .run(docId * DOC_ID_MULTIPLIER, (docId + 1) * DOC_ID_MULTIPLIER);
+}
+
+function deleteDoc(db: Database.Database, docKey: string): void {
+  const row = db.prepare("SELECT docId FROM keyword_doc_lookup WHERE docKey = ?")
+    .get(docKey) as { docId: number } | undefined;
+  if (!row) return;
+  deleteDocRows(db, row.docId);
+  db.prepare("DELETE FROM keyword_doc_lookup WHERE docId = ?").run(row.docId);
+}
+
+function allocateDocId(db: Database.Database): number {
+  const row = db.prepare("SELECT COALESCE(MAX(docId), 0) + 1 AS docId FROM keyword_doc_lookup")
+    .get() as { docId: number };
+  return row.docId;
+}
+
+function upsertEntry(db: Database.Database, entry: CatalogEntry): void {
+  const indexedBlocks = indexedBlocksForEntry(entry);
+  if (indexedBlocks.length === 0) {
+    deleteDoc(db, entry.docKey);
+    return;
+  }
+
+  const existing = db.prepare("SELECT docId FROM keyword_doc_lookup WHERE docKey = ?")
+    .get(entry.docKey) as { docId: number } | undefined;
+  const docId = existing?.docId ?? allocateDocId(db);
+  if (existing) {
+    deleteDocRows(db, docId);
+  } else {
+    db.prepare("INSERT INTO keyword_doc_lookup (docId, docKey) VALUES (?, ?)")
+      .run(docId, entry.docKey);
+  }
+
+  const insertBlockFts = db.prepare("INSERT INTO keyword_block_fts (rowid, text) VALUES (?, ?)");
+  for (const b of indexedBlocks) {
+    assertBlockIndexInRange(entry.docKey, b.blockIndex);
+    const rowid = docId * DOC_ID_MULTIPLIER + b.blockIndex;
+    insertBlockFts.run(rowid, b.indexed);
+  }
+}
+
+function rebuildTable(db: Database.Database, readyEntries: CatalogEntry[]): void {
+  resetFtsTable(db);
   db.exec("DELETE FROM keyword_doc_lookup");
 
   const insertLookup = db.prepare("INSERT INTO keyword_doc_lookup (docId, docKey) VALUES (?, ?)");
@@ -124,27 +199,32 @@ function rebuildTable(db: Database.Database, readyEntries: CatalogEntry[]): void
 
   let nextDocId = 1;
   for (const entry of readyEntries) {
-    if (!entry.manifestPath || !exists(entry.manifestPath)) continue;
-    const manifest = readManifestFile(entry.manifestPath);
-    const indexedBlocks = manifest.blocks
-      .map((block) => ({ blockIndex: block.blockIndex, indexed: segmentCjk(toSimplified(block.text)) }))
-      .filter((b) => b.indexed.length > 0);
+    const indexedBlocks = indexedBlocksForEntry(entry);
     if (indexedBlocks.length === 0) continue;
 
     const docId = nextDocId++;
     insertLookup.run(docId, entry.docKey);
     for (const b of indexedBlocks) {
-      if (b.blockIndex < 0 || b.blockIndex > BLOCK_INDEX_MAX) {
-        // Should never happen: blockIndex is a positive int from the manifest
-        // pipeline, and 24 bits gives ~16M of headroom. Guard against silent
-        // corruption if a future extractor produces extreme values.
-        throw new Error(
-          `blockIndex ${b.blockIndex} out of 24-bit range for docKey ${entry.docKey}`,
-        );
-      }
+      assertBlockIndexInRange(entry.docKey, b.blockIndex);
       const rowid = docId * DOC_ID_MULTIPLIER + b.blockIndex;
       insertBlockFts.run(rowid, b.indexed);
     }
+  }
+}
+
+function updateTable(
+  db: Database.Database,
+  changedEntries: CatalogEntry[],
+  removedDocKeys: string[],
+): void {
+  const changedDocKeys = new Set(changedEntries.map((entry) => entry.docKey));
+  for (const docKey of new Set(removedDocKeys)) {
+    if (!changedDocKeys.has(docKey)) {
+      deleteDoc(db, docKey);
+    }
+  }
+  for (const entry of changedEntries) {
+    upsertEntry(db, entry);
   }
 }
 
@@ -288,6 +368,13 @@ export async function openKeywordIndex(config: AppConfig): Promise<KeywordIndexC
     rebuildIndex: async (readyEntries) => {
       const tx = db.transaction(() => {
         rebuildTable(db, readyEntries);
+      });
+      tx();
+    },
+
+    updateIndex: async (changedEntries, removedDocKeys) => {
+      const tx = db.transaction(() => {
+        updateTable(db, changedEntries, removedDocKeys);
       });
       tx();
     },

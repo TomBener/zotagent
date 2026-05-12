@@ -557,6 +557,18 @@ function hasReusableNormalizedOutput(path: string): boolean {
   return Boolean(stats && stats.size > 0);
 }
 
+function hasReusableCatalogArtifacts(
+  normalizedPath: string | undefined,
+  manifestPath: string | undefined,
+): normalizedPath is string {
+  return Boolean(
+    normalizedPath &&
+    manifestPath &&
+    exists(manifestPath) &&
+    hasReusableNormalizedOutput(normalizedPath),
+  );
+}
+
 function assertNonEmptyExtractedOutput(
   filePath: string,
   built: { markdown: string; manifest: AttachmentManifest },
@@ -1027,6 +1039,14 @@ async function syncQmdContexts(qmd: Awaited<ReturnType<QmdFactory>>, readyEntrie
   }
 }
 
+function readyDocKeys(entries: CatalogEntry[]): Set<string> {
+  return new Set(
+    entries
+      .filter((entry) => entry.extractStatus === "ready")
+      .map((entry) => entry.docKey),
+  );
+}
+
 async function embedQmdUntilSettled(
   qmd: Awaited<ReturnType<QmdFactory>>,
   logger: SyncLogger,
@@ -1171,6 +1191,7 @@ export async function runSync(
       );
     }
     const previousCatalog = readCatalogFile(paths.catalogPath);
+    const previousCatalogCompleted = previousCatalog.indexesCompletedAt !== undefined;
     const previousByDocKey = mapEntriesByDocKey(previousCatalog);
     // Paths the current bibliography still references. Used when building the
     // rename-detection index so we only treat an entry as the "old side" of a
@@ -1307,7 +1328,9 @@ export async function runSync(
       const previousIsReadyAndUnchanged =
         previous?.extractStatus === "ready" &&
         previousIsUnchanged &&
-        hasReusableArtifacts(attachment, previous.normalizedPath, previous.manifestPath);
+        (previousCatalogCompleted
+          ? hasReusableCatalogArtifacts(previous.normalizedPath, previous.manifestPath)
+          : hasReusableArtifacts(attachment, previous.normalizedPath, previous.manifestPath));
       const previousIsErrorAndUnchanged =
         previous?.extractStatus === "error" &&
         previousIsUnchanged;
@@ -1755,6 +1778,14 @@ export async function runSync(
 
     const readyEntries = nextEntries.filter((entry) => entry.extractStatus === "ready");
     const qmdResetNeeded = qmdIndexerStateChanged && qmdMayContainExistingEmbeddings;
+    const previousReadyDocKeys = readyDocKeys(previousCatalog.entries);
+    const nextReadyDocKeys = readyDocKeys(nextEntries);
+    const removedReadyDocKeys = [...previousReadyDocKeys].filter((docKey) => !nextReadyDocKeys.has(docKey));
+    const changedReadyEntries = readyEntries.filter((entry) => {
+      const prev = previousByDocKey.get(entry.docKey);
+      return prev === undefined || prev.extractStatus !== "ready" || !isEntryContentUnchanged(prev, entry);
+    });
+    const keywordRebuildNeeded = !previousCatalogCompleted || indexerSignatureChanged;
 
     // Short-circuit: when nothing has changed since the last *completed* sync,
     // both index rebuild passes are provably no-ops. `indexesCompletedAt` is
@@ -1782,8 +1813,16 @@ export async function runSync(
     } else {
       const keywordIndex = await keywordFactory(config);
       try {
-        logger.info("Rebuilding keyword search index...", { console: true });
-        await keywordIndex.rebuildIndex(readyEntries);
+        if (keywordRebuildNeeded) {
+          logger.info("Rebuilding keyword search index...", { console: true });
+          await keywordIndex.rebuildIndex(readyEntries);
+        } else {
+          logger.info(
+            `Updating keyword search index (${changedReadyEntries.length} changed, ${removedReadyDocKeys.length} removed)...`,
+            { console: true },
+          );
+          await keywordIndex.updateIndex(changedReadyEntries, removedReadyDocKeys);
+        }
       } finally {
         await keywordIndex.close();
       }

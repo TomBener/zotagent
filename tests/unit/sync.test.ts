@@ -573,6 +573,192 @@ test("runSync short-circuits both index rebuilds when the catalog is identical t
   assert.equal(persisted.indexerSignature, buildIndexerSignature("fake-embed-model"));
 });
 
+test("runSync incrementally updates the keyword index after a completed sync", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-keyword-incremental-"));
+  const attachmentsRoot = join(root, "attachments");
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  const normalizedDir = join(dataDir, "normalized");
+  mkdirSync(join(attachmentsRoot, "papers"), { recursive: true });
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+  mkdirSync(normalizedDir, { recursive: true });
+
+  const stablePath = join(attachmentsRoot, "papers", "stable.pdf");
+  const changedPath = join(attachmentsRoot, "papers", "changed.pdf");
+  writeFileSync(stablePath, "stable-pdf");
+  writeFileSync(changedPath, "changed-pdf-v2");
+  const stableStat = statSync(stablePath);
+  const changedStat = statSync(changedPath);
+  const stableDocKey = sha1("papers/stable.pdf");
+  const changedDocKey = sha1("papers/changed.pdf");
+  const stableNormalizedPath = join(normalizedDir, `${stableDocKey}.md`);
+  const stableManifestPath = join(manifestsDir, `${stableDocKey}${MANIFEST_EXT}`);
+  const changedNormalizedPath = join(normalizedDir, `${changedDocKey}.md`);
+  const changedManifestPath = join(manifestsDir, `${changedDocKey}${MANIFEST_EXT}`);
+
+  writeFileSync(stableNormalizedPath, "Stable body", "utf-8");
+  writeManifestFile(stableManifestPath, {
+    docKey: stableDocKey,
+    itemKey: "STABLE",
+    title: "Stable",
+    authors: ["Stable Author"],
+    filePath: stablePath,
+    normalizedPath: stableNormalizedPath,
+    blocks: [trivialBlock()],
+  });
+  writeFileSync(changedNormalizedPath, "Stale changed body", "utf-8");
+  writeManifestFile(changedManifestPath, {
+    docKey: changedDocKey,
+    itemKey: "CHANGED",
+    title: "Changed",
+    authors: ["Changed Author"],
+    filePath: changedPath,
+    normalizedPath: changedNormalizedPath,
+    blocks: [trivialBlock()],
+  });
+
+  const bibliographyPath = join(root, "bibliography.json");
+  writeFileSync(
+    bibliographyPath,
+    JSON.stringify([
+      {
+        id: "stable",
+        title: "Stable",
+        author: [{ family: "Stable", given: "Author" }],
+        file: stablePath,
+        "zotero-item-key": "STABLE",
+      },
+      {
+        id: "changed",
+        title: "Changed",
+        author: [{ family: "Changed", given: "Author" }],
+        file: changedPath,
+        "zotero-item-key": "CHANGED",
+      },
+    ]),
+    "utf-8",
+  );
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    indexesCompletedAt: new Date().toISOString(),
+    indexedQmdEmbedModel: "fake-embed-model",
+    indexerSignature: buildIndexerSignature("fake-embed-model"),
+    entries: [
+      {
+        docKey: stableDocKey,
+        itemKey: "STABLE",
+        citationKey: "stable",
+        title: "Stable",
+        authors: ["Stable Author"],
+        filePath: stablePath,
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: stableStat.size,
+        mtimeMs: Math.trunc(stableStat.mtimeMs),
+        sourceHash: "stable-existing-hash",
+        lastIndexedAt: new Date().toISOString(),
+        normalizedPath: stableNormalizedPath,
+        manifestPath: stableManifestPath,
+      },
+      {
+        docKey: changedDocKey,
+        itemKey: "CHANGED",
+        citationKey: "changed",
+        title: "Changed",
+        authors: ["Changed Author"],
+        filePath: changedPath,
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: 3,
+        mtimeMs: Math.trunc(changedStat.mtimeMs) - 10_000,
+        sourceHash: "stale-changed-hash",
+        lastIndexedAt: new Date().toISOString(),
+        normalizedPath: changedNormalizedPath,
+        manifestPath: changedManifestPath,
+      },
+    ],
+  });
+
+  const qmdFactory = async () => ({
+    search: async () => [],
+    searchLex: async () => [],
+    update: async () => ({}),
+    embed: async () => ({}),
+    getStatus: async () => ({ totalDocuments: 2, needsEmbedding: 0, hasVectorIndex: true, collections: [] }),
+    listContexts: async () => [],
+    addContext: async () => true,
+    removeContext: async () => true,
+    clearEmbeddings: async () => {},
+    cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
+    close: async () => {},
+  });
+
+  const keywordCalls = {
+    rebuild: 0,
+    updates: [] as Array<{ changedDocKeys: string[]; removedDocKeys: string[] }>,
+  };
+  const keywordFactory = async () => ({
+    rebuildIndex: async () => {
+      keywordCalls.rebuild += 1;
+    },
+    updateIndex: async (changedEntries: Array<{ docKey: string }>, removedDocKeys: string[]) => {
+      keywordCalls.updates.push({
+        changedDocKeys: changedEntries.map((entry) => entry.docKey),
+        removedDocKeys,
+      });
+    },
+    searchDocs: async () => [],
+    searchBlocks: async () => [],
+    isEmpty: async () => false,
+    close: async () => {},
+  });
+
+  const extractBatchFn = async (batch: Array<{ docKey: string; filePath: string; itemKey: string }>) => {
+    const attachment = batch[0]!;
+    writeFileSync(changedNormalizedPath, "Fresh changed body", "utf-8");
+    writeManifestFile(changedManifestPath, {
+      docKey: attachment.docKey,
+      itemKey: attachment.itemKey,
+      title: "Changed",
+      authors: ["Changed Author"],
+      filePath: attachment.filePath,
+      normalizedPath: changedNormalizedPath,
+      blocks: [trivialBlock()],
+    });
+    return new Map([[attachment.docKey, { manifestPath: changedManifestPath, normalizedPath: changedNormalizedPath }]]);
+  };
+
+  const result = await runSync(
+    {
+      bibliographyJsonPath: bibliographyPath,
+      attachmentsRoot,
+      dataDir,
+      qmdEmbedModel: "fake-embed-model",
+    },
+    qmdFactory,
+    keywordFactory,
+    extractBatchFn,
+    () => {},
+  );
+
+  assert.equal(result.stats.updatedAttachments, 1);
+  assert.equal(keywordCalls.rebuild, 0);
+  assert.deepEqual(keywordCalls.updates, [
+    { changedDocKeys: [changedDocKey], removedDocKeys: [] },
+  ]);
+
+  const logBody = readFileSync(result.logPath, "utf-8");
+  assert.match(logBody, /Updating keyword search index \(1 changed, 0 removed\)/);
+});
+
 test("runSync rebuilds indexes when the qmd embedding model changes since last sync", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-sync-embed-change-"));
   const attachmentsRoot = join(root, "attachments");
@@ -1495,9 +1681,29 @@ test("runSync asks qmd to clean orphaned residue on the happy path", async () =>
     close: async () => {},
   });
 
+  const fakeExtractBatch = async (batch: Array<{ docKey: string; filePath: string; itemKey: string }>) => {
+    const attachment = batch[0]!;
+    const normalizedPath = join(normalizedDir, `${attachment.docKey}.md`);
+    const manifestPath = join(manifestsDir, `${attachment.docKey}${MANIFEST_EXT}`);
+    writeFileSync(normalizedPath, "Body", "utf-8");
+    writeManifestFile(manifestPath, {
+      docKey: attachment.docKey,
+      itemKey: attachment.itemKey,
+      title: "Paper",
+      authors: ["A Author"],
+      filePath: attachment.filePath,
+      normalizedPath,
+      blocks: [trivialBlock()],
+    });
+    return new Map([[attachment.docKey, { normalizedPath, manifestPath }]]);
+  };
+
   const result = await runSync(
     { bibliographyJsonPath: bibliographyPath, attachmentsRoot, dataDir },
     qmdFactory,
+    undefined,
+    fakeExtractBatch,
+    () => {},
   );
 
   assert.equal(cleanupCalls, 1);
