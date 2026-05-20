@@ -596,6 +596,46 @@ function assertNonEmptyExtractedOutput(
   throw new Error(`Extracted output was empty for ${filePath}`);
 }
 
+// Write the normalized markdown and manifest as an atomic pair. Both files are
+// staged to sibling `.new-*` paths first, then renamed into place; if any step
+// fails the final paths are not touched (or the first rename is rolled back),
+// so a mid-write extraction failure can never publish a partial normalized
+// file alongside a stale manifest.
+function writeArtifactsAtomically(
+  normalizedPath: string,
+  manifestPath: string,
+  markdown: string,
+  manifest: AttachmentManifest,
+): void {
+  const stamp = `${process.pid}-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+  const tempNormalized = `${normalizedPath}.new-${stamp}`;
+  const tempManifest = `${manifestPath}.new-${stamp}`;
+  let normalizedRenamed = false;
+  try {
+    writeFileSync(tempNormalized, markdown, "utf-8");
+    writeManifestFile(tempManifest, manifest);
+    renameSync(tempNormalized, normalizedPath);
+    normalizedRenamed = true;
+    renameSync(tempManifest, manifestPath);
+  } catch (err) {
+    if (normalizedRenamed) {
+      try {
+        renameSync(normalizedPath, tempNormalized);
+      } catch {
+        // best effort — sync will re-extract on next run regardless
+      }
+    }
+    throw err;
+  } finally {
+    if (exists(tempNormalized)) {
+      try { unlinkSync(tempNormalized); } catch { /* ignore */ }
+    }
+    if (exists(tempManifest)) {
+      try { unlinkSync(tempManifest); } catch { /* ignore */ }
+    }
+  }
+}
+
 function readReusableArtifactManifest(
   identity: Pick<AttachmentCatalogEntry, "docKey" | "itemKey">,
   normalizedPath: string | undefined,
@@ -778,8 +818,7 @@ async function extractBatchPdftotext(
       );
       assertNonEmptyExtractedOutput(attachment.filePath, built);
 
-      writeFileSync(normalizedPath, built.markdown, "utf-8");
-      writeManifestFile(manifestPath, built.manifest);
+      writeArtifactsAtomically(normalizedPath, manifestPath, built.markdown, built.manifest);
       byDocKey.set(attachment.docKey, { manifestPath, normalizedPath });
     }
   } finally {
@@ -834,8 +873,7 @@ async function extractBatchTextOnly(
       );
       assertNonEmptyExtractedOutput(attachment.filePath, built);
 
-      writeFileSync(normalizedPath, built.markdown, "utf-8");
-      writeManifestFile(manifestPath, built.manifest);
+      writeArtifactsAtomically(normalizedPath, manifestPath, built.markdown, built.manifest);
       byDocKey.set(attachment.docKey, { manifestPath, normalizedPath });
     }
   } finally {
@@ -950,8 +988,7 @@ async function extractBatchStructured(
       );
       assertNonEmptyExtractedOutput(attachment.filePath, built);
 
-      writeFileSync(normalizedPath, built.markdown, "utf-8");
-      writeManifestFile(manifestPath, built.manifest);
+      writeArtifactsAtomically(normalizedPath, manifestPath, built.markdown, built.manifest);
       byDocKey.set(attachment.docKey, { manifestPath, normalizedPath });
     }
   } finally {
@@ -1011,8 +1048,7 @@ async function extractNonPdfAttachment(
 
   const built = buildMarkdownManifest(attachment, markdown, normalizedPath);
   assertNonEmptyExtractedOutput(attachment.filePath, built);
-  writeFileSync(normalizedPath, built.markdown, "utf-8");
-  writeManifestFile(manifestPath, built.manifest);
+  writeArtifactsAtomically(normalizedPath, manifestPath, built.markdown, built.manifest);
 
   return { manifestPath, normalizedPath };
 }
@@ -1209,7 +1245,6 @@ export async function runSync(
     process.on(signal, handler);
   }
 
-  let artifactBackupDir: string | undefined;
   try {
     ensureDir(paths.normalizedDir);
     ensureDir(paths.manifestsDir);
@@ -1306,58 +1341,6 @@ export async function runSync(
     // fail and be rolled back to the previous ready state — in that case the
     // manifest is unchanged and must not be forced into the keyword update.
     const recentlyExtractedDocKeys = new Set<string>();
-    // Artifact backups taken right before each extraction attempt. Used by the
-    // failure rollback in recordErroredAttachment to restore the prior
-    // normalized + manifest pair, defending against partial writes that
-    // corrupted the final paths mid-extraction.
-    artifactBackupDir = mkdtempSync(join(paths.tempDir, "artifact-backups-"));
-    const backupDir = artifactBackupDir;
-    const pendingArtifactBackups = new Map<string, { normalized?: string; manifest?: string }>();
-
-    const snapshotPriorArtifacts = (docKey: string, previous: CatalogEntry | undefined): void => {
-      if (!previous || previous.extractStatus !== "ready") return;
-      const backup: { normalized?: string; manifest?: string } = {};
-      if (previous.normalizedPath && exists(previous.normalizedPath)) {
-        const dst = resolve(backupDir, `${docKey}.md`);
-        copyFileSync(previous.normalizedPath, dst);
-        backup.normalized = dst;
-      }
-      if (previous.manifestPath && exists(previous.manifestPath)) {
-        const dst = resolve(backupDir, `${docKey}${MANIFEST_EXT}`);
-        copyFileSync(previous.manifestPath, dst);
-        backup.manifest = dst;
-      }
-      if (backup.normalized || backup.manifest) {
-        pendingArtifactBackups.set(docKey, backup);
-      }
-    };
-
-    const discardArtifactSnapshot = (docKey: string): void => {
-      const backup = pendingArtifactBackups.get(docKey);
-      if (!backup) return;
-      if (backup.normalized) {
-        try { unlinkSync(backup.normalized); } catch { /* ignore */ }
-      }
-      if (backup.manifest) {
-        try { unlinkSync(backup.manifest); } catch { /* ignore */ }
-      }
-      pendingArtifactBackups.delete(docKey);
-    };
-
-    const restoreArtifactSnapshot = (docKey: string, previous: CatalogEntry): boolean => {
-      const backup = pendingArtifactBackups.get(docKey);
-      if (!backup) return false;
-      let restored = false;
-      if (backup.normalized && previous.normalizedPath) {
-        copyFileSync(backup.normalized, previous.normalizedPath);
-        restored = true;
-      }
-      if (backup.manifest && previous.manifestPath) {
-        copyFileSync(backup.manifest, previous.manifestPath);
-        restored = true;
-      }
-      return restored;
-    };
     const staleDocKeys = new Set(previousCatalog.entries.map((entry) => entry.docKey));
     const fileOutcomes: SyncFileOutcome[] = [];
     activeFileOutcomes = fileOutcomes;
@@ -1637,7 +1620,6 @@ export async function runSync(
     }
 
     for (const attachment of nonPdfAttachments) {
-      snapshotPriorArtifacts(attachment.docKey, previousByDocKey.get(attachment.docKey));
       try {
         logger.info(`Extracting ${attachment.fileExt}: ${compactHomePath(attachment.filePath)}.`, {
           console: true,
@@ -1671,7 +1653,6 @@ export async function runSync(
       });
       nextEntries.push(nextEntry);
       recentlyExtractedDocKeys.add(attachment.docKey);
-      discardArtifactSnapshot(attachment.docKey);
       stats.readyAttachments += 1;
       stats.updatedAttachments += 1;
       stats.indexedAttachments += 1;
@@ -1690,38 +1671,34 @@ export async function runSync(
         error instanceof Error ? error.message : String(error),
       );
 
-      // If the source file is byte-identical to the last successful sync and
-      // its previous artifacts are still on disk, roll back to the prior ready
-      // state instead of deleting them. This happens when a verticalText
-      // migration (or any other transient re-extraction trigger) fails on a
-      // PDF the user could otherwise still search — keep the old output until
-      // the next retry succeeds. The keyword update is unaffected because the
-      // entry is not added to recentlyExtractedDocKeys. Size+mtime alone is
-      // not a strong-enough identity check on the failure path (someone could
-      // replace the file in place while preserving stat), so verify with sha1
-      // before trusting the rollback.
+      // Roll back to the previous ready state if the source is byte-identical
+      // to the last successful sync AND the previously indexed artifacts are
+      // still a valid pair on disk. Since extraction now writes through
+      // writeArtifactsAtomically, a failed extraction leaves the final paths
+      // untouched, so passing this check means the prior normalized + manifest
+      // are exactly what was indexed last time. Size+mtime alone is not a
+      // strong-enough identity proof (someone could replace the file in place
+      // while preserving stat), so verify with sha1; readReusableArtifactManifest
+      // also catches a previously broken state (e.g. normalized.md missing or
+      // manifest unparseable) by failing the rollback.
       const sizeMtimeMatch =
         previous?.extractStatus === "ready" &&
         previous.size !== null &&
         previous.mtimeMs !== null &&
         current !== undefined &&
         previous.size === current.size &&
-        previous.mtimeMs === Math.trunc(current.mtimeMs) &&
-        hasReusableCatalogArtifacts(previous.normalizedPath, previous.manifestPath);
+        previous.mtimeMs === Math.trunc(current.mtimeMs);
+      const previousArtifactsValid =
+        previous !== undefined &&
+        readReusableArtifactManifest(previous, previous.normalizedPath, previous.manifestPath) !== undefined;
       const previousArtifactsReusable =
         sizeMtimeMatch &&
+        previousArtifactsValid &&
         typeof previous?.sourceHash === "string" &&
         previous.sourceHash.length > 0 &&
         (await sha1File(attachment.filePath)) === previous.sourceHash;
 
       if (previousArtifactsReusable && previous !== undefined) {
-        // Extraction may have started a partial write to the final paths
-        // before failing. Restore from the snapshot taken before dispatch so
-        // we're certain the artifacts on disk match what previous.sourceHash
-        // points at; without this the rollback could bless a half-written
-        // normalized.md that the keyword index never updated to reflect.
-        restoreArtifactSnapshot(attachment.docKey, previous);
-        discardArtifactSnapshot(attachment.docKey);
         logger.warn(
           `Re-extraction failed for unchanged ${compactHomePath(attachment.filePath)}; keeping previous ready artifacts.`,
         );
@@ -1749,7 +1726,6 @@ export async function runSync(
 
       // Source actually changed (or no reusable previous artifacts): old
       // outputs are stale, remove them and mark the attachment as error.
-      discardArtifactSnapshot(attachment.docKey);
       deleteIfExists(previous?.normalizedPath);
       deleteIfExists(previous?.manifestPath);
       fileOutcomes.push({
@@ -1801,9 +1777,6 @@ export async function runSync(
       });
       for (const attachment of batch) {
         logger.info(`  - ${compactHomePath(attachment.filePath)}`, { console: true });
-      }
-      for (const attachment of batch) {
-        snapshotPriorArtifacts(attachment.docKey, previousByDocKey.get(attachment.docKey));
       }
       try {
         const extracted = await extractBatchFn(
@@ -2119,9 +2092,5 @@ export async function runSync(
     logger.error(`Sync aborted: ${summarizeSyncError(error)}`);
     finalizeOnce("failed", activeFileOutcomes, activeStats);
     throw error;
-  } finally {
-    if (artifactBackupDir) {
-      rmSync(artifactBackupDir, { recursive: true, force: true });
-    }
   }
 }

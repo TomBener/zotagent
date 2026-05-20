@@ -883,8 +883,8 @@ test("runSync preserves previous artifacts when a vertical-PDF re-extraction fai
   }
 });
 
-test("runSync restores previous artifacts from a snapshot when a failed re-extraction partially overwrote them", async () => {
-  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-vertical-snapshot-"));
+test("runSync errors a failed re-extraction when the previous normalized.md is missing on disk", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-vertical-missing-prior-"));
   const attachmentsRoot = join(root, "attachments");
   const dataDir = join(root, "data");
   const indexDir = join(dataDir, "index");
@@ -895,7 +895,12 @@ test("runSync restores previous artifacts from a snapshot when a failed re-extra
   mkdirSync(manifestsDir, { recursive: true });
   mkdirSync(normalizedDir, { recursive: true });
 
-  // Vertical PDF (triggers the verticalText guard so we hit the rollback path).
+  // Vertical PDF whose previously-indexed normalized.md is missing on disk
+  // (e.g. user deleted it, or a prior interrupted sync left the catalog
+  // claiming ready without the actual normalized file). With an old
+  // implementation that based rollback decisions on file existence after
+  // extraction, a failed re-extraction could leave a partial normalized
+  // alongside the still-valid manifest and silently mark it ready.
   const pdfPath = join(attachmentsRoot, "papers", "paper.pdf");
   const pdfBytes = Buffer.from(
     "%PDF-1.3\n10 0 obj <</Type/Font/Subtype/Type0/Encoding/Identity-V>> endobj\n%%EOF\n",
@@ -906,8 +911,7 @@ test("runSync restores previous artifacts from a snapshot when a failed re-extra
   const docKey = sha1("papers/paper.pdf");
   const normalizedPath = join(normalizedDir, `${docKey}.md`);
   const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
-  const originalNormalizedBody = "Body produced by the last successful sync";
-  writeFileSync(normalizedPath, originalNormalizedBody);
+  // Manifest exists but normalized.md is intentionally absent.
   writeManifestFile(manifestPath, {
     docKey,
     itemKey: "ITEM1",
@@ -966,7 +970,7 @@ test("runSync restores previous artifacts from a snapshot when a failed re-extra
     searchLex: async () => [],
     update: async () => ({}),
     embed: async () => ({}),
-    getStatus: async () => ({ totalDocuments: 1, needsEmbedding: 0, hasVectorIndex: true, collections: [] }),
+    getStatus: async () => ({ totalDocuments: 0, needsEmbedding: 0, hasVectorIndex: true, collections: [] }),
     listContexts: async () => [],
     addContext: async () => true,
     removeContext: async () => true,
@@ -975,25 +979,11 @@ test("runSync restores previous artifacts from a snapshot when a failed re-extra
     close: async () => {},
   });
 
-  // Simulate a writeFileSync partial failure: corrupt the normalized.md
-  // (and update the manifest with stale block references) before throwing.
-  // Without snapshot/restore the rollback would bless these corrupted files.
-  const extractBatchFn = async (batch: Array<{ docKey: string; filePath: string; itemKey: string }>) => {
-    const attachment = batch[0]!;
-    writeFileSync(normalizedPath, "PARTIAL CORRUPTED BYTES", "utf-8");
-    writeManifestFile(manifestPath, {
-      docKey: attachment.docKey,
-      itemKey: attachment.itemKey,
-      title: "Paper",
-      authors: ["A"],
-      filePath: attachment.filePath,
-      normalizedPath,
-      blocks: [trivialBlock()],
-    });
-    throw new Error("simulated ODL crash after partial write");
+  const extractBatchFn = async () => {
+    throw new Error("simulated ODL timeout");
   };
 
-  await runSync(
+  const result = await runSync(
     {
       bibliographyJsonPath: bibliographyPath,
       attachmentsRoot,
@@ -1007,12 +997,13 @@ test("runSync restores previous artifacts from a snapshot when a failed re-extra
   );
 
   assert.equal(
-    readFileSync(normalizedPath, "utf-8"),
-    originalNormalizedBody,
-    "rollback must restore the normalized markdown from the pre-extraction snapshot",
+    result.stats.errorAttachments,
+    1,
+    "rollback must reject when previous artifacts are incomplete on disk",
   );
-  const restoredManifest = readManifestFile(manifestPath);
-  assert.equal(restoredManifest?.docKey, docKey, "restored manifest must parse and keep the original identity");
+  assert.equal(result.stats.readyAttachments, 0, "must not bless a stale half-pair as ready");
+  const persisted = readCatalogFile(join(indexDir, "catalog.json"));
+  assert.equal(persisted.entries[0]?.extractStatus, "error");
 });
 
 test("runSync rescans pdfHasVerticalText across syncs in the same process when the source changes in place", async () => {
