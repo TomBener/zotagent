@@ -1353,10 +1353,15 @@ export async function runSync(
         previous !== undefined &&
         previous.size === current.size &&
         previous.mtimeMs === currentMtimeMs;
+      // The completed-catalog fast path skips reading the manifest. PDFs must
+      // still go through hasReusableArtifacts so the verticalText guard can
+      // invalidate caches extracted before --reading-order=off support landed.
+      const canUseCatalogFastPath =
+        previousCatalogCompleted && attachment.fileExt !== "pdf";
       const previousIsReadyAndUnchanged =
         previous?.extractStatus === "ready" &&
         previousIsUnchanged &&
-        (previousCatalogCompleted
+        (canUseCatalogFastPath
           ? hasReusableCatalogArtifacts(previous.normalizedPath, previous.manifestPath)
           : hasReusableArtifacts(attachment, previous.normalizedPath, previous.manifestPath));
       const previousIsErrorAndUnchanged =
