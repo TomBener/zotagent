@@ -1295,6 +1295,11 @@ export async function runSync(
     const nextEntries: CatalogEntry[] = [];
     const changedAttachments: AttachmentCatalogEntry[] = [];
     const verticalTextByDocKey = new Map<string, boolean>();
+    // Populated only by recordReadyAttachment on successful extraction. We
+    // cannot derive this from changedAttachments because a re-extraction can
+    // fail and be rolled back to the previous ready state — in that case the
+    // manifest is unchanged and must not be forced into the keyword update.
+    const recentlyExtractedDocKeys = new Set<string>();
     const staleDocKeys = new Set(previousCatalog.entries.map((entry) => entry.docKey));
     const fileOutcomes: SyncFileOutcome[] = [];
     activeFileOutcomes = fileOutcomes;
@@ -1599,6 +1604,7 @@ export async function runSync(
         verticalText: verticalTextByDocKey.get(attachment.docKey),
       });
       nextEntries.push(nextEntry);
+      recentlyExtractedDocKeys.add(attachment.docKey);
       stats.readyAttachments += 1;
       stats.updatedAttachments += 1;
       stats.indexedAttachments += 1;
@@ -1606,9 +1612,6 @@ export async function runSync(
 
     function recordErroredAttachment(attachment: AttachmentCatalogEntry, error: unknown): void {
       const previous = previousByDocKey.get(attachment.docKey);
-      deleteIfExists(previous?.normalizedPath);
-      deleteIfExists(previous?.manifestPath);
-
       const current = statSync(attachment.filePath, { throwIfNoEntry: false });
       const message = toExtractErrorMessage(attachment.filePath, error);
       logger.error(message);
@@ -1616,6 +1619,53 @@ export async function runSync(
         `Extraction Error: ${compactHomePath(attachment.filePath)}`,
         error instanceof Error ? error.message : String(error),
       );
+
+      // If the source file is byte-identical to the last successful sync and
+      // its previous artifacts are still on disk, roll back to the prior ready
+      // state instead of deleting them. This happens when a verticalText
+      // migration (or any other transient re-extraction trigger) fails on a
+      // PDF the user could otherwise still search — keep the old output until
+      // the next retry succeeds. The keyword update is unaffected because the
+      // entry is not added to recentlyExtractedDocKeys.
+      const previousArtifactsReusable =
+        previous?.extractStatus === "ready" &&
+        previous.size !== null &&
+        previous.mtimeMs !== null &&
+        current !== undefined &&
+        previous.size === current.size &&
+        previous.mtimeMs === Math.trunc(current.mtimeMs) &&
+        hasReusableCatalogArtifacts(previous.normalizedPath, previous.manifestPath);
+
+      if (previousArtifactsReusable) {
+        logger.warn(
+          `Re-extraction failed for unchanged ${compactHomePath(attachment.filePath)}; keeping previous ready artifacts.`,
+        );
+        fileOutcomes.push({
+          kind: "skipped",
+          filePath: attachment.filePath,
+          detail: `re-extraction failed; kept previous artifacts (${summarizeSyncError(error)})`,
+        });
+        nextEntries.push(
+          toCatalogEntry(attachment, {
+            extractStatus: "ready",
+            size: previous.size,
+            mtimeMs: previous.mtimeMs,
+            sourceHash: previous.sourceHash ?? null,
+            lastIndexedAt: previous.lastIndexedAt ?? null,
+            normalizedPath: previous.normalizedPath,
+            manifestPath: previous.manifestPath,
+            verticalText: verticalTextByDocKey.get(attachment.docKey) ?? previous.verticalText,
+          }),
+        );
+        stats.readyAttachments += 1;
+        stats.skippedAttachments += 1;
+        return;
+      }
+
+      // Source actually changed (or no reusable previous artifacts): old
+      // outputs are stale, remove them and mark the attachment as error.
+      deleteIfExists(previous?.normalizedPath);
+      deleteIfExists(previous?.manifestPath);
       fileOutcomes.push({
         kind: "error",
         filePath: attachment.filePath,
@@ -1854,11 +1904,8 @@ export async function runSync(
     // Any attachment we just re-extracted has a freshly written manifest, even
     // when its size/mtime/sourceHash match the prior entry (e.g. a vertical PDF
     // re-extracted under reading-order=off). isEntryContentUnchanged only
-    // compares catalog metadata, so we must force these into the keyword
-    // update so FTS does not keep pointing at the old manifest.
-    const recentlyExtractedDocKeys = new Set(
-      changedAttachments.map((attachment) => attachment.docKey),
-    );
+    // compares catalog metadata, so we force these into the keyword update via
+    // recentlyExtractedDocKeys (populated by recordReadyAttachment).
     const changedReadyEntries = readyEntries.filter((entry) => {
       if (recentlyExtractedDocKeys.has(entry.docKey)) return true;
       const prev = previousByDocKey.get(entry.docKey);

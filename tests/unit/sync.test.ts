@@ -728,6 +728,160 @@ test("runSync re-extraction of a vertical PDF with unchanged sourceHash still up
   );
 });
 
+test("runSync preserves previous artifacts when a vertical-PDF re-extraction fails on an unchanged source", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-vertical-rollback-"));
+  const attachmentsRoot = join(root, "attachments");
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  const normalizedDir = join(dataDir, "normalized");
+  mkdirSync(join(attachmentsRoot, "papers"), { recursive: true });
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+  mkdirSync(normalizedDir, { recursive: true });
+
+  // Vertical PDF (contains /Identity-V) that the verticalText migration will
+  // try to re-extract. Java/ODL is going to fail; the user's old searchable
+  // output must survive.
+  const pdfPath = join(attachmentsRoot, "papers", "paper.pdf");
+  writeFileSync(
+    pdfPath,
+    "%PDF-1.3\n10 0 obj <</Type/Font/Subtype/Type0/Encoding/Identity-V>> endobj\n%%EOF\n",
+  );
+  const currentStat = statSync(pdfPath);
+  const docKey = sha1("papers/paper.pdf");
+  const normalizedPath = join(normalizedDir, `${docKey}.md`);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
+  const oldNormalizedBody = "Stale but searchable scrambled body";
+  writeFileSync(normalizedPath, oldNormalizedBody);
+  // Pre-fix manifest: lacks verticalText so the new guard will invalidate.
+  writeManifestFile(manifestPath, {
+    docKey,
+    itemKey: "ITEM1",
+    title: "Paper",
+    authors: ["A"],
+    filePath: pdfPath,
+    normalizedPath,
+    blocks: [trivialBlock()],
+  });
+
+  const bibliographyPath = join(root, "bibliography.json");
+  writeFileSync(
+    bibliographyPath,
+    JSON.stringify([
+      {
+        id: "cite",
+        title: "Paper",
+        author: [{ family: "A", given: "Author" }],
+        file: pdfPath,
+        "zotero-item-key": "ITEM1",
+      },
+    ]),
+    "utf-8",
+  );
+
+  const previousCatalog: CatalogFile = {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    indexesCompletedAt: new Date().toISOString(),
+    indexedQmdEmbedModel: "fake-embed-model",
+    indexerSignature: buildIndexerSignature("fake-embed-model"),
+    entries: [
+      {
+        docKey,
+        itemKey: "ITEM1",
+        citationKey: "cite",
+        title: "Paper",
+        authors: ["A Author"],
+        filePath: pdfPath,
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: currentStat.size,
+        mtimeMs: Math.trunc(currentStat.mtimeMs),
+        sourceHash: "pre-fix-hash",
+        lastIndexedAt: "2025-06-01T00:00:00.000Z",
+        normalizedPath,
+        manifestPath,
+      },
+    ],
+  };
+  writeCatalogFile(join(indexDir, "catalog.json"), previousCatalog);
+
+  const qmdFactory = async () => ({
+    search: async () => [],
+    searchLex: async () => [],
+    update: async () => ({}),
+    embed: async () => ({}),
+    getStatus: async () => ({ totalDocuments: 1, needsEmbedding: 0, hasVectorIndex: true, collections: [] }),
+    listContexts: async () => [],
+    addContext: async () => true,
+    removeContext: async () => true,
+    clearEmbeddings: async () => {},
+    cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
+    close: async () => {},
+  });
+
+  const keywordCalls = {
+    rebuild: 0,
+    updates: [] as Array<{ changedDocKeys: string[]; removedDocKeys: string[] }>,
+  };
+  const keywordFactory = async () => ({
+    rebuildIndex: async () => {
+      keywordCalls.rebuild += 1;
+    },
+    updateIndex: async (changedEntries: Array<{ docKey: string }>, removedDocKeys: string[]) => {
+      keywordCalls.updates.push({
+        changedDocKeys: changedEntries.map((entry) => entry.docKey),
+        removedDocKeys,
+      });
+    },
+    searchDocs: async () => [],
+    searchBlocks: async () => [],
+    isEmpty: async () => false,
+    close: async () => {},
+  });
+
+  const extractBatchFn = async () => {
+    throw new Error("simulated ODL timeout");
+  };
+
+  const result = await runSync(
+    {
+      bibliographyJsonPath: bibliographyPath,
+      attachmentsRoot,
+      dataDir,
+      qmdEmbedModel: "fake-embed-model",
+    },
+    qmdFactory,
+    keywordFactory,
+    extractBatchFn as never,
+    () => {},
+  );
+
+  assert.ok(existsSync(normalizedPath), "previous normalized.md must survive a failed re-extraction");
+  assert.ok(existsSync(manifestPath), "previous manifest must survive a failed re-extraction");
+  assert.equal(readFileSync(normalizedPath, "utf-8"), oldNormalizedBody, "old normalized body must be intact");
+  assert.equal(result.stats.errorAttachments, 0, "should not be counted as a hard error");
+  assert.equal(result.stats.readyAttachments, 1, "entry must remain ready");
+
+  const persisted = readCatalogFile(join(indexDir, "catalog.json"));
+  assert.equal(persisted.entries[0]?.extractStatus, "ready");
+  assert.equal(persisted.entries[0]?.normalizedPath, normalizedPath);
+  // No keyword update for this entry: its manifest didn't actually change.
+  for (const update of keywordCalls.updates) {
+    assert.ok(
+      !update.changedDocKeys.includes(docKey),
+      "preserved entry must not be forced into the keyword update",
+    );
+    assert.ok(
+      !update.removedDocKeys.includes(docKey),
+      "preserved entry must not be removed from the keyword index",
+    );
+  }
+});
+
 test("runSync trusts cached catalog verticalText and does not rescan unchanged horizontal PDFs", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-sync-vertical-cached-"));
   const attachmentsRoot = join(root, "attachments");
