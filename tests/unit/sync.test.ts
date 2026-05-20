@@ -16,7 +16,18 @@ import {
   runSync,
   withJavaToolOptions,
 } from "../../src/sync.js";
-import { clearPdfVerticalCache, pdfHasVerticalText, pdfVerticalCacheSize } from "../../src/pdf-vertical.js";
+import {
+  _setLayoutVerifierForTesting,
+  clearPdfVerticalCache,
+  pdfHasVerticalText,
+  pdfVerticalCacheSize,
+} from "../../src/pdf-vertical.js";
+
+// Synthetic test PDFs (just enough bytes to contain "/Identity-V") cannot
+// pass the real pdftotext-backed stage-2 check because they are not valid
+// PDF documents. Treat any /Identity-V-bearing file as vertical here; the
+// real two-stage logic is exercised in tests/unit/pdf-vertical.test.ts.
+_setLayoutVerifierForTesting(() => true);
 import { readCatalogFile, writeCatalogFile } from "../../src/state.js";
 import type { CatalogFile, ManifestBlock } from "../../src/types.js";
 import { MANIFEST_EXT, readManifestFile, sha1, writeManifestFile } from "../../src/utils.js";
