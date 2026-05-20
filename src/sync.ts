@@ -1453,12 +1453,19 @@ export async function runSync(
                 renameFromNormalizedPath,
                 renameFromManifestPath,
               );
+        // Don't migrate stale scrambled output: if the source is vertical but
+        // the old manifest predates verticalText support, the cached blocks
+        // came from a xycut extraction and must be re-extracted under the new
+        // docKey rather than carried over.
+        const wouldMigrateStaleVertical =
+          verticalText === true && oldManifest !== undefined && !oldManifest.verticalText;
         if (
           renameFromPrev !== undefined &&
           renameFromPrev !== null &&
           oldManifest &&
           renameFromNormalizedPath &&
-          renameFromManifestPath
+          renameFromManifestPath &&
+          !wouldMigrateStaleVertical
         ) {
           try {
             renameSync(renameFromNormalizedPath, fallbackNormalizedPath);
@@ -1579,7 +1586,7 @@ export async function runSync(
         const written = await extractNonPdfAttachment(attachment, paths.manifestsDir, paths.normalizedDir);
         await recordReadyAttachment(attachment, written);
       } catch (error) {
-        recordErroredAttachment(attachment, error);
+        await recordErroredAttachment(attachment, error);
       }
     }
     if (nonPdfAttachments.length > 0) {
@@ -1610,7 +1617,10 @@ export async function runSync(
       stats.indexedAttachments += 1;
     }
 
-    function recordErroredAttachment(attachment: AttachmentCatalogEntry, error: unknown): void {
+    async function recordErroredAttachment(
+      attachment: AttachmentCatalogEntry,
+      error: unknown,
+    ): Promise<void> {
       const previous = previousByDocKey.get(attachment.docKey);
       const current = statSync(attachment.filePath, { throwIfNoEntry: false });
       const message = toExtractErrorMessage(attachment.filePath, error);
@@ -1626,8 +1636,11 @@ export async function runSync(
       // migration (or any other transient re-extraction trigger) fails on a
       // PDF the user could otherwise still search — keep the old output until
       // the next retry succeeds. The keyword update is unaffected because the
-      // entry is not added to recentlyExtractedDocKeys.
-      const previousArtifactsReusable =
+      // entry is not added to recentlyExtractedDocKeys. Size+mtime alone is
+      // not a strong-enough identity check on the failure path (someone could
+      // replace the file in place while preserving stat), so verify with sha1
+      // before trusting the rollback.
+      const sizeMtimeMatch =
         previous?.extractStatus === "ready" &&
         previous.size !== null &&
         previous.mtimeMs !== null &&
@@ -1635,6 +1648,11 @@ export async function runSync(
         previous.size === current.size &&
         previous.mtimeMs === Math.trunc(current.mtimeMs) &&
         hasReusableCatalogArtifacts(previous.normalizedPath, previous.manifestPath);
+      const previousArtifactsReusable =
+        sizeMtimeMatch &&
+        typeof previous?.sourceHash === "string" &&
+        previous.sourceHash.length > 0 &&
+        (await sha1File(attachment.filePath)) === previous.sourceHash;
 
       if (previousArtifactsReusable) {
         logger.warn(
@@ -1773,7 +1791,7 @@ export async function runSync(
               }
               await recordReadyAttachment(attachment, written);
             } catch (singleError) {
-              recordErroredAttachment(attachment, singleError);
+              await recordErroredAttachment(attachment, singleError);
               writeProgress({
                 status: "running",
                 batchIndex: batchIndex + 1,
@@ -1813,7 +1831,7 @@ export async function runSync(
           return;
         }
 
-        recordErroredAttachment(batch[0]!, batchError);
+        await recordErroredAttachment(batch[0]!, batchError);
         writeProgress({
           status: "running",
           batchIndex: batchIndex + 1,

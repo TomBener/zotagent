@@ -744,10 +744,11 @@ test("runSync preserves previous artifacts when a vertical-PDF re-extraction fai
   // try to re-extract. Java/ODL is going to fail; the user's old searchable
   // output must survive.
   const pdfPath = join(attachmentsRoot, "papers", "paper.pdf");
-  writeFileSync(
-    pdfPath,
+  const pdfBytes = Buffer.from(
     "%PDF-1.3\n10 0 obj <</Type/Font/Subtype/Type0/Encoding/Identity-V>> endobj\n%%EOF\n",
   );
+  writeFileSync(pdfPath, pdfBytes);
+  const realSourceHash = createHash("sha1").update(pdfBytes).digest("hex");
   const currentStat = statSync(pdfPath);
   const docKey = sha1("papers/paper.pdf");
   const normalizedPath = join(normalizedDir, `${docKey}.md`);
@@ -800,7 +801,7 @@ test("runSync preserves previous artifacts when a vertical-PDF re-extraction fai
         extractStatus: "ready",
         size: currentStat.size,
         mtimeMs: Math.trunc(currentStat.mtimeMs),
-        sourceHash: "pre-fix-hash",
+        sourceHash: realSourceHash,
         lastIndexedAt: "2025-06-01T00:00:00.000Z",
         normalizedPath,
         manifestPath,
@@ -880,6 +881,262 @@ test("runSync preserves previous artifacts when a vertical-PDF re-extraction fai
       "preserved entry must not be removed from the keyword index",
     );
   }
+});
+
+test("runSync marks the entry as error when a same-size/same-mtime replacement causes failed re-extraction", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-vertical-rollback-mismatch-"));
+  const attachmentsRoot = join(root, "attachments");
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  const normalizedDir = join(dataDir, "normalized");
+  mkdirSync(join(attachmentsRoot, "papers"), { recursive: true });
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+  mkdirSync(normalizedDir, { recursive: true });
+
+  // File on disk is a vertical PDF but its bytes differ from what previous
+  // sync recorded — a replacement that preserved size and mtime. The rollback
+  // path must not silently keep indexing the previous normalized text.
+  const pdfPath = join(attachmentsRoot, "papers", "paper.pdf");
+  const currentBytes = Buffer.from(
+    "%PDF-1.3\n10 0 obj <</Type/Font/Subtype/Type0/Encoding/Identity-V>> endobj\n%%EOF\n",
+  );
+  writeFileSync(pdfPath, currentBytes);
+  const currentStat = statSync(pdfPath);
+  const previousSourceHash = createHash("sha1").update("entirely different content").digest("hex");
+  const currentSourceHash = createHash("sha1").update(currentBytes).digest("hex");
+  assert.notEqual(previousSourceHash, currentSourceHash);
+
+  const docKey = sha1("papers/paper.pdf");
+  const normalizedPath = join(normalizedDir, `${docKey}.md`);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
+  writeFileSync(normalizedPath, "Body from a now-replaced source");
+  writeManifestFile(manifestPath, {
+    docKey,
+    itemKey: "ITEM1",
+    title: "Paper",
+    authors: ["A"],
+    filePath: pdfPath,
+    normalizedPath,
+    blocks: [trivialBlock()],
+  });
+
+  const bibliographyPath = join(root, "bibliography.json");
+  writeFileSync(
+    bibliographyPath,
+    JSON.stringify([
+      {
+        id: "cite",
+        title: "Paper",
+        author: [{ family: "A", given: "Author" }],
+        file: pdfPath,
+        "zotero-item-key": "ITEM1",
+      },
+    ]),
+    "utf-8",
+  );
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    indexesCompletedAt: new Date().toISOString(),
+    indexedQmdEmbedModel: "fake-embed-model",
+    indexerSignature: buildIndexerSignature("fake-embed-model"),
+    entries: [
+      {
+        docKey,
+        itemKey: "ITEM1",
+        citationKey: "cite",
+        title: "Paper",
+        authors: ["A Author"],
+        filePath: pdfPath,
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: currentStat.size,
+        mtimeMs: Math.trunc(currentStat.mtimeMs),
+        sourceHash: previousSourceHash,
+        lastIndexedAt: "2025-06-01T00:00:00.000Z",
+        normalizedPath,
+        manifestPath,
+      },
+    ],
+  });
+
+  const qmdFactory = async () => ({
+    search: async () => [],
+    searchLex: async () => [],
+    update: async () => ({}),
+    embed: async () => ({}),
+    getStatus: async () => ({ totalDocuments: 0, needsEmbedding: 0, hasVectorIndex: true, collections: [] }),
+    listContexts: async () => [],
+    addContext: async () => true,
+    removeContext: async () => true,
+    clearEmbeddings: async () => {},
+    cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
+    close: async () => {},
+  });
+  const extractBatchFn = async () => {
+    throw new Error("simulated ODL timeout");
+  };
+
+  const result = await runSync(
+    {
+      bibliographyJsonPath: bibliographyPath,
+      attachmentsRoot,
+      dataDir,
+      qmdEmbedModel: "fake-embed-model",
+    },
+    qmdFactory,
+    undefined,
+    extractBatchFn as never,
+    () => {},
+  );
+
+  assert.equal(result.stats.errorAttachments, 1, "replacement + failed extraction must surface as error");
+  assert.equal(result.stats.readyAttachments, 0, "stale artifacts must not be silently preserved");
+  assert.ok(!existsSync(normalizedPath), "stale normalized file must be removed");
+  assert.ok(!existsSync(manifestPath), "stale manifest must be removed");
+  const persisted = readCatalogFile(join(indexDir, "catalog.json"));
+  assert.equal(persisted.entries[0]?.extractStatus, "error");
+});
+
+test("runSync re-extracts a renamed vertical PDF whose old manifest predates verticalText", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-rename-vertical-stale-"));
+  const attachmentsRoot = join(root, "attachments");
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  const normalizedDir = join(dataDir, "normalized");
+  mkdirSync(join(attachmentsRoot, "papers"), { recursive: true });
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+  mkdirSync(normalizedDir, { recursive: true });
+
+  const oldRel = "papers/old.pdf";
+  const newRel = "papers/renamed.pdf";
+  const oldDocKey = sha1(oldRel);
+  const newDocKey = sha1(newRel);
+  const newPath = join(attachmentsRoot, newRel);
+  writeFileSync(
+    newPath,
+    "%PDF-1.3\n10 0 obj <</Type/Font/Subtype/Type0/Encoding/Identity-V>> endobj\n%%EOF\n",
+  );
+  const frozenMtimeMs = Date.UTC(2025, 5, 1);
+  utimesSync(newPath, new Date(frozenMtimeMs), new Date(frozenMtimeMs));
+  const stat = statSync(newPath);
+
+  // Old manifest predates verticalText: blocks came from a xycut extraction
+  // and would scramble the columns if migrated to the new docKey untouched.
+  const oldNormalizedPath = join(normalizedDir, `${oldDocKey}.md`);
+  const oldManifestPath = join(manifestsDir, `${oldDocKey}${MANIFEST_EXT}`);
+  writeFileSync(oldNormalizedPath, "Scrambled body from old xycut extraction");
+  writeManifestFile(oldManifestPath, {
+    docKey: oldDocKey,
+    itemKey: "ITEM1",
+    title: "Paper",
+    authors: ["A Author"],
+    filePath: `${attachmentsRoot}/${oldRel}`,
+    normalizedPath: oldNormalizedPath,
+    blocks: [trivialBlock()],
+  });
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    indexesCompletedAt: new Date().toISOString(),
+    indexedQmdEmbedModel: "qmd-default",
+    indexerSignature: buildIndexerSignature("qmd-default"),
+    entries: [
+      {
+        docKey: oldDocKey,
+        itemKey: "ITEM1",
+        citationKey: "cite",
+        title: "Paper",
+        authors: ["A Author"],
+        filePath: `~/(stale)/${oldRel}`,
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: stat.size,
+        mtimeMs: Math.trunc(stat.mtimeMs),
+        sourceHash: "pre-fix-source-hash",
+        lastIndexedAt: "2025-06-01T00:00:00.000Z",
+        normalizedPath: oldNormalizedPath,
+        manifestPath: oldManifestPath,
+      },
+    ],
+  });
+
+  const bibliographyPath = join(root, "bibliography.json");
+  writeFileSync(
+    bibliographyPath,
+    JSON.stringify([
+      {
+        id: "cite",
+        title: "Paper",
+        author: [{ family: "A", given: "Author" }],
+        file: newPath,
+        "zotero-item-key": "ITEM1",
+      },
+    ]),
+    "utf-8",
+  );
+
+  const qmdFactory = async () => ({
+    search: async () => [],
+    searchLex: async () => [],
+    update: async () => ({}),
+    embed: async () => ({}),
+    getStatus: async () => ({ totalDocuments: 1, needsEmbedding: 0, hasVectorIndex: true, collections: [] }),
+    listContexts: async () => [],
+    addContext: async () => true,
+    removeContext: async () => true,
+    clearEmbeddings: async () => {},
+    cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
+    close: async () => {},
+  });
+
+  const extractCalls: string[] = [];
+  const newNormalizedPath = join(normalizedDir, `${newDocKey}.md`);
+  const newManifestPath = join(manifestsDir, `${newDocKey}${MANIFEST_EXT}`);
+  const extractBatchFn = async (batch: Array<{ docKey: string; filePath: string; itemKey: string }>) => {
+    const attachment = batch[0]!;
+    extractCalls.push(attachment.docKey);
+    writeFileSync(newNormalizedPath, "Fresh column-ordered body", "utf-8");
+    writeManifestFile(newManifestPath, {
+      docKey: attachment.docKey,
+      itemKey: attachment.itemKey,
+      title: "Paper",
+      authors: ["A Author"],
+      filePath: attachment.filePath,
+      normalizedPath: newNormalizedPath,
+      verticalText: true,
+      blocks: [trivialBlock()],
+    });
+    return new Map([[attachment.docKey, { manifestPath: newManifestPath, normalizedPath: newNormalizedPath }]]);
+  };
+
+  await runSync(
+    { bibliographyJsonPath: bibliographyPath, attachmentsRoot, dataDir },
+    qmdFactory,
+    undefined,
+    extractBatchFn as never,
+  );
+
+  assert.deepEqual(
+    extractCalls,
+    [newDocKey],
+    "rename guard must force re-extraction when migrating would carry over scrambled output",
+  );
+  const persisted = readCatalogFile(join(indexDir, "catalog.json"));
+  assert.equal(persisted.entries[0]?.docKey, newDocKey);
+  assert.equal(persisted.entries[0]?.verticalText, true);
+  const newManifest = readManifestFile(newManifestPath);
+  assert.equal(newManifest.verticalText, true);
 });
 
 test("runSync trusts cached catalog verticalText and does not rescan unchanged horizontal PDFs", async () => {
