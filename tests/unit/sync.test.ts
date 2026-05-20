@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -572,6 +573,159 @@ test("runSync re-extracts vertical PDFs whose cached manifest predates verticalT
   assert.equal(result.stats.skippedAttachments, 0);
   const refreshedManifest = readManifestFile(manifestPath);
   assert.equal(refreshedManifest?.verticalText, true);
+});
+
+test("runSync re-extraction of a vertical PDF with unchanged sourceHash still updates the keyword index", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-vertical-keyword-"));
+  const attachmentsRoot = join(root, "attachments");
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  const normalizedDir = join(dataDir, "normalized");
+  mkdirSync(join(attachmentsRoot, "papers"), { recursive: true });
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+  mkdirSync(normalizedDir, { recursive: true });
+
+  const pdfPath = join(attachmentsRoot, "papers", "paper.pdf");
+  const pdfBytes = Buffer.from(
+    "%PDF-1.3\n10 0 obj <</Type/Font/Subtype/Type0/Encoding/Identity-V>> endobj\n%%EOF\n",
+  );
+  writeFileSync(pdfPath, pdfBytes);
+  const realSourceHash = createHash("sha1").update(pdfBytes).digest("hex");
+  const currentStat = statSync(pdfPath);
+  const docKey = sha1("papers/paper.pdf");
+  const normalizedPath = join(normalizedDir, `${docKey}.md`);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
+  writeFileSync(normalizedPath, "Stale scrambled body");
+  writeManifestFile(manifestPath, {
+    docKey,
+    itemKey: "ITEM1",
+    title: "Paper",
+    authors: ["A"],
+    filePath: pdfPath,
+    normalizedPath,
+    blocks: [trivialBlock()],
+  });
+
+  const bibliographyPath = join(root, "bibliography.json");
+  writeFileSync(
+    bibliographyPath,
+    JSON.stringify([
+      {
+        id: "cite",
+        title: "Paper",
+        author: [{ family: "A", given: "Author" }],
+        file: pdfPath,
+        "zotero-item-key": "ITEM1",
+      },
+    ]),
+    "utf-8",
+  );
+
+  // Previous sourceHash matches the real file hash, so isEntryContentUnchanged
+  // would return true on metadata alone after re-extraction; only the
+  // recentlyExtractedDocKeys override forces this entry into the keyword
+  // update.
+  const previousCatalog: CatalogFile = {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    indexesCompletedAt: new Date().toISOString(),
+    indexedQmdEmbedModel: "fake-embed-model",
+    indexerSignature: buildIndexerSignature("fake-embed-model"),
+    entries: [
+      {
+        docKey,
+        itemKey: "ITEM1",
+        citationKey: "cite",
+        title: "Paper",
+        authors: ["A Author"],
+        filePath: pdfPath,
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: currentStat.size,
+        mtimeMs: Math.trunc(currentStat.mtimeMs),
+        sourceHash: realSourceHash,
+        lastIndexedAt: new Date().toISOString(),
+        normalizedPath,
+        manifestPath,
+      },
+    ],
+  };
+  writeCatalogFile(join(indexDir, "catalog.json"), previousCatalog);
+
+  const qmdFactory = async () => ({
+    search: async () => [],
+    searchLex: async () => [],
+    update: async () => ({}),
+    embed: async () => ({}),
+    getStatus: async () => ({ totalDocuments: 1, needsEmbedding: 0, hasVectorIndex: true, collections: [] }),
+    listContexts: async () => [],
+    addContext: async () => true,
+    removeContext: async () => true,
+    clearEmbeddings: async () => {},
+    cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
+    close: async () => {},
+  });
+
+  const keywordCalls = {
+    rebuild: 0,
+    updates: [] as Array<{ changedDocKeys: string[]; removedDocKeys: string[] }>,
+  };
+  const keywordFactory = async () => ({
+    rebuildIndex: async () => {
+      keywordCalls.rebuild += 1;
+    },
+    updateIndex: async (changedEntries: Array<{ docKey: string }>, removedDocKeys: string[]) => {
+      keywordCalls.updates.push({
+        changedDocKeys: changedEntries.map((entry) => entry.docKey),
+        removedDocKeys,
+      });
+    },
+    searchDocs: async () => [],
+    searchBlocks: async () => [],
+    isEmpty: async () => false,
+    close: async () => {},
+  });
+
+  const extractBatchFn = async (batch: Array<{ docKey: string; filePath: string; itemKey: string }>) => {
+    const attachment = batch[0]!;
+    writeFileSync(normalizedPath, "Re-extracted column-ordered body", "utf-8");
+    writeManifestFile(manifestPath, {
+      docKey: attachment.docKey,
+      itemKey: attachment.itemKey,
+      title: "Paper",
+      authors: ["A Author"],
+      filePath: attachment.filePath,
+      normalizedPath,
+      verticalText: true,
+      blocks: [trivialBlock()],
+    });
+    return new Map([[attachment.docKey, { manifestPath, normalizedPath }]]);
+  };
+
+  const result = await runSync(
+    {
+      bibliographyJsonPath: bibliographyPath,
+      attachmentsRoot,
+      dataDir,
+      qmdEmbedModel: "fake-embed-model",
+    },
+    qmdFactory,
+    keywordFactory,
+    extractBatchFn,
+    () => {},
+  );
+
+  assert.equal(result.stats.updatedAttachments, 1, "re-extraction must run");
+  assert.equal(keywordCalls.rebuild, 0, "completed catalog should use incremental update, not rebuild");
+  assert.deepEqual(
+    keywordCalls.updates,
+    [{ changedDocKeys: [docKey], removedDocKeys: [] }],
+    "re-extracted vertical PDF must be pushed into the keyword update even though sourceHash is unchanged",
+  );
 });
 
 test("runSync trusts cached catalog verticalText and does not rescan unchanged horizontal PDFs", async () => {
@@ -1632,6 +1786,128 @@ test("runSync migrates cached artifacts when an attachment is renamed inside att
 
   const logBody = readFileSync(result.logPath, "utf-8");
   assert.match(logBody, /migrated artifacts from renamed attachment/);
+});
+
+test("runSync preserves verticalText when migrating a renamed vertical PDF", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-rename-vertical-"));
+  const attachmentsRoot = join(root, "attachments");
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  const normalizedDir = join(dataDir, "normalized");
+  mkdirSync(join(attachmentsRoot, "papers"), { recursive: true });
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+  mkdirSync(normalizedDir, { recursive: true });
+
+  const oldRel = "papers/old.pdf";
+  const newRel = "papers/renamed.pdf";
+  const oldDocKey = sha1(oldRel);
+  const newDocKey = sha1(newRel);
+  const newPath = join(attachmentsRoot, newRel);
+  writeFileSync(
+    newPath,
+    "%PDF-1.3\n10 0 obj <</Type/Font/Subtype/Type0/Encoding/Identity-V>> endobj\n%%EOF\n",
+  );
+  const frozenMtimeMs = Date.UTC(2025, 5, 1);
+  utimesSync(newPath, new Date(frozenMtimeMs), new Date(frozenMtimeMs));
+  const stat = statSync(newPath);
+
+  const oldNormalizedPath = join(normalizedDir, `${oldDocKey}.md`);
+  const oldManifestPath = join(manifestsDir, `${oldDocKey}${MANIFEST_EXT}`);
+  writeFileSync(oldNormalizedPath, "Body extracted with reading-order=off");
+  // Old manifest has verticalText:true — it was produced post-fix.
+  writeManifestFile(oldManifestPath, {
+    docKey: oldDocKey,
+    itemKey: "ITEM1",
+    title: "Paper",
+    authors: ["A Author"],
+    filePath: `${attachmentsRoot}/${oldRel}`,
+    normalizedPath: oldNormalizedPath,
+    verticalText: true,
+    blocks: [trivialBlock()],
+  });
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    indexesCompletedAt: new Date().toISOString(),
+    indexedQmdEmbedModel: "qmd-default",
+    indexerSignature: buildIndexerSignature("qmd-default"),
+    entries: [
+      {
+        docKey: oldDocKey,
+        itemKey: "ITEM1",
+        citationKey: "cite",
+        title: "Paper",
+        authors: ["A Author"],
+        filePath: `~/(stale)/${oldRel}`,
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: stat.size,
+        mtimeMs: Math.trunc(stat.mtimeMs),
+        sourceHash: "pre-existing-source-hash",
+        lastIndexedAt: "2025-06-01T00:00:00.000Z",
+        normalizedPath: oldNormalizedPath,
+        manifestPath: oldManifestPath,
+        verticalText: true,
+      },
+    ],
+  });
+
+  const bibliographyPath = join(root, "bibliography.json");
+  writeFileSync(
+    bibliographyPath,
+    JSON.stringify([
+      {
+        id: "cite",
+        title: "Paper",
+        author: [{ family: "A", given: "Author" }],
+        file: newPath,
+        "zotero-item-key": "ITEM1",
+      },
+    ]),
+    "utf-8",
+  );
+
+  const extractCalls: unknown[] = [];
+  const qmdFactory = async () => ({
+    search: async () => [],
+    searchLex: async () => [],
+    update: async () => ({}),
+    embed: async () => ({}),
+    getStatus: async () => ({ totalDocuments: 1, needsEmbedding: 0, hasVectorIndex: true, collections: [] }),
+    listContexts: async () => [],
+    addContext: async () => true,
+    removeContext: async () => true,
+    clearEmbeddings: async () => {},
+    cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
+    close: async () => {},
+  });
+  const extractBatchFn = async (batch: unknown[]) => {
+    extractCalls.push(batch);
+    return new Map();
+  };
+
+  await runSync(
+    { bibliographyJsonPath: bibliographyPath, attachmentsRoot, dataDir },
+    qmdFactory,
+    undefined,
+    extractBatchFn as never,
+  );
+
+  assert.equal(extractCalls.length, 0, "rename migration must avoid re-extraction");
+  const newManifestPath = join(manifestsDir, `${newDocKey}${MANIFEST_EXT}`);
+  const migratedManifest = readManifestFile(newManifestPath);
+  assert.equal(
+    migratedManifest.verticalText,
+    true,
+    "migrated manifest must keep the verticalText marker so the next sync does not re-extract",
+  );
+  const persisted = readCatalogFile(join(indexDir, "catalog.json"));
+  assert.equal(persisted.entries[0]?.verticalText, true);
 });
 
 test("runSync re-extracts renamed attachments when cached artifacts are not reusable", async () => {

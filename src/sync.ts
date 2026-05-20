@@ -1471,7 +1471,10 @@ export async function runSync(
             }
             // Rewrite manifest so its stored docKey/filePath/normalizedPath
             // match the new identity. hasReusableArtifacts checks docKey on
-            // the next run and would otherwise force a re-extract.
+            // the next run and would otherwise force a re-extract. Preserve
+            // the old manifest's verticalText marker so a renamed vertical PDF
+            // is not re-extracted on the next sync just because the migrated
+            // manifest forgot it was already produced with reading-order=off.
             writeManifestFile(fallbackManifestPath, {
               docKey: attachment.docKey,
               itemKey: attachment.itemKey,
@@ -1482,6 +1485,7 @@ export async function runSync(
               ...(attachment.abstract ? { abstract: attachment.abstract } : {}),
               filePath: attachment.filePath,
               normalizedPath: fallbackNormalizedPath,
+              ...(oldManifest.verticalText ? { verticalText: true } : {}),
               blocks: oldManifest.blocks,
             });
             nextEntries.push(
@@ -1847,7 +1851,16 @@ export async function runSync(
     const previousReadyDocKeys = readyDocKeys(previousCatalog.entries);
     const nextReadyDocKeys = readyDocKeys(nextEntries);
     const removedReadyDocKeys = [...previousReadyDocKeys].filter((docKey) => !nextReadyDocKeys.has(docKey));
+    // Any attachment we just re-extracted has a freshly written manifest, even
+    // when its size/mtime/sourceHash match the prior entry (e.g. a vertical PDF
+    // re-extracted under reading-order=off). isEntryContentUnchanged only
+    // compares catalog metadata, so we must force these into the keyword
+    // update so FTS does not keep pointing at the old manifest.
+    const recentlyExtractedDocKeys = new Set(
+      changedAttachments.map((attachment) => attachment.docKey),
+    );
     const changedReadyEntries = readyEntries.filter((entry) => {
+      if (recentlyExtractedDocKeys.has(entry.docKey)) return true;
       const prev = previousByDocKey.get(entry.docKey);
       return prev === undefined || prev.extractStatus !== "ready" || !isEntryContentUnchanged(prev, entry);
     });
