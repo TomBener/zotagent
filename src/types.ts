@@ -113,6 +113,7 @@ export interface CatalogEntry {
   lastIndexedAt: string | null;
   normalizedPath?: string;
   manifestPath?: string;
+  verticalText?: boolean;
   error?: string;
 }
 

@@ -53,3 +53,7 @@ export function pdfHasVerticalText(filePath: string): boolean {
 export function clearPdfVerticalCache(): void {
   cache.clear();
 }
+
+export function pdfVerticalCacheSize(): number {
+  return cache.size;
+}

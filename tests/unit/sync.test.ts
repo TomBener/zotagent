@@ -15,6 +15,7 @@ import {
   runSync,
   withJavaToolOptions,
 } from "../../src/sync.js";
+import { clearPdfVerticalCache, pdfVerticalCacheSize } from "../../src/pdf-vertical.js";
 import { readCatalogFile, writeCatalogFile } from "../../src/state.js";
 import type { CatalogFile, ManifestBlock } from "../../src/types.js";
 import { MANIFEST_EXT, readManifestFile, sha1, writeManifestFile } from "../../src/utils.js";
@@ -571,6 +572,127 @@ test("runSync re-extracts vertical PDFs whose cached manifest predates verticalT
   assert.equal(result.stats.skippedAttachments, 0);
   const refreshedManifest = readManifestFile(manifestPath);
   assert.equal(refreshedManifest?.verticalText, true);
+});
+
+test("runSync trusts cached catalog verticalText and does not rescan unchanged horizontal PDFs", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-vertical-cached-"));
+  const attachmentsRoot = join(root, "attachments");
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  const normalizedDir = join(dataDir, "normalized");
+  mkdirSync(join(attachmentsRoot, "papers"), { recursive: true });
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+  mkdirSync(normalizedDir, { recursive: true });
+
+  // A horizontal PDF whose entire content would have to be scanned to disprove
+  // /Identity-V; if the cache is consulted we never need to read these bytes.
+  const pdfPath = join(attachmentsRoot, "papers", "paper.pdf");
+  writeFileSync(pdfPath, "%PDF-1.4\n10 0 obj <</Type/Font/Encoding/Identity-H>> endobj\n%%EOF\n");
+  const currentStat = statSync(pdfPath);
+  const docKey = sha1("papers/paper.pdf");
+  const normalizedPath = join(normalizedDir, `${docKey}.md`);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
+  writeFileSync(normalizedPath, "Body");
+  writeManifestFile(manifestPath, {
+    docKey,
+    itemKey: "ITEM1",
+    title: "Paper",
+    authors: ["A"],
+    filePath: pdfPath,
+    normalizedPath,
+    blocks: [trivialBlock()],
+  });
+
+  const bibliographyPath = join(root, "bibliography.json");
+  writeFileSync(
+    bibliographyPath,
+    JSON.stringify([
+      {
+        id: "cite",
+        title: "Paper",
+        author: [{ family: "A", given: "Author" }],
+        file: pdfPath,
+        "zotero-item-key": "ITEM1",
+      },
+    ]),
+    "utf-8",
+  );
+
+  const previousCatalog: CatalogFile = {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    indexesCompletedAt: new Date().toISOString(),
+    indexedQmdEmbedModel: "fake-embed-model",
+    indexerSignature: buildIndexerSignature("fake-embed-model"),
+    entries: [
+      {
+        docKey,
+        itemKey: "ITEM1",
+        citationKey: "cite",
+        title: "Paper",
+        authors: ["A Author"],
+        filePath: pdfPath,
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: currentStat.size,
+        mtimeMs: Math.trunc(currentStat.mtimeMs),
+        sourceHash: "existinghash",
+        lastIndexedAt: new Date().toISOString(),
+        normalizedPath,
+        manifestPath,
+        verticalText: false,
+      },
+    ],
+  };
+  writeCatalogFile(join(indexDir, "catalog.json"), previousCatalog);
+
+  const qmdFactory = async () => ({
+    search: async () => [],
+    searchLex: async () => [],
+    update: async () => ({}),
+    embed: async () => ({}),
+    getStatus: async () => ({ totalDocuments: 1, needsEmbedding: 0, hasVectorIndex: true, collections: [] }),
+    listContexts: async () => [],
+    addContext: async () => true,
+    removeContext: async () => true,
+    clearEmbeddings: async () => {},
+    cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
+    close: async () => {},
+  });
+  const keywordFactory = async () => ({
+    rebuildIndex: async () => {},
+    updateIndex: async () => {},
+    searchDocs: async () => [],
+    searchBlocks: async () => [],
+    isEmpty: async () => false,
+    close: async () => {},
+  });
+
+  clearPdfVerticalCache();
+  const result = await runSync(
+    {
+      bibliographyJsonPath: bibliographyPath,
+      attachmentsRoot,
+      dataDir,
+      qmdEmbedModel: "fake-embed-model",
+    },
+    qmdFactory,
+    keywordFactory,
+    undefined,
+    () => {},
+  );
+
+  assert.equal(result.stats.skippedAttachments, 1);
+  assert.equal(result.stats.updatedAttachments, 0);
+  // The in-memory scan cache stays empty: resolveVerticalText short-circuited
+  // on the cached catalog value and pdfHasVerticalText was never invoked.
+  assert.equal(pdfVerticalCacheSize(), 0);
+  const persisted = readCatalogFile(join(indexDir, "catalog.json"));
+  assert.equal(persisted.entries[0]?.verticalText, false);
 });
 
 test("runSync short-circuits both index rebuilds when the catalog is identical to a completed sync", async () => {

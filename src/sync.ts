@@ -543,8 +543,24 @@ function toCatalogEntry(
     extractStatus: partial.extractStatus,
     ...(partial.normalizedPath ? { normalizedPath: partial.normalizedPath } : {}),
     ...(partial.manifestPath ? { manifestPath: partial.manifestPath } : {}),
+    ...(partial.verticalText !== undefined ? { verticalText: partial.verticalText } : {}),
     ...(partial.error ? { error: partial.error } : {}),
   };
+}
+
+// Resolve the PDF's vertical-text status for this attachment, reusing the
+// previous catalog entry's cached value when the source file is unchanged
+// (avoids re-reading every PDF's bytes on every no-op sync).
+function resolveVerticalText(
+  attachment: AttachmentCatalogEntry,
+  previous: CatalogEntry | undefined,
+  previousIsUnchanged: boolean,
+): boolean | undefined {
+  if (attachment.fileExt !== "pdf") return undefined;
+  if (previousIsUnchanged && previous?.verticalText !== undefined) {
+    return previous.verticalText;
+  }
+  return pdfHasVerticalText(attachment.filePath);
 }
 
 function deleteIfExists(path: string | undefined): void {
@@ -602,15 +618,13 @@ function hasReusableArtifacts(
   attachment: AttachmentCatalogEntry,
   normalizedPath: string | undefined,
   manifestPath: string | undefined,
+  sourceIsVertical?: boolean,
 ): normalizedPath is string {
   const manifest = readReusableArtifactManifest(attachment, normalizedPath, manifestPath);
   if (!manifest) return false;
-  if (
-    attachment.fileExt === "pdf" &&
-    !manifest.verticalText &&
-    pdfHasVerticalText(attachment.filePath)
-  ) {
-    return false;
+  if (attachment.fileExt === "pdf" && !manifest.verticalText) {
+    const isVertical = sourceIsVertical ?? pdfHasVerticalText(attachment.filePath);
+    if (isVertical) return false;
   }
   return true;
 }
@@ -1280,6 +1294,7 @@ export async function runSync(
         : currentIndexerState;
     const nextEntries: CatalogEntry[] = [];
     const changedAttachments: AttachmentCatalogEntry[] = [];
+    const verticalTextByDocKey = new Map<string, boolean>();
     const staleDocKeys = new Set(previousCatalog.entries.map((entry) => entry.docKey));
     const fileOutcomes: SyncFileOutcome[] = [];
     activeFileOutcomes = fileOutcomes;
@@ -1353,6 +1368,13 @@ export async function runSync(
         previous !== undefined &&
         previous.size === current.size &&
         previous.mtimeMs === currentMtimeMs;
+      // Compute once per attachment per sync, reusing previous.verticalText
+      // when the source is unchanged. Avoids scanning every horizontal PDF's
+      // bytes on every no-op sync.
+      const verticalText = resolveVerticalText(attachment, previous, previousIsUnchanged);
+      if (verticalText !== undefined) {
+        verticalTextByDocKey.set(attachment.docKey, verticalText);
+      }
       // The completed-catalog fast path skips reading the manifest. PDFs must
       // still go through hasReusableArtifacts so the verticalText guard can
       // invalidate caches extracted before --reading-order=off support landed.
@@ -1363,7 +1385,12 @@ export async function runSync(
         previousIsUnchanged &&
         (canUseCatalogFastPath
           ? hasReusableCatalogArtifacts(previous.normalizedPath, previous.manifestPath)
-          : hasReusableArtifacts(attachment, previous.normalizedPath, previous.manifestPath));
+          : hasReusableArtifacts(
+              attachment,
+              previous.normalizedPath,
+              previous.manifestPath,
+              verticalText,
+            ));
       const previousIsErrorAndUnchanged =
         previous?.extractStatus === "error" &&
         previousIsUnchanged;
@@ -1371,6 +1398,7 @@ export async function runSync(
         attachment,
         fallbackNormalizedPath,
         fallbackManifestPath,
+        verticalText,
       );
 
       if (previousIsErrorAndUnchanged && !fallbackArtifactsReusable && !options.retryErrors) {
@@ -1381,6 +1409,7 @@ export async function runSync(
             mtimeMs: currentMtimeMs,
             sourceHash: previous.sourceHash ?? null,
             lastIndexedAt: previous.lastIndexedAt ?? null,
+            verticalText,
             error: previous.error ?? "Previous extraction error; file unchanged.",
           }),
         );
@@ -1464,6 +1493,7 @@ export async function runSync(
                 lastIndexedAt: renameFromPrev.lastIndexedAt ?? null,
                 normalizedPath: fallbackNormalizedPath,
                 manifestPath: fallbackManifestPath,
+                verticalText,
               }),
             );
             fileOutcomes.push({
@@ -1507,6 +1537,7 @@ export async function runSync(
         lastIndexedAt: previousIsReadyAndUnchanged ? previous.lastIndexedAt ?? null : null,
         normalizedPath: previousIsReadyAndUnchanged ? previous.normalizedPath : fallbackNormalizedPath,
         manifestPath: previousIsReadyAndUnchanged ? previous.manifestPath : fallbackManifestPath,
+        verticalText,
       });
       nextEntries.push(nextEntry);
       fileOutcomes.push({
@@ -1561,6 +1592,7 @@ export async function runSync(
         lastIndexedAt: new Date().toISOString(),
         normalizedPath: written.normalizedPath,
         manifestPath: written.manifestPath,
+        verticalText: verticalTextByDocKey.get(attachment.docKey),
       });
       nextEntries.push(nextEntry);
       stats.readyAttachments += 1;
@@ -1593,6 +1625,7 @@ export async function runSync(
           mtimeMs: current ? Math.trunc(current.mtimeMs) : null,
           sourceHash: null,
           lastIndexedAt: null,
+          verticalText: verticalTextByDocKey.get(attachment.docKey),
           error: message,
         }),
       );
