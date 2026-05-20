@@ -89,6 +89,7 @@ export interface AttachmentManifest {
   abstract?: string;
   filePath: string;
   normalizedPath: string;
+  verticalText?: boolean;
   blocks: ManifestBlock[];
 }
 

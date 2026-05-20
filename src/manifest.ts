@@ -214,6 +214,7 @@ export function buildMarkdownManifest(
   attachment: AttachmentCatalogEntry,
   markdown: string,
   normalizedPath: string,
+  options: { verticalText?: boolean } = {},
 ): { manifest: AttachmentManifest; markdown: string } {
   const draftBlocks = splitMarkdownToDraftBlocks(markdown);
   const annotated = annotateBlocks(draftBlocks);
@@ -229,6 +230,7 @@ export function buildMarkdownManifest(
       ...(attachment.abstract ? { abstract: attachment.abstract } : {}),
       filePath: attachment.filePath,
       normalizedPath,
+      ...(options.verticalText ? { verticalText: true } : {}),
       blocks: annotated.blocks,
     },
   };
@@ -333,6 +335,7 @@ export function buildPdfManifest(
   markdown: string,
   rawJson: string,
   normalizedPath: string,
+  options: { verticalText?: boolean } = {},
 ): { manifest: AttachmentManifest; markdown: string } {
   let draftBlocks: DraftBlock[] = [];
   try {
@@ -358,6 +361,7 @@ export function buildPdfManifest(
       ...(attachment.abstract ? { abstract: attachment.abstract } : {}),
       filePath: attachment.filePath,
       normalizedPath,
+      ...(options.verticalText ? { verticalText: true } : {}),
       blocks: annotated.blocks,
     },
   };

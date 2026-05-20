@@ -22,6 +22,7 @@ import { applyExcludes, getExcludesPath, loadExcludedKeys } from "./excludes.js"
 import { buildMarkdownManifest, buildPdfManifest } from "./manifest.js";
 import { extractEpub } from "./epub.js";
 import { extractHtml } from "./html-extract.js";
+import { pdfHasVerticalText } from "./pdf-vertical.js";
 import { KEYWORD_INDEX_SCHEMA_VERSION, openKeywordIndex, type KeywordIndexFactory } from "./keyword-db.js";
 import { QMD_PACKAGE_VERSION, openQmdClient, resolveQmdEmbedModel, type QmdFactory } from "./qmd.js";
 import { mapEntriesByDocKey, readCatalogFile, summarizeCatalog, writeCatalogFile } from "./state.js";
@@ -602,7 +603,16 @@ function hasReusableArtifacts(
   normalizedPath: string | undefined,
   manifestPath: string | undefined,
 ): normalizedPath is string {
-  return readReusableArtifactManifest(attachment, normalizedPath, manifestPath) !== undefined;
+  const manifest = readReusableArtifactManifest(attachment, normalizedPath, manifestPath);
+  if (!manifest) return false;
+  if (
+    attachment.fileExt === "pdf" &&
+    !manifest.verticalText &&
+    pdfHasVerticalText(attachment.filePath)
+  ) {
+    return false;
+  }
+  return true;
 }
 
 function isLikelyBookAttachment(attachment: AttachmentCatalogEntry): boolean {
@@ -614,8 +624,15 @@ function isLikelyBookAttachment(attachment: AttachmentCatalogEntry): boolean {
 
 function shouldExtractAttachmentAlone(attachment: AttachmentCatalogEntry): boolean {
   if (isLikelyBookAttachment(attachment)) return true;
+  if (attachment.fileExt === "pdf" && pdfHasVerticalText(attachment.filePath)) return true;
   const current = statSync(attachment.filePath, { throwIfNoEntry: false });
   return Boolean(current && current.size >= ODL_SINGLE_BATCH_SIZE_BYTES);
+}
+
+function batchUsesVerticalText(batch: AttachmentCatalogEntry[]): boolean {
+  return batch.some(
+    (attachment) => attachment.fileExt === "pdf" && pdfHasVerticalText(attachment.filePath),
+  );
 }
 
 function groupForOdlBatches(
@@ -741,6 +758,9 @@ async function extractBatchPdftotext(
         attachment,
         readFileSync(textPath, "utf-8"),
         normalizedPath,
+        attachment.fileExt === "pdf" && pdfHasVerticalText(attachment.filePath)
+          ? { verticalText: true }
+          : {},
       );
       assertNonEmptyExtractedOutput(attachment.filePath, built);
 
@@ -765,6 +785,8 @@ async function extractBatchTextOnly(
   const tempDir = mkdtempSync(join(tempRoot, "odl-text-"));
   const byDocKey = new Map<string, ExtractedPaths>();
 
+  const verticalText = batchUsesVerticalText(batch);
+
   try {
     await withJavaToolOptions(() =>
       runOdlConvert(
@@ -772,6 +794,7 @@ async function extractBatchTextOnly(
         {
           outputDir: tempDir,
           format: "text",
+          ...(verticalText ? { readingOrder: "off" } : {}),
         },
         options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {},
       ),
@@ -793,6 +816,7 @@ async function extractBatchTextOnly(
         attachment,
         readFileSync(textPath, "utf-8"),
         normalizedPath,
+        verticalText ? { verticalText: true } : {},
       );
       assertNonEmptyExtractedOutput(attachment.filePath, built);
 
@@ -875,6 +899,8 @@ async function extractBatchStructured(
   const tempDir = mkdtempSync(join(tempRoot, "odl-"));
   const byDocKey = new Map<string, ExtractedPaths>();
 
+  const verticalText = batchUsesVerticalText(batch);
+
   try {
     await withJavaToolOptions(() =>
       runOdlConvert(
@@ -882,6 +908,7 @@ async function extractBatchStructured(
         {
           outputDir: tempDir,
           format: "markdown,json",
+          ...(verticalText ? { readingOrder: "off" } : {}),
         },
         options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {},
       ),
@@ -905,6 +932,7 @@ async function extractBatchStructured(
         readFileSync(markdownPath, "utf-8"),
         readFileSync(jsonPath, "utf-8"),
         normalizedPath,
+        verticalText ? { verticalText: true } : {},
       );
       assertNonEmptyExtractedOutput(attachment.filePath, built);
 
