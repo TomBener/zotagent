@@ -1360,6 +1360,121 @@ test("runSync re-extracts a renamed vertical PDF whose old manifest predates ver
   assert.equal(newManifest.verticalText, true);
 });
 
+test("runSync skips manifest reads on PDFs whose verticalText is already cached on the catalog entry", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-vertical-fastpath-"));
+  const attachmentsRoot = join(root, "attachments");
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  const normalizedDir = join(dataDir, "normalized");
+  mkdirSync(join(attachmentsRoot, "papers"), { recursive: true });
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+  mkdirSync(normalizedDir, { recursive: true });
+
+  const pdfPath = join(attachmentsRoot, "papers", "paper.pdf");
+  writeFileSync(pdfPath, "%PDF-1.4\n10 0 obj <</Type/Font/Encoding/Identity-H>> endobj\n%%EOF\n");
+  const currentStat = statSync(pdfPath);
+  const docKey = sha1("papers/paper.pdf");
+  const normalizedPath = join(normalizedDir, `${docKey}.md`);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
+  writeFileSync(normalizedPath, "Body");
+  // Deliberately write a manifest with a mismatching docKey: the deep reuse
+  // check (readReusableArtifactManifest) would treat this as not reusable and
+  // force a re-extraction, but the fast path only checks file existence and
+  // should leave the entry alone.
+  writeManifestFile(manifestPath, {
+    docKey: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+    itemKey: "ITEM1",
+    title: "Paper",
+    authors: ["A"],
+    filePath: pdfPath,
+    normalizedPath,
+    blocks: [trivialBlock()],
+  });
+
+  const bibliographyPath = join(root, "bibliography.json");
+  writeFileSync(
+    bibliographyPath,
+    JSON.stringify([
+      {
+        id: "cite",
+        title: "Paper",
+        author: [{ family: "A", given: "Author" }],
+        file: pdfPath,
+        "zotero-item-key": "ITEM1",
+      },
+    ]),
+    "utf-8",
+  );
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    indexesCompletedAt: new Date().toISOString(),
+    indexedQmdEmbedModel: "fake-embed-model",
+    indexerSignature: buildIndexerSignature("fake-embed-model"),
+    entries: [
+      {
+        docKey,
+        itemKey: "ITEM1",
+        citationKey: "cite",
+        title: "Paper",
+        authors: ["A Author"],
+        filePath: pdfPath,
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: currentStat.size,
+        mtimeMs: Math.trunc(currentStat.mtimeMs),
+        sourceHash: "any-hash",
+        lastIndexedAt: new Date().toISOString(),
+        normalizedPath,
+        manifestPath,
+        verticalText: false,
+      },
+    ],
+  });
+
+  const qmdFactory = async () => ({
+    search: async () => [],
+    searchLex: async () => [],
+    update: async () => ({}),
+    embed: async () => ({}),
+    getStatus: async () => ({ totalDocuments: 1, needsEmbedding: 0, hasVectorIndex: true, collections: [] }),
+    listContexts: async () => [],
+    addContext: async () => true,
+    removeContext: async () => true,
+    clearEmbeddings: async () => {},
+    cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
+    close: async () => {},
+  });
+
+  const extractCalls: unknown[] = [];
+  const extractBatchFn = async (batch: unknown[]) => {
+    extractCalls.push(batch);
+    return new Map();
+  };
+
+  const result = await runSync(
+    {
+      bibliographyJsonPath: bibliographyPath,
+      attachmentsRoot,
+      dataDir,
+      qmdEmbedModel: "fake-embed-model",
+    },
+    qmdFactory,
+    undefined,
+    extractBatchFn as never,
+    () => {},
+  );
+
+  assert.equal(extractCalls.length, 0, "cached verticalText must let the fast path skip manifest validation");
+  assert.equal(result.stats.skippedAttachments, 1);
+  assert.equal(result.stats.readyAttachments, 1);
+});
+
 test("runSync trusts cached catalog verticalText and does not rescan unchanged horizontal PDFs", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-sync-vertical-cached-"));
   const attachmentsRoot = join(root, "attachments");

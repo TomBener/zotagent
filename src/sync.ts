@@ -1421,11 +1421,15 @@ export async function runSync(
       if (verticalText !== undefined) {
         verticalTextByDocKey.set(attachment.docKey, verticalText);
       }
-      // The completed-catalog fast path skips reading the manifest. PDFs must
-      // still go through hasReusableArtifacts so the verticalText guard can
-      // invalidate caches extracted before --reading-order=off support landed.
+      // The completed-catalog fast path skips reading the manifest. PDFs only
+      // need the manifest-aware deep check until verticalText has been cached
+      // on the catalog entry — once we've migrated the entry (true or false),
+      // the catalog already knows whether reading-order=off was required and
+      // there's nothing left to invalidate, so steady-state syncs can use the
+      // cheap existence check instead of reading every manifest from disk.
       const canUseCatalogFastPath =
-        previousCatalogCompleted && attachment.fileExt !== "pdf";
+        previousCatalogCompleted &&
+        (attachment.fileExt !== "pdf" || previous?.verticalText !== undefined);
       const previousIsReadyAndUnchanged =
         previous?.extractStatus === "ready" &&
         previousIsUnchanged &&
