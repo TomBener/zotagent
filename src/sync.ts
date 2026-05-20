@@ -22,7 +22,7 @@ import { applyExcludes, getExcludesPath, loadExcludedKeys } from "./excludes.js"
 import { buildMarkdownManifest, buildPdfManifest } from "./manifest.js";
 import { extractEpub } from "./epub.js";
 import { extractHtml } from "./html-extract.js";
-import { pdfHasVerticalText } from "./pdf-vertical.js";
+import { clearPdfVerticalCache, pdfHasVerticalText } from "./pdf-vertical.js";
 import { KEYWORD_INDEX_SCHEMA_VERSION, openKeywordIndex, type KeywordIndexFactory } from "./keyword-db.js";
 import { QMD_PACKAGE_VERSION, openQmdClient, resolveQmdEmbedModel, type QmdFactory } from "./qmd.js";
 import { mapEntriesByDocKey, readCatalogFile, summarizeCatalog, writeCatalogFile } from "./state.js";
@@ -1209,12 +1209,18 @@ export async function runSync(
     process.on(signal, handler);
   }
 
+  let artifactBackupDir: string | undefined;
   try {
     ensureDir(paths.normalizedDir);
     ensureDir(paths.manifestsDir);
     ensureDir(paths.indexDir);
     ensureDir(paths.tempDir);
     ensureDir(paths.logsDir);
+    // pdfHasVerticalText memoizes by path; clear at sync start so a long-lived
+    // host process (tests, library callers) doesn't reuse stale results when a
+    // PDF was modified in place between syncs. CatalogEntry.verticalText still
+    // provides cross-sync caching, gated by size/mtime equality.
+    clearPdfVerticalCache();
     logger.info("Prepared data directories.");
 
     const rawCatalogData = loadCatalog(config);
@@ -1300,6 +1306,58 @@ export async function runSync(
     // fail and be rolled back to the previous ready state — in that case the
     // manifest is unchanged and must not be forced into the keyword update.
     const recentlyExtractedDocKeys = new Set<string>();
+    // Artifact backups taken right before each extraction attempt. Used by the
+    // failure rollback in recordErroredAttachment to restore the prior
+    // normalized + manifest pair, defending against partial writes that
+    // corrupted the final paths mid-extraction.
+    artifactBackupDir = mkdtempSync(join(paths.tempDir, "artifact-backups-"));
+    const backupDir = artifactBackupDir;
+    const pendingArtifactBackups = new Map<string, { normalized?: string; manifest?: string }>();
+
+    const snapshotPriorArtifacts = (docKey: string, previous: CatalogEntry | undefined): void => {
+      if (!previous || previous.extractStatus !== "ready") return;
+      const backup: { normalized?: string; manifest?: string } = {};
+      if (previous.normalizedPath && exists(previous.normalizedPath)) {
+        const dst = resolve(backupDir, `${docKey}.md`);
+        copyFileSync(previous.normalizedPath, dst);
+        backup.normalized = dst;
+      }
+      if (previous.manifestPath && exists(previous.manifestPath)) {
+        const dst = resolve(backupDir, `${docKey}${MANIFEST_EXT}`);
+        copyFileSync(previous.manifestPath, dst);
+        backup.manifest = dst;
+      }
+      if (backup.normalized || backup.manifest) {
+        pendingArtifactBackups.set(docKey, backup);
+      }
+    };
+
+    const discardArtifactSnapshot = (docKey: string): void => {
+      const backup = pendingArtifactBackups.get(docKey);
+      if (!backup) return;
+      if (backup.normalized) {
+        try { unlinkSync(backup.normalized); } catch { /* ignore */ }
+      }
+      if (backup.manifest) {
+        try { unlinkSync(backup.manifest); } catch { /* ignore */ }
+      }
+      pendingArtifactBackups.delete(docKey);
+    };
+
+    const restoreArtifactSnapshot = (docKey: string, previous: CatalogEntry): boolean => {
+      const backup = pendingArtifactBackups.get(docKey);
+      if (!backup) return false;
+      let restored = false;
+      if (backup.normalized && previous.normalizedPath) {
+        copyFileSync(backup.normalized, previous.normalizedPath);
+        restored = true;
+      }
+      if (backup.manifest && previous.manifestPath) {
+        copyFileSync(backup.manifest, previous.manifestPath);
+        restored = true;
+      }
+      return restored;
+    };
     const staleDocKeys = new Set(previousCatalog.entries.map((entry) => entry.docKey));
     const fileOutcomes: SyncFileOutcome[] = [];
     activeFileOutcomes = fileOutcomes;
@@ -1579,6 +1637,7 @@ export async function runSync(
     }
 
     for (const attachment of nonPdfAttachments) {
+      snapshotPriorArtifacts(attachment.docKey, previousByDocKey.get(attachment.docKey));
       try {
         logger.info(`Extracting ${attachment.fileExt}: ${compactHomePath(attachment.filePath)}.`, {
           console: true,
@@ -1612,6 +1671,7 @@ export async function runSync(
       });
       nextEntries.push(nextEntry);
       recentlyExtractedDocKeys.add(attachment.docKey);
+      discardArtifactSnapshot(attachment.docKey);
       stats.readyAttachments += 1;
       stats.updatedAttachments += 1;
       stats.indexedAttachments += 1;
@@ -1654,7 +1714,14 @@ export async function runSync(
         previous.sourceHash.length > 0 &&
         (await sha1File(attachment.filePath)) === previous.sourceHash;
 
-      if (previousArtifactsReusable) {
+      if (previousArtifactsReusable && previous !== undefined) {
+        // Extraction may have started a partial write to the final paths
+        // before failing. Restore from the snapshot taken before dispatch so
+        // we're certain the artifacts on disk match what previous.sourceHash
+        // points at; without this the rollback could bless a half-written
+        // normalized.md that the keyword index never updated to reflect.
+        restoreArtifactSnapshot(attachment.docKey, previous);
+        discardArtifactSnapshot(attachment.docKey);
         logger.warn(
           `Re-extraction failed for unchanged ${compactHomePath(attachment.filePath)}; keeping previous ready artifacts.`,
         );
@@ -1682,6 +1749,7 @@ export async function runSync(
 
       // Source actually changed (or no reusable previous artifacts): old
       // outputs are stale, remove them and mark the attachment as error.
+      discardArtifactSnapshot(attachment.docKey);
       deleteIfExists(previous?.normalizedPath);
       deleteIfExists(previous?.manifestPath);
       fileOutcomes.push({
@@ -1733,6 +1801,9 @@ export async function runSync(
       });
       for (const attachment of batch) {
         logger.info(`  - ${compactHomePath(attachment.filePath)}`, { console: true });
+      }
+      for (const attachment of batch) {
+        snapshotPriorArtifacts(attachment.docKey, previousByDocKey.get(attachment.docKey));
       }
       try {
         const extracted = await extractBatchFn(
@@ -2048,5 +2119,9 @@ export async function runSync(
     logger.error(`Sync aborted: ${summarizeSyncError(error)}`);
     finalizeOnce("failed", activeFileOutcomes, activeStats);
     throw error;
+  } finally {
+    if (artifactBackupDir) {
+      rmSync(artifactBackupDir, { recursive: true, force: true });
+    }
   }
 }

@@ -16,7 +16,7 @@ import {
   runSync,
   withJavaToolOptions,
 } from "../../src/sync.js";
-import { clearPdfVerticalCache, pdfVerticalCacheSize } from "../../src/pdf-vertical.js";
+import { clearPdfVerticalCache, pdfHasVerticalText, pdfVerticalCacheSize } from "../../src/pdf-vertical.js";
 import { readCatalogFile, writeCatalogFile } from "../../src/state.js";
 import type { CatalogFile, ManifestBlock } from "../../src/types.js";
 import { MANIFEST_EXT, readManifestFile, sha1, writeManifestFile } from "../../src/utils.js";
@@ -881,6 +881,236 @@ test("runSync preserves previous artifacts when a vertical-PDF re-extraction fai
       "preserved entry must not be removed from the keyword index",
     );
   }
+});
+
+test("runSync restores previous artifacts from a snapshot when a failed re-extraction partially overwrote them", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-vertical-snapshot-"));
+  const attachmentsRoot = join(root, "attachments");
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  const normalizedDir = join(dataDir, "normalized");
+  mkdirSync(join(attachmentsRoot, "papers"), { recursive: true });
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+  mkdirSync(normalizedDir, { recursive: true });
+
+  // Vertical PDF (triggers the verticalText guard so we hit the rollback path).
+  const pdfPath = join(attachmentsRoot, "papers", "paper.pdf");
+  const pdfBytes = Buffer.from(
+    "%PDF-1.3\n10 0 obj <</Type/Font/Subtype/Type0/Encoding/Identity-V>> endobj\n%%EOF\n",
+  );
+  writeFileSync(pdfPath, pdfBytes);
+  const realSourceHash = createHash("sha1").update(pdfBytes).digest("hex");
+  const currentStat = statSync(pdfPath);
+  const docKey = sha1("papers/paper.pdf");
+  const normalizedPath = join(normalizedDir, `${docKey}.md`);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
+  const originalNormalizedBody = "Body produced by the last successful sync";
+  writeFileSync(normalizedPath, originalNormalizedBody);
+  writeManifestFile(manifestPath, {
+    docKey,
+    itemKey: "ITEM1",
+    title: "Paper",
+    authors: ["A"],
+    filePath: pdfPath,
+    normalizedPath,
+    blocks: [trivialBlock()],
+  });
+
+  const bibliographyPath = join(root, "bibliography.json");
+  writeFileSync(
+    bibliographyPath,
+    JSON.stringify([
+      {
+        id: "cite",
+        title: "Paper",
+        author: [{ family: "A", given: "Author" }],
+        file: pdfPath,
+        "zotero-item-key": "ITEM1",
+      },
+    ]),
+    "utf-8",
+  );
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    indexesCompletedAt: new Date().toISOString(),
+    indexedQmdEmbedModel: "fake-embed-model",
+    indexerSignature: buildIndexerSignature("fake-embed-model"),
+    entries: [
+      {
+        docKey,
+        itemKey: "ITEM1",
+        citationKey: "cite",
+        title: "Paper",
+        authors: ["A Author"],
+        filePath: pdfPath,
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: currentStat.size,
+        mtimeMs: Math.trunc(currentStat.mtimeMs),
+        sourceHash: realSourceHash,
+        lastIndexedAt: "2025-06-01T00:00:00.000Z",
+        normalizedPath,
+        manifestPath,
+      },
+    ],
+  });
+
+  const qmdFactory = async () => ({
+    search: async () => [],
+    searchLex: async () => [],
+    update: async () => ({}),
+    embed: async () => ({}),
+    getStatus: async () => ({ totalDocuments: 1, needsEmbedding: 0, hasVectorIndex: true, collections: [] }),
+    listContexts: async () => [],
+    addContext: async () => true,
+    removeContext: async () => true,
+    clearEmbeddings: async () => {},
+    cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
+    close: async () => {},
+  });
+
+  // Simulate a writeFileSync partial failure: corrupt the normalized.md
+  // (and update the manifest with stale block references) before throwing.
+  // Without snapshot/restore the rollback would bless these corrupted files.
+  const extractBatchFn = async (batch: Array<{ docKey: string; filePath: string; itemKey: string }>) => {
+    const attachment = batch[0]!;
+    writeFileSync(normalizedPath, "PARTIAL CORRUPTED BYTES", "utf-8");
+    writeManifestFile(manifestPath, {
+      docKey: attachment.docKey,
+      itemKey: attachment.itemKey,
+      title: "Paper",
+      authors: ["A"],
+      filePath: attachment.filePath,
+      normalizedPath,
+      blocks: [trivialBlock()],
+    });
+    throw new Error("simulated ODL crash after partial write");
+  };
+
+  await runSync(
+    {
+      bibliographyJsonPath: bibliographyPath,
+      attachmentsRoot,
+      dataDir,
+      qmdEmbedModel: "fake-embed-model",
+    },
+    qmdFactory,
+    undefined,
+    extractBatchFn as never,
+    () => {},
+  );
+
+  assert.equal(
+    readFileSync(normalizedPath, "utf-8"),
+    originalNormalizedBody,
+    "rollback must restore the normalized markdown from the pre-extraction snapshot",
+  );
+  const restoredManifest = readManifestFile(manifestPath);
+  assert.equal(restoredManifest?.docKey, docKey, "restored manifest must parse and keep the original identity");
+});
+
+test("runSync rescans pdfHasVerticalText across syncs in the same process when the source changes in place", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-vertical-cache-clear-"));
+  const attachmentsRoot = join(root, "attachments");
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const normalizedDir = join(dataDir, "normalized");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(join(attachmentsRoot, "papers"), { recursive: true });
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(normalizedDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+
+  // First sync sees a horizontal PDF.
+  const pdfPath = join(attachmentsRoot, "papers", "paper.pdf");
+  writeFileSync(pdfPath, "%PDF-1.4\n10 0 obj <</Type/Font/Encoding/Identity-H>> endobj\n%%EOF\n");
+
+  const bibliographyPath = join(root, "bibliography.json");
+  writeFileSync(
+    bibliographyPath,
+    JSON.stringify([
+      {
+        id: "cite",
+        title: "Paper",
+        author: [{ family: "A", given: "Author" }],
+        file: pdfPath,
+        "zotero-item-key": "ITEM1",
+      },
+    ]),
+    "utf-8",
+  );
+
+  const docKey = sha1("papers/paper.pdf");
+  const normalizedPath = join(normalizedDir, `${docKey}.md`);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
+
+  const qmdFactory = async () => ({
+    search: async () => [],
+    searchLex: async () => [],
+    update: async () => ({}),
+    embed: async () => ({}),
+    getStatus: async () => ({ totalDocuments: 1, needsEmbedding: 0, hasVectorIndex: true, collections: [] }),
+    listContexts: async () => [],
+    addContext: async () => true,
+    removeContext: async () => true,
+    clearEmbeddings: async () => {},
+    cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
+    close: async () => {},
+  });
+
+  const observedVerticalAtExtract: boolean[] = [];
+  const extractBatchFn = async (batch: Array<{ docKey: string; filePath: string; itemKey: string }>) => {
+    const attachment = batch[0]!;
+    observedVerticalAtExtract.push(pdfHasVerticalText(attachment.filePath));
+    writeFileSync(normalizedPath, "Body", "utf-8");
+    writeManifestFile(manifestPath, {
+      docKey: attachment.docKey,
+      itemKey: attachment.itemKey,
+      title: "Paper",
+      authors: ["A"],
+      filePath: attachment.filePath,
+      normalizedPath,
+      ...(pdfHasVerticalText(attachment.filePath) ? { verticalText: true } : {}),
+      blocks: [trivialBlock()],
+    });
+    return new Map([[attachment.docKey, { manifestPath, normalizedPath }]]);
+  };
+
+  await runSync(
+    { bibliographyJsonPath: bibliographyPath, attachmentsRoot, dataDir },
+    qmdFactory,
+    undefined,
+    extractBatchFn as never,
+    () => {},
+  );
+  assert.equal(observedVerticalAtExtract[0], false, "first sync sees the horizontal PDF");
+
+  // Replace the file in place with vertical bytes; ensure size/mtime visibly
+  // change so the catalog reuse layer correctly refreshes its judgment.
+  writeFileSync(
+    pdfPath,
+    "%PDF-1.3\n10 0 obj <</Type/Font/Subtype/Type0/Encoding/Identity-V>> endobj\n11 0 obj <</padding 1234567890>> endobj\n%%EOF\n",
+  );
+  utimesSync(pdfPath, new Date(Date.now() + 2000), new Date(Date.now() + 2000));
+
+  await runSync(
+    { bibliographyJsonPath: bibliographyPath, attachmentsRoot, dataDir },
+    qmdFactory,
+    undefined,
+    extractBatchFn as never,
+    () => {},
+  );
+  assert.equal(
+    observedVerticalAtExtract[1],
+    true,
+    "second sync must observe the in-place flip to vertical (cache cleared at sync start)",
+  );
 });
 
 test("runSync marks the entry as error when a same-size/same-mtime replacement causes failed re-extraction", async () => {
