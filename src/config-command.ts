@@ -67,12 +67,12 @@ const FIELDS: FieldSpec[] = [
   {
     key: "verticalTextTag",
     required: false,
-    help: "Optional Zotero tag name; items carrying it are extracted with --reading-order=off (vertical CJK layout).",
+    help: "Override the Zotero tag for vertical-CJK PDFs (default: zotagent:vertical). Leave blank to use the default.",
   },
   {
     key: "excludeTag",
     required: false,
-    help: "Optional Zotero tag name; items carrying it are skipped entirely by sync (no extraction, no indexing).",
+    help: "Override the Zotero tag that flags items to skip (default: zotagent:exclude). Leave blank to use the default.",
   },
   {
     key: "syncEnabled",

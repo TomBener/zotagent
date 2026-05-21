@@ -796,32 +796,36 @@ export type SyncRunOptions = {
 };
 
 // Look up all top-level Zotero items carrying the given tag. Returns an empty
-// set when the tag is unset or the request fails — a temporary Zotero outage
-// shouldn't abort sync, but it does mean the tag's effect (vertical extraction
-// or exclusion) won't apply on this run; the next successful sync recovers it.
+// set when the tag is unset, credentials are missing, or the request fails.
+// Silent on the credential-missing path because the tag knobs ship with
+// defaults (zotagent:vertical / zotagent:exclude) — users who haven't set up
+// Zotero API access shouldn't see a per-sync warning about an opt-in feature
+// they aren't using. Real network/auth failures still surface as warnings so
+// configured users notice when their tag list went stale.
 async function fetchTaggedItemKeys(
   tag: string | undefined,
   config: ReturnType<typeof resolveConfig>,
   fetchImpl: FetchLike,
   logger: SyncLogger,
-  purpose: { onSuccess: (count: number) => string; onFailure: (reason: string) => string },
+  onSuccess: (count: number) => string,
+  failureContext: string,
 ): Promise<ReadonlySet<string>> {
   if (!tag) return new Set();
   let readConfig;
   try {
     readConfig = getReadConfig(config);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    logger.info(purpose.onFailure(`Zotero read credentials missing: ${message}`), { console: true });
+  } catch {
     return new Set();
   }
   try {
     const keys = await fetchTopLevelItemKeysByTags([tag], readConfig, fetchImpl);
-    logger.info(purpose.onSuccess(keys.length), { console: true });
+    if (keys.length > 0) {
+      logger.info(onSuccess(keys.length), { console: true });
+    }
     return new Set(keys);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    logger.info(purpose.onFailure(message), { console: true });
+    logger.warn(`${failureContext} "${tag}": ${message}`);
     return new Set();
   }
 }
@@ -832,12 +836,15 @@ function resolveVerticalItemKeys(
   logger: SyncLogger,
 ): Promise<ReadonlySet<string>> {
   const tag = config.verticalTextTag;
-  return fetchTaggedItemKeys(tag, config, fetchImpl, logger, {
-    onSuccess: (n) =>
+  return fetchTaggedItemKeys(
+    tag,
+    config,
+    fetchImpl,
+    logger,
+    (n) =>
       `Loaded ${n} attachment(s) tagged "${tag}" from Zotero; their PDFs will be extracted with --reading-order=off.`,
-    onFailure: (reason) =>
-      `Failed to fetch Zotero items for verticalTextTag "${tag}": ${reason}. Treating all PDFs as horizontal for this sync.`,
-  });
+    "Failed to fetch Zotero items for verticalTextTag",
+  );
 }
 
 function resolveExcludedItemKeys(
@@ -846,12 +853,14 @@ function resolveExcludedItemKeys(
   logger: SyncLogger,
 ): Promise<ReadonlySet<string>> {
   const tag = config.excludeTag;
-  return fetchTaggedItemKeys(tag, config, fetchImpl, logger, {
-    onSuccess: (n) =>
-      `Loaded ${n} item(s) tagged "${tag}" from Zotero; these will be skipped by sync.`,
-    onFailure: (reason) =>
-      `Failed to fetch Zotero items for excludeTag "${tag}": ${reason}. Nothing will be excluded on this sync.`,
-  });
+  return fetchTaggedItemKeys(
+    tag,
+    config,
+    fetchImpl,
+    logger,
+    (n) => `Loaded ${n} item(s) tagged "${tag}" from Zotero; these will be skipped by sync.`,
+    "Failed to fetch Zotero items for excludeTag",
+  );
 }
 
 function attachmentIsVertical(

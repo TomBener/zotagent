@@ -332,14 +332,13 @@ Index
         --pdf-batch-size <n>        Override the maximum number of PDFs per extraction batch.
         --pdf-concurrency <n>       Run N extraction batches in parallel (default 2). Each batch
                                     spawns its own java process; tune with available CPU and RAM.
-      Honors two Zotero-tag-driven knobs from ~/.zotagent/config.json:
-        - \`excludeTag\` (e.g. "zotagent:exclude"): top-level items carrying that tag
-          are skipped entirely (no extraction, no manifest, no keyword/qmd indexing).
-          Use \`zotagent diagnose\` to find candidates (picture books, OCR-failed
-          scans, multi-column gazetteers), then apply the tag in Zotero.
-        - \`verticalTextTag\` (e.g. "zotagent:vertical"): top-level items carrying that
-          tag are extracted with --reading-order=off so vertical CJK columns don't
-          get scrambled by the default xycut block ordering.
+      Recognizes two Zotero tags by default (names customizable via
+      \`excludeTag\` / \`verticalTextTag\` in ~/.zotagent/config.json):
+        - \`zotagent:exclude\`: items skipped entirely (no extraction, no manifest,
+          no keyword/qmd indexing). Use \`zotagent diagnose\` to find candidates.
+        - \`zotagent:vertical\`: items extracted with --reading-order=off so
+          vertical CJK columns don't get scrambled by xycut block ordering.
+      Both tags are silently ignored if Zotero API credentials aren't configured.
 
   status
       Show attachment counts, local index paths, and qmd status.

@@ -45,6 +45,11 @@ const DEFAULTS = {
   attachmentsRoot: "~/Library/Mobile Documents/com~apple~CloudDocs/Zotero",
   dataDir: "~/Library/Mobile Documents/com~apple~CloudDocs/Zotagent",
   qmdEmbedModel: undefined,
+  // Tag names live under the zotagent: namespace so colliding with a user's
+  // pre-existing tag is essentially impossible. Users who want a different
+  // name can override per-tag in config.json or via env vars.
+  verticalTextTag: "zotagent:vertical",
+  excludeTag: "zotagent:exclude",
 };
 
 function firstDefined(...values: Array<string | undefined>): string | undefined {
@@ -173,11 +178,13 @@ export function resolveConfig(overrides: ConfigOverrides = {}): AppConfig {
       overrides.verticalTextTag,
       process.env.ZOTAGENT_VERTICAL_TEXT_TAG,
       fileConfig.verticalTextTag,
+      DEFAULTS.verticalTextTag,
     ),
     excludeTag: firstDefined(
       overrides.excludeTag,
       process.env.ZOTAGENT_EXCLUDE_TAG,
       fileConfig.excludeTag,
+      DEFAULTS.excludeTag,
     ),
     warnings,
   };
