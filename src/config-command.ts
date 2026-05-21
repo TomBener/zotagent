@@ -70,6 +70,11 @@ const FIELDS: FieldSpec[] = [
     help: "Optional Zotero tag name; items carrying it are extracted with --reading-order=off (vertical CJK layout).",
   },
   {
+    key: "excludeTag",
+    required: false,
+    help: "Optional Zotero tag name; items carrying it are skipped entirely by sync (no extraction, no indexing).",
+  },
+  {
     key: "syncEnabled",
     required: false,
     boolean: true,

@@ -17,6 +17,7 @@ interface RawConfig {
   zoteroApiKey?: string;
   syncEnabled?: unknown;
   verticalTextTag?: string;
+  excludeTag?: string;
   embeddingProvider?: string;
   embeddingModel?: string;
   googleApiKey?: string;
@@ -33,6 +34,7 @@ export interface ConfigOverrides {
   zoteroCollectionKey?: string;
   zoteroApiKey?: string;
   verticalTextTag?: string;
+  excludeTag?: string;
   embeddingProvider?: string;
   embeddingModel?: string;
   googleApiKey?: string;
@@ -171,6 +173,11 @@ export function resolveConfig(overrides: ConfigOverrides = {}): AppConfig {
       overrides.verticalTextTag,
       process.env.ZOTAGENT_VERTICAL_TEXT_TAG,
       fileConfig.verticalTextTag,
+    ),
+    excludeTag: firstDefined(
+      overrides.excludeTag,
+      process.env.ZOTAGENT_EXCLUDE_TAG,
+      fileConfig.excludeTag,
     ),
     warnings,
   };

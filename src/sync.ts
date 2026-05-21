@@ -18,7 +18,7 @@ import { createRequire } from "node:module";
 
 import { loadCatalog } from "./catalog.js";
 import { getDataPaths, resolveConfig, type ConfigOverrides } from "./config.js";
-import { applyExcludes, getExcludesPath, loadExcludedKeys } from "./excludes.js";
+import { applyExcludes } from "./excludes.js";
 import { buildMarkdownManifest, buildPdfManifest } from "./manifest.js";
 import { extractEpub } from "./epub.js";
 import { extractHtml } from "./html-extract.js";
@@ -788,50 +788,70 @@ export type SyncRunOptions = {
   // verticalTextTag and uses this set instead. Production code leaves this
   // unset and lets runSync fetch from Zotero.
   verticalItemKeys?: ReadonlySet<string>;
+  // Test injection for excludeTag, same shape as verticalItemKeys.
+  excludeItemKeys?: ReadonlySet<string>;
   // Test injection for the fetch implementation used to query Zotero for
-  // the vertical-text tag. Defaults to globalThis.fetch.
+  // tagged item keys. Defaults to globalThis.fetch.
   fetchImpl?: FetchLike;
 };
 
-// Look up all top-level Zotero items tagged with the configured vertical-text
-// tag. Returns an empty set when the tag is unset or the request fails — a
-// failure to reach Zotero shouldn't abort sync, but it does mean every PDF
-// will be treated as horizontal until the next sync recovers the tag.
-async function resolveVerticalItemKeys(
+// Look up all top-level Zotero items carrying the given tag. Returns an empty
+// set when the tag is unset or the request fails — a temporary Zotero outage
+// shouldn't abort sync, but it does mean the tag's effect (vertical extraction
+// or exclusion) won't apply on this run; the next successful sync recovers it.
+async function fetchTaggedItemKeys(
+  tag: string | undefined,
   config: ReturnType<typeof resolveConfig>,
   fetchImpl: FetchLike,
   logger: SyncLogger,
+  purpose: { onSuccess: (count: number) => string; onFailure: (reason: string) => string },
 ): Promise<ReadonlySet<string>> {
-  const tag = config.verticalTextTag;
   if (!tag) return new Set();
   let readConfig;
   try {
     readConfig = getReadConfig(config);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    logger.info(
-      `verticalTextTag "${tag}" is set but Zotero read credentials are missing: ${message}. ` +
-        "Treating all PDFs as horizontal for this sync.",
-      { console: true },
-    );
+    logger.info(purpose.onFailure(`Zotero read credentials missing: ${message}`), { console: true });
     return new Set();
   }
   try {
     const keys = await fetchTopLevelItemKeysByTags([tag], readConfig, fetchImpl);
-    logger.info(
-      `Loaded ${keys.length} attachment(s) tagged "${tag}" from Zotero; their PDFs will be extracted with --reading-order=off.`,
-      { console: true },
-    );
+    logger.info(purpose.onSuccess(keys.length), { console: true });
     return new Set(keys);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    logger.info(
-      `Failed to fetch Zotero items for tag "${tag}": ${message}. ` +
-        "Treating all PDFs as horizontal for this sync.",
-      { console: true },
-    );
+    logger.info(purpose.onFailure(message), { console: true });
     return new Set();
   }
+}
+
+function resolveVerticalItemKeys(
+  config: ReturnType<typeof resolveConfig>,
+  fetchImpl: FetchLike,
+  logger: SyncLogger,
+): Promise<ReadonlySet<string>> {
+  const tag = config.verticalTextTag;
+  return fetchTaggedItemKeys(tag, config, fetchImpl, logger, {
+    onSuccess: (n) =>
+      `Loaded ${n} attachment(s) tagged "${tag}" from Zotero; their PDFs will be extracted with --reading-order=off.`,
+    onFailure: (reason) =>
+      `Failed to fetch Zotero items for verticalTextTag "${tag}": ${reason}. Treating all PDFs as horizontal for this sync.`,
+  });
+}
+
+function resolveExcludedItemKeys(
+  config: ReturnType<typeof resolveConfig>,
+  fetchImpl: FetchLike,
+  logger: SyncLogger,
+): Promise<ReadonlySet<string>> {
+  const tag = config.excludeTag;
+  return fetchTaggedItemKeys(tag, config, fetchImpl, logger, {
+    onSuccess: (n) =>
+      `Loaded ${n} item(s) tagged "${tag}" from Zotero; these will be skipped by sync.`,
+    onFailure: (reason) =>
+      `Failed to fetch Zotero items for excludeTag "${tag}": ${reason}. Nothing will be excluded on this sync.`,
+  });
 }
 
 function attachmentIsVertical(
@@ -1315,23 +1335,26 @@ export async function runSync(
     ensureDir(paths.logsDir);
     logger.info("Prepared data directories.");
 
-    // Tag-driven vertical detection: ask Zotero once which top-level items
-    // carry the configured tag and treat their PDFs as vertical. Test
-    // injection (options.verticalItemKeys) bypasses the API call.
+    // Tag-driven vertical detection and exclusion: ask Zotero once which
+    // top-level items carry each tag, then treat their PDFs as vertical /
+    // skip them entirely. Test injections bypass the API call.
+    const fetchImpl = options.fetchImpl ?? fetch;
     const verticalItemKeys: ReadonlySet<string> =
-      options.verticalItemKeys ?? (await resolveVerticalItemKeys(config, options.fetchImpl ?? fetch, logger));
+      options.verticalItemKeys ?? (await resolveVerticalItemKeys(config, fetchImpl, logger));
+    const excludedItemKeys: ReadonlySet<string> =
+      options.excludeItemKeys ?? (await resolveExcludedItemKeys(config, fetchImpl, logger));
 
     const rawCatalogData = loadCatalog(config);
     logger.info(
       `Loaded bibliography with ${rawCatalogData.records.length} records and ${rawCatalogData.attachments.length} attachments.`,
     );
-    const excludedKeys = loadExcludedKeys();
-    const { filtered: catalogData, stats: excludeStats } = applyExcludes(rawCatalogData, excludedKeys);
+    const { filtered: catalogData, stats: excludeStats } = applyExcludes(rawCatalogData, excludedItemKeys);
     if (excludeStats.excludedRecords > 0 || excludeStats.unmatchedKeys.length > 0) {
+      const tagLabel = config.excludeTag ? `"${config.excludeTag}"` : "(no tag configured)";
       logger.info(
-        `Excludes from ${getExcludesPath()}: ${excludeStats.excludedRecords} record(s) and ${excludeStats.excludedAttachments} attachment(s) skipped`
+        `Excludes from Zotero tag ${tagLabel}: ${excludeStats.excludedRecords} record(s) and ${excludeStats.excludedAttachments} attachment(s) skipped`
         + (excludeStats.unmatchedKeys.length > 0
-          ? `; ${excludeStats.unmatchedKeys.length} key(s) in the file did not match any bibliography entry: ${excludeStats.unmatchedKeys.join(", ")}`
+          ? `; ${excludeStats.unmatchedKeys.length} tagged itemKey(s) did not match any bibliography entry: ${excludeStats.unmatchedKeys.join(", ")}`
           : ""),
         { console: true },
       );

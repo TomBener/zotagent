@@ -16,6 +16,10 @@ export interface AppConfig {
   // --reading-order=off (vertical CJK layout). Unset = no PDFs are treated
   // as vertical. Sync queries Zotero's Web API for this tag at start.
   verticalTextTag?: string;
+  // Name of the Zotero tag whose items should be skipped entirely by sync
+  // (no extraction, no manifest, no keyword/qmd indexing). Unset = nothing
+  // is excluded. Sync queries Zotero's Web API for this tag at start.
+  excludeTag?: string;
   warnings: string[];
 }
 

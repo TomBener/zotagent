@@ -1,11 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 
 import type { CatalogData } from "../../src/catalog.js";
-import { applyExcludes, loadExcludedKeys } from "../../src/excludes.js";
+import { applyExcludes } from "../../src/excludes.js";
 import type { AttachmentCatalogEntry, BibliographyRecord } from "../../src/types.js";
 
 function makeRecord(itemKey: string, citationKey?: string): BibliographyRecord {
@@ -35,38 +32,6 @@ function makeAttachment(itemKey: string, citationKey: string | undefined, filePa
   };
 }
 
-test("loadExcludedKeys returns an empty set when the file is missing", () => {
-  const root = mkdtempSync(join(tmpdir(), "zotagent-excludes-missing-"));
-  const path = join(root, "does-not-exist.txt");
-  assert.equal(loadExcludedKeys(path).size, 0);
-});
-
-test("loadExcludedKeys parses keys with comments, blanks, and free-form notes", () => {
-  const root = mkdtempSync(join(tmpdir(), "zotagent-excludes-parse-"));
-  const path = join(root, "excludes.txt");
-  writeFileSync(
-    path,
-    [
-      "# Top-of-file comment",
-      "",
-      "Q8FA4UZT  # Radkau, picture book",
-      "NZ4AAR5C    余英時 vertical CJK",
-      "  ",
-      "  NTRDQXNI",
-      "# trailing comment",
-      "lee2024party",
-      "DUPLICATE   first occurrence",
-      "DUPLICATE   second occurrence — set should dedupe",
-    ].join("\n"),
-    "utf-8",
-  );
-  const keys = loadExcludedKeys(path);
-  assert.deepEqual(
-    [...keys].sort(),
-    ["DUPLICATE", "NTRDQXNI", "NZ4AAR5C", "Q8FA4UZT", "lee2024party"].sort(),
-  );
-});
-
 test("applyExcludes is a no-op when the exclusion set is empty", () => {
   const data: CatalogData = {
     records: [makeRecord("AAAAAAAA")],
@@ -80,54 +45,54 @@ test("applyExcludes is a no-op when the exclusion set is empty", () => {
   assert.deepEqual(stats.unmatchedKeys, []);
 });
 
-test("applyExcludes drops records and attachments by itemKey or citationKey", () => {
+test("applyExcludes drops records and attachments whose itemKey is tagged", () => {
   const data: CatalogData = {
     records: [
       makeRecord("KEEPITEM", "lee2024keep"),
       makeRecord("DROPITEM", "lee2024drop"),
-      makeRecord("BYCITKEY", "drop2024cite"),
     ],
     attachments: [
       makeAttachment("KEEPITEM", "lee2024keep", "/tmp/keep.pdf"),
       makeAttachment("DROPITEM", "lee2024drop", "/tmp/drop1.pdf"),
       makeAttachment("DROPITEM", "lee2024drop", "/tmp/drop2.pdf"),
-      makeAttachment("BYCITKEY", "drop2024cite", "/tmp/bycitekey.pdf"),
     ],
   };
-  const excludes = new Set(["DROPITEM", "drop2024cite"]);
+  const excludes = new Set(["DROPITEM"]);
   const { filtered, stats } = applyExcludes(data, excludes);
 
   assert.deepEqual(filtered.records.map((r) => r.itemKey), ["KEEPITEM"]);
   assert.deepEqual(filtered.attachments.map((a) => a.filePath), ["/tmp/keep.pdf"]);
-  assert.equal(stats.excludedRecords, 2);
-  assert.equal(stats.excludedAttachments, 3);
-  assert.deepEqual(stats.matchedKeys.sort(), ["DROPITEM", "drop2024cite"].sort());
+  assert.equal(stats.excludedRecords, 1);
+  assert.equal(stats.excludedAttachments, 2);
+  assert.deepEqual(stats.matchedKeys, ["DROPITEM"]);
   assert.deepEqual(stats.unmatchedKeys, []);
 });
 
-test("applyExcludes reports keys that did not match any bibliography entry", () => {
+test("applyExcludes ignores citationKey membership in the tag-fetched set", () => {
+  // The tag-driven flow always yields itemKeys from the Zotero API, so the
+  // filter only matches on itemKey. A citationKey accidentally placed in the
+  // set is treated as a stale entry and reported as unmatched.
+  const data: CatalogData = {
+    records: [makeRecord("KEEPITEM", "lee2024keep")],
+    attachments: [makeAttachment("KEEPITEM", "lee2024keep", "/tmp/keep.pdf")],
+  };
+  const excludes = new Set(["lee2024keep"]);
+  const { filtered, stats } = applyExcludes(data, excludes);
+  assert.equal(filtered.records.length, 1);
+  assert.equal(stats.excludedRecords, 0);
+  assert.deepEqual(stats.unmatchedKeys, ["lee2024keep"]);
+});
+
+test("applyExcludes reports keys whose itemKey didn't match any bibliography entry", () => {
+  // Common case: a Zotero item is tagged but its attachment hasn't been
+  // re-exported through Better BibTeX yet, so it's not in the bibliography.
   const data: CatalogData = {
     records: [makeRecord("PRESENT1")],
     attachments: [makeAttachment("PRESENT1", undefined, "/tmp/p.pdf")],
   };
-  const excludes = new Set(["PRESENT1", "STALE_KEY", "another-typo"]);
+  const excludes = new Set(["PRESENT1", "STALEKEY"]);
   const { filtered, stats } = applyExcludes(data, excludes);
   assert.equal(filtered.records.length, 0);
   assert.deepEqual(stats.matchedKeys, ["PRESENT1"]);
-  assert.deepEqual(stats.unmatchedKeys.sort(), ["STALE_KEY", "another-typo"].sort());
-});
-
-test("applyExcludes marks both itemKey and citationKey as matched when the same record lists both", () => {
-  const data: CatalogData = {
-    records: [makeRecord("ALIASKEY", "lee2024alias")],
-    attachments: [makeAttachment("ALIASKEY", "lee2024alias", "/tmp/alias.pdf")],
-  };
-  const excludes = new Set(["ALIASKEY", "lee2024alias"]);
-  const { filtered, stats } = applyExcludes(data, excludes);
-  assert.equal(filtered.records.length, 0);
-  assert.equal(filtered.attachments.length, 0);
-  assert.deepEqual(stats.matchedKeys.sort(), ["ALIASKEY", "lee2024alias"].sort());
-  // Critical: the alias must NOT be reported as unmatched even though only one
-  // alias is needed to drop the record.
-  assert.deepEqual(stats.unmatchedKeys, []);
+  assert.deepEqual(stats.unmatchedKeys, ["STALEKEY"]);
 });

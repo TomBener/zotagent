@@ -16,7 +16,7 @@
 - PDF extraction runs through [OpenDataLoader PDF](https://github.com/opendataloader-project/opendataloader-pdf), retries failed batches one PDF at a time, and falls back to text-only / `pdftotext` paths for known structural, empty-output, or timeout failures. EPUB and HTML are extracted in-process; TXT is indexed directly.
 - Incremental sync skips unchanged ready files and unchanged extraction errors, unless `--retry-errors` is passed. It also detects attachments renamed or moved inside `attachmentsRoot` and migrates cached artifacts instead of re-extracting and re-embedding.
 - Operational controls include `--attachments-root`, `--pdf-timeout-ms`, `--pdf-batch-size`, `--pdf-concurrency`, sync logs under `logs/`, `status` for index counts and paths, and `syncEnabled: false` for read-only hosts.
-- `~/.zotagent/excludes.txt` can exclude noisy or broken items by `itemKey` or `citationKey`; excluded items are removed from keyword and qmd indexing on the next sync.
+- `excludeTag` in `~/.zotagent/config.json` names a Zotero tag (e.g. `"zotagent:exclude"`); top-level items carrying that tag are skipped by sync entirely (no extraction, no manifest, no keyword/qmd indexing) and removed from the local indexes on the next sync.
 
 ### Search
 
@@ -37,7 +37,7 @@ All three address an item by `--key`, which accepts either `itemKey` or `citatio
 
 ### Diagnostics
 
-- `diagnose` — scan indexed manifests for anomalously fragmented extraction output, such as per-word English blocks, per-character vertical CJK, scanned non-OCR PDFs, or multi-column gazetteers. Use the returned `itemKey`s to re-extract or exclude bad PDFs before re-syncing.
+- `diagnose` — scan indexed manifests for anomalously fragmented extraction output, such as per-word English blocks, per-character vertical CJK, scanned non-OCR PDFs, or multi-column gazetteers. Apply the suggested Zotero tag (`excludeTag` to skip, `verticalTextTag` to re-extract with --reading-order=off) before re-syncing.
 
 ### Add to Zotero
 
@@ -80,7 +80,8 @@ The wizard prompts for each basic field, uses the current value (if any) as defa
   "zoteroLibraryType": "user",
   "zoteroCollectionKey": "<optional-collection-key>",
   "zoteroApiKey": "<zotero-api-key>",
-  "verticalTextTag": "zotagent:vertical"
+  "verticalTextTag": "zotagent:vertical",
+  "excludeTag": "zotagent:exclude"
 }
 ```
 
@@ -101,6 +102,8 @@ Where each field comes from:
 - **`semanticScholarApiKey`** — required by `s2` and `add --s2-paper-id`; other commands ignore it. Request one from the "API Key Form" on [semanticscholar.org/product/api](https://www.semanticscholar.org/product/api#api-key) (approval typically takes a few business days).
 
 - **`verticalTextTag`** — optional. Name of a Zotero tag (suggested: `"zotagent:vertical"`) that you apply to top-level items whose PDFs render text vertically (Republican Chinese books, Taiwan classical works). At sync start zotagent queries the Web API for items carrying this tag and passes `--reading-order=off` to the PDF extractor for them, so the default xycut block ordering doesn't scramble columns. Unset = no PDFs are treated as vertical. Requires `zoteroApiKey` to be set.
+
+- **`excludeTag`** — optional. Name of a Zotero tag (suggested: `"zotagent:exclude"`) that you apply to top-level items you want sync to skip entirely (picture books, OCR-failed scans, multi-column gazetteers, anything that produces noisy extraction). At sync start zotagent queries the Web API for items carrying this tag and drops them from `catalogData` before extraction; previously-indexed entries are removed from keyword and qmd indexes on the next sync. Unset = nothing is excluded. Requires `zoteroApiKey` to be set.
 
 Any of these can also come from environment variables (`ZOTAGENT_*` or unprefixed fallbacks like `ZOTERO_API_KEY`).
 
@@ -143,11 +146,14 @@ Index
         --pdf-batch-size <n>        Override the maximum number of PDFs per extraction batch.
         --pdf-concurrency <n>       Run N extraction batches in parallel (default 2). Each batch
                                     spawns its own java process; tune with available CPU and RAM.
-      Auto-loads ~/.zotagent/excludes.txt if present: one itemKey or citationKey per line,
-      `#` comments allowed, blank lines ignored. Listed items are skipped entirely (no
-      extraction, no manifest, no normalized text, no keyword/qmd indexing). Use `zotagent
-      diagnose` to find candidate itemKeys to exclude (picture books, OCR-failed scans,
-      vertical-CJK PDFs that the extractor can't handle).
+      Honors two Zotero-tag-driven knobs from ~/.zotagent/config.json:
+        - `excludeTag` (e.g. "zotagent:exclude"): top-level items carrying that tag
+          are skipped entirely (no extraction, no manifest, no keyword/qmd indexing).
+          Use `zotagent diagnose` to find candidates (picture books, OCR-failed
+          scans, multi-column gazetteers), then apply the tag in Zotero.
+        - `verticalTextTag` (e.g. "zotagent:vertical"): top-level items carrying that
+          tag are extracted with --reading-order=off so vertical CJK columns don't
+          get scrambled by the default xycut block ordering.
 
   status
       Show attachment counts, local index paths, and qmd status.
@@ -294,7 +300,7 @@ A few behaviors worth knowing:
 - `search` returns a compact character-windowed `passage` centered on the hit and capped at 500 tokens; use `expand --key <key> --offset <charOffset>` to pull fuller context. Title-driven lookups belong in `metadata`, not `search`, because keyword search indexes attachment body text only. `metadata` omits `abstract` by default for the same compactness reason — pass `--abstract` to include it.
 - Traditional Chinese is folded to simplified at both index and query time. This applies to `search`, `search-in`, and `metadata`; `search --semantic` does not fold. Returned text (`passage`, `blocks`, `fulltext`, `expand`) preserves the original form as stored in the attachment.
 - `sync` skips files that fail extraction, records them as `error`, and continues. Re-runs skip unchanged errors; pass `--retry-errors` to retry. When an item has both a PDF and an EPUB, only the EPUB is indexed (both files stay attached in Zotero).
-- `sync` auto-loads `~/.zotagent/excludes.txt` when present. Put one `itemKey` or `citationKey` per line; blank lines and `#` comments are ignored. Excluded items are skipped entirely and removed from local keyword/qmd indexing on the next sync.
+- `sync` honors the Zotero tag named in `excludeTag` (config.json): top-level items carrying that tag are skipped entirely and removed from local keyword/qmd indexing on the next sync. Use `zotagent diagnose` to surface candidates (picture books, OCR-failed scans, multi-column gazetteers), then apply the tag in Zotero.
 - `sync` detects attachments renamed or moved inside `attachmentsRoot` by matching `(itemKey, size, mtimeMs)` and migrates the cached `normalized/<docKey>.md` + `manifests/<docKey>.json.gz` to the new `docKey` — no re-extract, no re-embed.
 - `sync` is crash-safe across indexer-state changes: the progress catalog keeps the previous embed model and indexer signature until stored vectors have actually been cleared, so interrupting `sync` never leaves the index in a "claims fresh / is stale" state.
 - `search`, `blocks`, `fulltext`, and `expand` work entirely on the local index — run `sync` first when the library has changed.
