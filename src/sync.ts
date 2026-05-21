@@ -544,19 +544,8 @@ function toCatalogEntry(
     extractStatus: partial.extractStatus,
     ...(partial.normalizedPath ? { normalizedPath: partial.normalizedPath } : {}),
     ...(partial.manifestPath ? { manifestPath: partial.manifestPath } : {}),
-    ...(partial.verticalText !== undefined ? { verticalText: partial.verticalText } : {}),
     ...(partial.error ? { error: partial.error } : {}),
   };
-}
-
-// Look up whether this attachment was tagged for vertical extraction. Returns
-// undefined for non-PDFs so the catalog entry omits the field entirely.
-function resolveVerticalText(
-  attachment: AttachmentCatalogEntry,
-  verticalItemKeys: ReadonlySet<string>,
-): boolean | undefined {
-  if (attachment.fileExt !== "pdf") return undefined;
-  return verticalItemKeys.has(attachment.itemKey);
 }
 
 function deleteIfExists(path: string | undefined): void {
@@ -1430,7 +1419,6 @@ export async function runSync(
         : currentIndexerState;
     const nextEntries: CatalogEntry[] = [];
     const changedAttachments: AttachmentCatalogEntry[] = [];
-    const verticalTextByDocKey = new Map<string, boolean>();
     // Populated only by recordReadyAttachment on successful extraction. We
     // cannot derive this from changedAttachments because a re-extraction can
     // fail and be rolled back to the previous ready state — in that case the
@@ -1510,22 +1498,15 @@ export async function runSync(
         previous.size === current.size &&
         previous.mtimeMs === currentMtimeMs;
       // Vertical-text status comes entirely from the Zotero tag we fetched
-      // at sync start — no per-PDF detection, no cached catalog fallback.
-      const verticalText = resolveVerticalText(attachment, verticalItemKeys);
-      const verticalForReuseCheck = verticalText ?? false;
-      if (verticalText !== undefined) {
-        verticalTextByDocKey.set(attachment.docKey, verticalText);
-      }
-      // Steady-state fast path: when the previous sync completed and the
-      // attachment's previously-recorded verticalText already matches the
-      // current Zotero tag verdict, the cached normalized/manifest pair is
-      // guaranteed to have been produced under the right reading-order mode
-      // and we can skip reading the manifest. A tag flip in Zotero between
-      // syncs invalidates this and falls through to the deep check, which
-      // forces re-extraction.
-      const canUseCatalogFastPath =
-        previousCatalogCompleted &&
-        (attachment.fileExt !== "pdf" || previous?.verticalText === verticalText);
+      // at sync start. For non-PDFs the value is irrelevant (manifests don't
+      // carry the flag), but using false uniformly keeps the reuse logic
+      // simple.
+      const isVertical = attachment.fileExt === "pdf" && verticalItemKeys.has(attachment.itemKey);
+      // For PDFs we always validate the manifest's recorded extraction mode
+      // against the current tag verdict — that's the source of truth for
+      // "does this cached artifact match what the user wants now?". Non-PDF
+      // entries can use the cheap existence check.
+      const canUseCatalogFastPath = previousCatalogCompleted && attachment.fileExt !== "pdf";
       const previousIsReadyAndUnchanged =
         previous?.extractStatus === "ready" &&
         previousIsUnchanged &&
@@ -1535,7 +1516,7 @@ export async function runSync(
               attachment,
               previous.normalizedPath,
               previous.manifestPath,
-              verticalForReuseCheck,
+              isVertical,
             ));
       const previousIsErrorAndUnchanged =
         previous?.extractStatus === "error" &&
@@ -1544,7 +1525,7 @@ export async function runSync(
         attachment,
         fallbackNormalizedPath,
         fallbackManifestPath,
-        verticalForReuseCheck,
+        isVertical,
       );
 
       if (previousIsErrorAndUnchanged && !fallbackArtifactsReusable && !options.retryErrors) {
@@ -1555,7 +1536,6 @@ export async function runSync(
             mtimeMs: currentMtimeMs,
             sourceHash: previous.sourceHash ?? null,
             lastIndexedAt: previous.lastIndexedAt ?? null,
-            verticalText,
             error: previous.error ?? "Previous extraction error; file unchanged.",
           }),
         );
@@ -1601,7 +1581,7 @@ export async function runSync(
         // rather than carried over.
         const oldManifestIsVertical = oldManifest?.verticalText === true;
         const wouldMigrateStaleVertical =
-          oldManifest !== undefined && verticalText !== undefined && oldManifestIsVertical !== verticalText;
+          oldManifest !== undefined && attachment.fileExt === "pdf" && oldManifestIsVertical !== isVertical;
         if (
           renameFromPrev !== undefined &&
           renameFromPrev !== null &&
@@ -1652,7 +1632,6 @@ export async function runSync(
                 lastIndexedAt: renameFromPrev.lastIndexedAt ?? null,
                 normalizedPath: fallbackNormalizedPath,
                 manifestPath: fallbackManifestPath,
-                verticalText,
               }),
             );
             fileOutcomes.push({
@@ -1696,7 +1675,6 @@ export async function runSync(
         lastIndexedAt: previousIsReadyAndUnchanged ? previous.lastIndexedAt ?? null : null,
         normalizedPath: previousIsReadyAndUnchanged ? previous.normalizedPath : fallbackNormalizedPath,
         manifestPath: previousIsReadyAndUnchanged ? previous.manifestPath : fallbackManifestPath,
-        verticalText,
       });
       nextEntries.push(nextEntry);
       fileOutcomes.push({
@@ -1751,7 +1729,6 @@ export async function runSync(
         lastIndexedAt: new Date().toISOString(),
         normalizedPath: written.normalizedPath,
         manifestPath: written.manifestPath,
-        verticalText: verticalTextByDocKey.get(attachment.docKey),
       });
       nextEntries.push(nextEntry);
       recentlyExtractedDocKeys.add(attachment.docKey);
@@ -1818,7 +1795,6 @@ export async function runSync(
             lastIndexedAt: previous.lastIndexedAt ?? null,
             normalizedPath: previous.normalizedPath,
             manifestPath: previous.manifestPath,
-            verticalText: verticalTextByDocKey.get(attachment.docKey) ?? previous.verticalText,
           }),
         );
         stats.readyAttachments += 1;
@@ -1843,7 +1819,6 @@ export async function runSync(
           mtimeMs: current ? Math.trunc(current.mtimeMs) : null,
           sourceHash: null,
           lastIndexedAt: null,
-          verticalText: verticalTextByDocKey.get(attachment.docKey),
           error: message,
         }),
       );
