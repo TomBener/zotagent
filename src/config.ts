@@ -16,6 +16,7 @@ interface RawConfig {
   zoteroCollectionKey?: string;
   zoteroApiKey?: string;
   syncEnabled?: unknown;
+  verticalTextTag?: string;
   embeddingProvider?: string;
   embeddingModel?: string;
   googleApiKey?: string;
@@ -31,6 +32,7 @@ export interface ConfigOverrides {
   zoteroLibraryType?: string;
   zoteroCollectionKey?: string;
   zoteroApiKey?: string;
+  verticalTextTag?: string;
   embeddingProvider?: string;
   embeddingModel?: string;
   googleApiKey?: string;
@@ -164,6 +166,11 @@ export function resolveConfig(overrides: ConfigOverrides = {}): AppConfig {
       fileConfig.syncEnabled,
       process.env.ZOTAGENT_SYNC_ENABLED,
       warnings,
+    ),
+    verticalTextTag: firstDefined(
+      overrides.verticalTextTag,
+      process.env.ZOTAGENT_VERTICAL_TEXT_TAG,
+      fileConfig.verticalTextTag,
     ),
     warnings,
   };

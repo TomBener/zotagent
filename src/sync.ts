@@ -22,7 +22,8 @@ import { applyExcludes, getExcludesPath, loadExcludedKeys } from "./excludes.js"
 import { buildMarkdownManifest, buildPdfManifest } from "./manifest.js";
 import { extractEpub } from "./epub.js";
 import { extractHtml } from "./html-extract.js";
-import { clearPdfVerticalCache, pdfHasVerticalText } from "./pdf-vertical.js";
+import { fetchTopLevelItemKeysByTags } from "./zotero-tags.js";
+import { getReadConfig, type FetchLike } from "./zotero-read.js";
 import { KEYWORD_INDEX_SCHEMA_VERSION, openKeywordIndex, type KeywordIndexFactory } from "./keyword-db.js";
 import { QMD_PACKAGE_VERSION, openQmdClient, resolveQmdEmbedModel, type QmdFactory } from "./qmd.js";
 import { mapEntriesByDocKey, readCatalogFile, summarizeCatalog, writeCatalogFile } from "./state.js";
@@ -548,19 +549,14 @@ function toCatalogEntry(
   };
 }
 
-// Resolve the PDF's vertical-text status for this attachment, reusing the
-// previous catalog entry's cached value when the source file is unchanged
-// (avoids re-reading every PDF's bytes on every no-op sync).
+// Look up whether this attachment was tagged for vertical extraction. Returns
+// undefined for non-PDFs so the catalog entry omits the field entirely.
 function resolveVerticalText(
   attachment: AttachmentCatalogEntry,
-  previous: CatalogEntry | undefined,
-  previousIsUnchanged: boolean,
+  verticalItemKeys: ReadonlySet<string>,
 ): boolean | undefined {
   if (attachment.fileExt !== "pdf") return undefined;
-  if (previousIsUnchanged && previous?.verticalText !== undefined) {
-    return previous.verticalText;
-  }
-  return pdfHasVerticalText(attachment.filePath);
+  return verticalItemKeys.has(attachment.itemKey);
 }
 
 function deleteIfExists(path: string | undefined): void {
@@ -658,13 +654,18 @@ function hasReusableArtifacts(
   attachment: AttachmentCatalogEntry,
   normalizedPath: string | undefined,
   manifestPath: string | undefined,
-  sourceIsVertical?: boolean,
+  isVertical: boolean,
 ): normalizedPath is string {
   const manifest = readReusableArtifactManifest(attachment, normalizedPath, manifestPath);
   if (!manifest) return false;
-  if (attachment.fileExt === "pdf" && !manifest.verticalText) {
-    const isVertical = sourceIsVertical ?? pdfHasVerticalText(attachment.filePath);
-    if (isVertical) return false;
+  if (attachment.fileExt === "pdf") {
+    const manifestIsVertical = manifest.verticalText === true;
+    // Re-extract whenever the manifest's recorded vertical-text status no
+    // longer matches the user's current Zotero tag. Catches both directions:
+    // a previously-horizontal extraction that should now use
+    // --reading-order=off, and a previously-vertical extraction whose tag
+    // was removed in Zotero.
+    if (manifestIsVertical !== isVertical) return false;
   }
   return true;
 }
@@ -676,21 +677,26 @@ function isLikelyBookAttachment(attachment: AttachmentCatalogEntry): boolean {
     .some((segment) => segment.toLowerCase() === "book");
 }
 
-function shouldExtractAttachmentAlone(attachment: AttachmentCatalogEntry): boolean {
+function shouldExtractAttachmentAlone(
+  attachment: AttachmentCatalogEntry,
+  verticalItemKeys: ReadonlySet<string>,
+): boolean {
   if (isLikelyBookAttachment(attachment)) return true;
-  if (attachment.fileExt === "pdf" && pdfHasVerticalText(attachment.filePath)) return true;
+  if (attachmentIsVertical(attachment, verticalItemKeys)) return true;
   const current = statSync(attachment.filePath, { throwIfNoEntry: false });
   return Boolean(current && current.size >= ODL_SINGLE_BATCH_SIZE_BYTES);
 }
 
-function batchUsesVerticalText(batch: AttachmentCatalogEntry[]): boolean {
-  return batch.some(
-    (attachment) => attachment.fileExt === "pdf" && pdfHasVerticalText(attachment.filePath),
-  );
+function batchUsesVerticalText(
+  batch: AttachmentCatalogEntry[],
+  verticalItemKeys: ReadonlySet<string>,
+): boolean {
+  return batch.some((attachment) => attachmentIsVertical(attachment, verticalItemKeys));
 }
 
 function groupForOdlBatches(
   attachments: AttachmentCatalogEntry[],
+  verticalItemKeys: ReadonlySet<string>,
   maxBatchSize = ODL_DEFAULT_BATCH_SIZE,
 ): AttachmentCatalogEntry[][] {
   const out: AttachmentCatalogEntry[][] = [];
@@ -698,7 +704,7 @@ function groupForOdlBatches(
   let stems = new Set<string>();
 
   for (const attachment of attachments) {
-    if (maxBatchSize <= 1 || shouldExtractAttachmentAlone(attachment)) {
+    if (maxBatchSize <= 1 || shouldExtractAttachmentAlone(attachment, verticalItemKeys)) {
       if (current.length > 0) {
         out.push(current);
         current = [];
@@ -763,6 +769,7 @@ export async function runOdlConvert(
 type ExtractedPaths = { manifestPath: string; normalizedPath: string };
 type ExtractBatchOptions = {
   timeoutMs?: number;
+  verticalItemKeys?: ReadonlySet<string>;
 };
 type ExtractBatchFn = (
   batch: AttachmentCatalogEntry[],
@@ -777,7 +784,62 @@ export type SyncRunOptions = {
   pdfTimeoutMs?: number;
   pdfBatchSize?: number;
   pdfConcurrency?: number;
+  // Test injection. If provided, sync skips the Zotero API call for
+  // verticalTextTag and uses this set instead. Production code leaves this
+  // unset and lets runSync fetch from Zotero.
+  verticalItemKeys?: ReadonlySet<string>;
+  // Test injection for the fetch implementation used to query Zotero for
+  // the vertical-text tag. Defaults to globalThis.fetch.
+  fetchImpl?: FetchLike;
 };
+
+// Look up all top-level Zotero items tagged with the configured vertical-text
+// tag. Returns an empty set when the tag is unset or the request fails — a
+// failure to reach Zotero shouldn't abort sync, but it does mean every PDF
+// will be treated as horizontal until the next sync recovers the tag.
+async function resolveVerticalItemKeys(
+  config: ReturnType<typeof resolveConfig>,
+  fetchImpl: FetchLike,
+  logger: SyncLogger,
+): Promise<ReadonlySet<string>> {
+  const tag = config.verticalTextTag;
+  if (!tag) return new Set();
+  let readConfig;
+  try {
+    readConfig = getReadConfig(config);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.info(
+      `verticalTextTag "${tag}" is set but Zotero read credentials are missing: ${message}. ` +
+        "Treating all PDFs as horizontal for this sync.",
+      { console: true },
+    );
+    return new Set();
+  }
+  try {
+    const keys = await fetchTopLevelItemKeysByTags([tag], readConfig, fetchImpl);
+    logger.info(
+      `Loaded ${keys.length} attachment(s) tagged "${tag}" from Zotero; their PDFs will be extracted with --reading-order=off.`,
+      { console: true },
+    );
+    return new Set(keys);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.info(
+      `Failed to fetch Zotero items for tag "${tag}": ${message}. ` +
+        "Treating all PDFs as horizontal for this sync.",
+      { console: true },
+    );
+    return new Set();
+  }
+}
+
+function attachmentIsVertical(
+  attachment: AttachmentCatalogEntry,
+  verticalItemKeys: ReadonlySet<string>,
+): boolean {
+  return attachment.fileExt === "pdf" && verticalItemKeys.has(attachment.itemKey);
+}
 
 async function extractBatchPdftotext(
   batch: AttachmentCatalogEntry[],
@@ -812,7 +874,7 @@ async function extractBatchPdftotext(
         attachment,
         readFileSync(textPath, "utf-8"),
         normalizedPath,
-        attachment.fileExt === "pdf" && pdfHasVerticalText(attachment.filePath)
+        attachmentIsVertical(attachment, options.verticalItemKeys ?? new Set())
           ? { verticalText: true }
           : {},
       );
@@ -838,7 +900,7 @@ async function extractBatchTextOnly(
   const tempDir = mkdtempSync(join(tempRoot, "odl-text-"));
   const byDocKey = new Map<string, ExtractedPaths>();
 
-  const verticalText = batchUsesVerticalText(batch);
+  const verticalText = batchUsesVerticalText(batch, options.verticalItemKeys ?? new Set());
 
   try {
     await withJavaToolOptions(() =>
@@ -951,7 +1013,7 @@ async function extractBatchStructured(
   const tempDir = mkdtempSync(join(tempRoot, "odl-"));
   const byDocKey = new Map<string, ExtractedPaths>();
 
-  const verticalText = batchUsesVerticalText(batch);
+  const verticalText = batchUsesVerticalText(batch, options.verticalItemKeys ?? new Set());
 
   try {
     await withJavaToolOptions(() =>
@@ -1251,12 +1313,13 @@ export async function runSync(
     ensureDir(paths.indexDir);
     ensureDir(paths.tempDir);
     ensureDir(paths.logsDir);
-    // pdfHasVerticalText memoizes by path; clear at sync start so a long-lived
-    // host process (tests, library callers) doesn't reuse stale results when a
-    // PDF was modified in place between syncs. CatalogEntry.verticalText still
-    // provides cross-sync caching, gated by size/mtime equality.
-    clearPdfVerticalCache();
     logger.info("Prepared data directories.");
+
+    // Tag-driven vertical detection: ask Zotero once which top-level items
+    // carry the configured tag and treat their PDFs as vertical. Test
+    // injection (options.verticalItemKeys) bypasses the API call.
+    const verticalItemKeys: ReadonlySet<string> =
+      options.verticalItemKeys ?? (await resolveVerticalItemKeys(config, options.fetchImpl ?? fetch, logger));
 
     const rawCatalogData = loadCatalog(config);
     logger.info(
@@ -1414,22 +1477,23 @@ export async function runSync(
         previous !== undefined &&
         previous.size === current.size &&
         previous.mtimeMs === currentMtimeMs;
-      // Compute once per attachment per sync, reusing previous.verticalText
-      // when the source is unchanged. Avoids scanning every horizontal PDF's
-      // bytes on every no-op sync.
-      const verticalText = resolveVerticalText(attachment, previous, previousIsUnchanged);
+      // Vertical-text status comes entirely from the Zotero tag we fetched
+      // at sync start — no per-PDF detection, no cached catalog fallback.
+      const verticalText = resolveVerticalText(attachment, verticalItemKeys);
+      const verticalForReuseCheck = verticalText ?? false;
       if (verticalText !== undefined) {
         verticalTextByDocKey.set(attachment.docKey, verticalText);
       }
-      // The completed-catalog fast path skips reading the manifest. PDFs only
-      // need the manifest-aware deep check until verticalText has been cached
-      // on the catalog entry — once we've migrated the entry (true or false),
-      // the catalog already knows whether reading-order=off was required and
-      // there's nothing left to invalidate, so steady-state syncs can use the
-      // cheap existence check instead of reading every manifest from disk.
+      // Steady-state fast path: when the previous sync completed and the
+      // attachment's previously-recorded verticalText already matches the
+      // current Zotero tag verdict, the cached normalized/manifest pair is
+      // guaranteed to have been produced under the right reading-order mode
+      // and we can skip reading the manifest. A tag flip in Zotero between
+      // syncs invalidates this and falls through to the deep check, which
+      // forces re-extraction.
       const canUseCatalogFastPath =
         previousCatalogCompleted &&
-        (attachment.fileExt !== "pdf" || previous?.verticalText !== undefined);
+        (attachment.fileExt !== "pdf" || previous?.verticalText === verticalText);
       const previousIsReadyAndUnchanged =
         previous?.extractStatus === "ready" &&
         previousIsUnchanged &&
@@ -1439,7 +1503,7 @@ export async function runSync(
               attachment,
               previous.normalizedPath,
               previous.manifestPath,
-              verticalText,
+              verticalForReuseCheck,
             ));
       const previousIsErrorAndUnchanged =
         previous?.extractStatus === "error" &&
@@ -1448,7 +1512,7 @@ export async function runSync(
         attachment,
         fallbackNormalizedPath,
         fallbackManifestPath,
-        verticalText,
+        verticalForReuseCheck,
       );
 
       if (previousIsErrorAndUnchanged && !fallbackArtifactsReusable && !options.retryErrors) {
@@ -1498,12 +1562,14 @@ export async function runSync(
                 renameFromNormalizedPath,
                 renameFromManifestPath,
               );
-        // Don't migrate stale scrambled output: if the source is vertical but
-        // the old manifest predates verticalText support, the cached blocks
-        // came from a xycut extraction and must be re-extracted under the new
-        // docKey rather than carried over.
+        // Don't migrate stale extraction output: if the current tag-based
+        // verdict disagrees with the old manifest's verticalText (either
+        // direction), the cached blocks were produced under the wrong
+        // reading-order mode and must be re-extracted under the new docKey
+        // rather than carried over.
+        const oldManifestIsVertical = oldManifest?.verticalText === true;
         const wouldMigrateStaleVertical =
-          verticalText === true && oldManifest !== undefined && !oldManifest.verticalText;
+          oldManifest !== undefined && verticalText !== undefined && oldManifestIsVertical !== verticalText;
         if (
           renameFromPrev !== undefined &&
           renameFromPrev !== null &&
@@ -1751,7 +1817,11 @@ export async function runSync(
       );
     }
 
-    const batches = groupForOdlBatches(pdfAttachments, options.pdfBatchSize ?? ODL_DEFAULT_BATCH_SIZE);
+    const batches = groupForOdlBatches(
+      pdfAttachments,
+      verticalItemKeys,
+      options.pdfBatchSize ?? ODL_DEFAULT_BATCH_SIZE,
+    );
     const concurrency = Math.max(1, options.pdfConcurrency ?? ODL_DEFAULT_CONCURRENCY);
     logger.info(
       `Extracting ${pdfAttachments.length} PDF(s) in ${batches.length} batch(es) with concurrency ${concurrency}.`,
@@ -1788,7 +1858,10 @@ export async function runSync(
           paths.tempDir,
           paths.manifestsDir,
           paths.normalizedDir,
-          options.pdfTimeoutMs !== undefined ? { timeoutMs: options.pdfTimeoutMs } : undefined,
+          {
+            verticalItemKeys,
+            ...(options.pdfTimeoutMs !== undefined ? { timeoutMs: options.pdfTimeoutMs } : {}),
+          },
         );
         for (const attachment of batch) {
           const written = extracted.get(attachment.docKey);
@@ -1831,7 +1904,10 @@ export async function runSync(
                 paths.tempDir,
                 paths.manifestsDir,
                 paths.normalizedDir,
-                options.pdfTimeoutMs !== undefined ? { timeoutMs: options.pdfTimeoutMs } : undefined,
+                {
+                  verticalItemKeys,
+                  ...(options.pdfTimeoutMs !== undefined ? { timeoutMs: options.pdfTimeoutMs } : {}),
+                },
               );
               const written = extracted.get(attachment.docKey);
               if (!written) {

@@ -12,6 +12,10 @@ export interface AppConfig {
   zoteroCollectionKey?: string;
   zoteroApiKey?: string;
   syncEnabled?: boolean;
+  // Name of the Zotero tag whose items should be extracted with
+  // --reading-order=off (vertical CJK layout). Unset = no PDFs are treated
+  // as vertical. Sync queries Zotero's Web API for this tag at start.
+  verticalTextTag?: string;
   warnings: string[];
 }
 

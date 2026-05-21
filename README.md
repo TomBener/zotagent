@@ -79,7 +79,8 @@ The wizard prompts for each basic field, uses the current value (if any) as defa
   "zoteroLibraryId": "<library-id>",
   "zoteroLibraryType": "user",
   "zoteroCollectionKey": "<optional-collection-key>",
-  "zoteroApiKey": "<zotero-api-key>"
+  "zoteroApiKey": "<zotero-api-key>",
+  "verticalTextTag": "<optional-tag-name>"
 }
 ```
 
@@ -98,6 +99,8 @@ Where each field comes from:
 - **`zoteroCollectionKey`** — optional. 8-character key of a collection that `add` will drop new items into. Open the collection in the Zotero web library (`zotero.org/<user>/collections/<key>`); the last segment is the key.
 
 - **`semanticScholarApiKey`** — required by `s2` and `add --s2-paper-id`; other commands ignore it. Request one from the "API Key Form" on [semanticscholar.org/product/api](https://www.semanticscholar.org/product/api#api-key) (approval typically takes a few business days).
+
+- **`verticalTextTag`** — optional. Name of a Zotero tag (e.g. `"vertical layout"`) that you apply to top-level items whose PDFs render text vertically (民国 Chinese books, Taiwan classical works). At sync start zotagent queries the Web API for items carrying this tag and passes `--reading-order=off` to the PDF extractor for them, so the default xycut block ordering doesn't scramble columns. Unset = no PDFs are treated as vertical. Requires `zoteroApiKey` to be set.
 
 Any of these can also come from environment variables (`ZOTAGENT_*` or unprefixed fallbacks like `ZOTERO_API_KEY`).
 

@@ -65,6 +65,11 @@ const FIELDS: FieldSpec[] = [
     help: "Semantic Scholar API key. Required by `s2` and `add --s2-paper-id`.",
   },
   {
+    key: "verticalTextTag",
+    required: false,
+    help: "Optional Zotero tag name; items carrying it are extracted with --reading-order=off (vertical CJK layout).",
+  },
+  {
     key: "syncEnabled",
     required: false,
     boolean: true,

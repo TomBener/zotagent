@@ -16,18 +16,6 @@ import {
   runSync,
   withJavaToolOptions,
 } from "../../src/sync.js";
-import {
-  _setLayoutVerifierForTesting,
-  clearPdfVerticalCache,
-  pdfHasVerticalText,
-  pdfVerticalCacheSize,
-} from "../../src/pdf-vertical.js";
-
-// Synthetic test PDFs (just enough bytes to contain "/Identity-V") cannot
-// pass the real pdftotext-backed stage-2 check because they are not valid
-// PDF documents. Treat any /Identity-V-bearing file as vertical here; the
-// real two-stage logic is exercised in tests/unit/pdf-vertical.test.ts.
-_setLayoutVerifierForTesting(() => true);
 import { readCatalogFile, writeCatalogFile } from "../../src/state.js";
 import type { CatalogFile, ManifestBlock } from "../../src/types.js";
 import { MANIFEST_EXT, readManifestFile, sha1, writeManifestFile } from "../../src/utils.js";
@@ -578,6 +566,7 @@ test("runSync re-extracts vertical PDFs whose cached manifest predates verticalT
     keywordFactory,
     extractBatchFn,
     () => {},
+    { verticalItemKeys: new Set(["ITEM1"]) },
   );
 
   assert.deepEqual(extractCalls, [docKey], "expected stale vertical PDF to be re-extracted");
@@ -728,6 +717,7 @@ test("runSync re-extraction of a vertical PDF with unchanged sourceHash still up
     keywordFactory,
     extractBatchFn,
     () => {},
+    { verticalItemKeys: new Set(["ITEM1"]) },
   );
 
   assert.equal(result.stats.updatedAttachments, 1, "re-extraction must run");
@@ -870,6 +860,7 @@ test("runSync preserves previous artifacts when a vertical-PDF re-extraction fai
     keywordFactory,
     extractBatchFn as never,
     () => {},
+    { verticalItemKeys: new Set(["ITEM1"]) },
   );
 
   assert.ok(existsSync(normalizedPath), "previous normalized.md must survive a failed re-extraction");
@@ -1005,6 +996,7 @@ test("runSync errors a failed re-extraction when the previous normalized.md is m
     undefined,
     extractBatchFn as never,
     () => {},
+    { verticalItemKeys: new Set(["ITEM1"]) },
   );
 
   assert.equal(
@@ -1017,8 +1009,8 @@ test("runSync errors a failed re-extraction when the previous normalized.md is m
   assert.equal(persisted.entries[0]?.extractStatus, "error");
 });
 
-test("runSync rescans pdfHasVerticalText across syncs in the same process when the source changes in place", async () => {
-  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-vertical-cache-clear-"));
+test("runSync re-extracts when the Zotero vertical-text tag is added between syncs", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-vertical-tag-flip-"));
   const attachmentsRoot = join(root, "attachments");
   const dataDir = join(root, "data");
   const indexDir = join(dataDir, "index");
@@ -1029,9 +1021,8 @@ test("runSync rescans pdfHasVerticalText across syncs in the same process when t
   mkdirSync(normalizedDir, { recursive: true });
   mkdirSync(manifestsDir, { recursive: true });
 
-  // First sync sees a horizontal PDF.
   const pdfPath = join(attachmentsRoot, "papers", "paper.pdf");
-  writeFileSync(pdfPath, "%PDF-1.4\n10 0 obj <</Type/Font/Encoding/Identity-H>> endobj\n%%EOF\n");
+  writeFileSync(pdfPath, "pdf bytes");
 
   const bibliographyPath = join(root, "bibliography.json");
   writeFileSync(
@@ -1066,10 +1057,17 @@ test("runSync rescans pdfHasVerticalText across syncs in the same process when t
     close: async () => {},
   });
 
-  const observedVerticalAtExtract: boolean[] = [];
-  const extractBatchFn = async (batch: Array<{ docKey: string; filePath: string; itemKey: string }>) => {
+  const verticalSeenAtExtract: boolean[] = [];
+  const extractBatchFn = async (
+    batch: Array<{ docKey: string; filePath: string; itemKey: string }>,
+    _tempRoot: string,
+    _manifestsDir: string,
+    _normalizedDir: string,
+    extractOptions?: { verticalItemKeys?: ReadonlySet<string> },
+  ) => {
     const attachment = batch[0]!;
-    observedVerticalAtExtract.push(pdfHasVerticalText(attachment.filePath));
+    const isVertical = extractOptions?.verticalItemKeys?.has(attachment.itemKey) ?? false;
+    verticalSeenAtExtract.push(isVertical);
     writeFileSync(normalizedPath, "Body", "utf-8");
     writeManifestFile(manifestPath, {
       docKey: attachment.docKey,
@@ -1078,40 +1076,38 @@ test("runSync rescans pdfHasVerticalText across syncs in the same process when t
       authors: ["A"],
       filePath: attachment.filePath,
       normalizedPath,
-      ...(pdfHasVerticalText(attachment.filePath) ? { verticalText: true } : {}),
+      ...(isVertical ? { verticalText: true } : {}),
       blocks: [trivialBlock()],
     });
     return new Map([[attachment.docKey, { manifestPath, normalizedPath }]]);
   };
 
+  // First sync: item is not tagged, extracted as horizontal.
   await runSync(
     { bibliographyJsonPath: bibliographyPath, attachmentsRoot, dataDir },
     qmdFactory,
     undefined,
     extractBatchFn as never,
     () => {},
+    { verticalItemKeys: new Set() },
   );
-  assert.equal(observedVerticalAtExtract[0], false, "first sync sees the horizontal PDF");
+  assert.equal(verticalSeenAtExtract[0], false, "first sync sees the item as horizontal");
 
-  // Replace the file in place with vertical bytes; ensure size/mtime visibly
-  // change so the catalog reuse layer correctly refreshes its judgment.
-  writeFileSync(
-    pdfPath,
-    "%PDF-1.3\n10 0 obj <</Type/Font/Subtype/Type0/Encoding/Identity-V>> endobj\n11 0 obj <</padding 1234567890>> endobj\n%%EOF\n",
-  );
-  utimesSync(pdfPath, new Date(Date.now() + 2000), new Date(Date.now() + 2000));
-
+  // Second sync: tag was added in Zotero between syncs. The cached manifest
+  // says horizontal, the new tag set says vertical — runSync must detect the
+  // mismatch and re-extract.
   await runSync(
     { bibliographyJsonPath: bibliographyPath, attachmentsRoot, dataDir },
     qmdFactory,
     undefined,
     extractBatchFn as never,
     () => {},
+    { verticalItemKeys: new Set(["ITEM1"]) },
   );
   assert.equal(
-    observedVerticalAtExtract[1],
+    verticalSeenAtExtract[1],
     true,
-    "second sync must observe the in-place flip to vertical (cache cleared at sync start)",
+    "second sync must re-extract with the vertical flag now that the tag was added",
   );
 });
 
@@ -1225,6 +1221,7 @@ test("runSync marks the entry as error when a same-size/same-mtime replacement c
     undefined,
     extractBatchFn as never,
     () => {},
+    { verticalItemKeys: new Set(["ITEM1"]) },
   );
 
   assert.equal(result.stats.errorAttachments, 1, "replacement + failed extraction must surface as error");
@@ -1357,6 +1354,8 @@ test("runSync re-extracts a renamed vertical PDF whose old manifest predates ver
     qmdFactory,
     undefined,
     extractBatchFn as never,
+    undefined,
+    { verticalItemKeys: new Set(["ITEM1"]) },
   );
 
   assert.deepEqual(
@@ -1584,7 +1583,6 @@ test("runSync trusts cached catalog verticalText and does not rescan unchanged h
     close: async () => {},
   });
 
-  clearPdfVerticalCache();
   const result = await runSync(
     {
       bibliographyJsonPath: bibliographyPath,
@@ -1600,9 +1598,6 @@ test("runSync trusts cached catalog verticalText and does not rescan unchanged h
 
   assert.equal(result.stats.skippedAttachments, 1);
   assert.equal(result.stats.updatedAttachments, 0);
-  // The in-memory scan cache stays empty: resolveVerticalText short-circuited
-  // on the cached catalog value and pdfHasVerticalText was never invoked.
-  assert.equal(pdfVerticalCacheSize(), 0);
   const persisted = readCatalogFile(join(indexDir, "catalog.json"));
   assert.equal(persisted.entries[0]?.verticalText, false);
 });
@@ -2654,6 +2649,8 @@ test("runSync preserves verticalText when migrating a renamed vertical PDF", asy
     qmdFactory,
     undefined,
     extractBatchFn as never,
+    undefined,
+    { verticalItemKeys: new Set(["ITEM1"]) },
   );
 
   assert.equal(extractCalls.length, 0, "rename migration must avoid re-extraction");
