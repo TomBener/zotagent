@@ -207,6 +207,7 @@ test("runSync relays SIGINT instead of swallowing it", () => {
         cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
         migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
         adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+        compactDatabase: async () => ({ ran: false, reason: "" }),
         close: async () => {},
       });
       const fakeExtractBatch = async () => {
@@ -280,6 +281,7 @@ test("runSync does not swallow uncaught exceptions", () => {
         cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
         migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
         adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+        compactDatabase: async () => ({ ran: false, reason: "" }),
         close: async () => {},
       });
       const fakeExtractBatch = async () => {
@@ -419,6 +421,7 @@ test("runSync skips unchanged ready pdfs and refreshes qmd contexts", async () =
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {
       calls.closed += 1;
     },
@@ -534,6 +537,7 @@ test("runSync re-extracts vertical PDFs whose cached manifest predates verticalT
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
   const keywordFactory = async () => ({
@@ -678,6 +682,7 @@ test("runSync re-extraction of a vertical PDF with unchanged sourceHash still up
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
 
@@ -836,6 +841,7 @@ test("runSync preserves previous artifacts when a vertical-PDF re-extraction fai
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
 
@@ -995,6 +1001,7 @@ test("runSync errors a failed re-extraction when the previous normalized.md is m
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
 
@@ -1073,6 +1080,7 @@ test("runSync re-extracts when the Zotero vertical-text tag is added between syn
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
 
@@ -1225,6 +1233,7 @@ test("runSync marks the entry as error when a same-size/same-mtime replacement c
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
   const extractBatchFn = async () => {
@@ -1349,6 +1358,7 @@ test("runSync re-extracts a renamed vertical PDF whose old manifest predates ver
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
 
@@ -1480,6 +1490,7 @@ test("runSync reuses unchanged horizontal PDFs without re-extraction", async () 
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
   const keywordFactory = async () => ({
@@ -1602,6 +1613,7 @@ test("runSync short-circuits both index rebuilds when the catalog is identical t
       cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
       migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
       adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+      compactDatabase: async () => ({ ran: false, reason: "" }),
       close: async () => {},
     };
   };
@@ -1773,6 +1785,7 @@ test("runSync incrementally updates the keyword index after a completed sync", a
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
 
@@ -1936,6 +1949,7 @@ test("runSync rebuilds indexes when the qmd embedding model changes since last s
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
 
@@ -2058,6 +2072,7 @@ test("runSync rebuilds indexes but preserves embeddings when only the indexer si
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
 
@@ -2169,6 +2184,7 @@ test("runSync keeps old indexer state in progress catalog until changed qmd embe
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
 
@@ -2294,6 +2310,7 @@ test("runSync does not force re-embed when resuming an interrupted sync with mat
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
 
@@ -2415,6 +2432,7 @@ test("runSync migrates cached artifacts when an attachment is renamed inside att
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
   const extractBatchFn = async (batch: unknown[]) => {
@@ -2560,6 +2578,7 @@ test("runSync preserves verticalText when migrating a renamed vertical PDF", asy
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
   const extractBatchFn = async (batch: unknown[]) => {
@@ -2677,6 +2696,7 @@ test("runSync re-extracts renamed attachments when cached artifacts are not reus
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
   const extractCalls: unknown[] = [];
@@ -2804,6 +2824,7 @@ test("runSync re-extracts renamed attachments when rename candidates are ambiguo
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
   const extractCalls: unknown[] = [];
@@ -2893,6 +2914,7 @@ test("runSync asks qmd to clean orphaned residue on the happy path", async () =>
     },
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
 
@@ -3017,6 +3039,7 @@ test("runSync skips qmd context writes when existing contexts already match", as
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
 
@@ -3095,6 +3118,7 @@ test("runSync resumes from existing normalized and manifest outputs when catalog
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
   const fakeExtractBatch = async () => {
@@ -3193,6 +3217,7 @@ test("runSync re-extracts attachments when fallback normalized output is empty",
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
   const fakeExtractBatch = async (batch: Array<{ docKey: string; filePath: string; itemKey: string }>) => {
@@ -3325,6 +3350,7 @@ test("runSync re-extracts when the source file changed even if stale cache match
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
   const fakeExtractBatch = async (batch: Array<{ docKey: string; filePath: string; itemKey: string }>) => {
@@ -3450,6 +3476,7 @@ test("runSync re-extracts ready entries whose cached manifest has zero blocks", 
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
   const fakeExtractBatch = async (batch: Array<{ docKey: string; filePath: string; itemKey: string }>) => {
@@ -3599,6 +3626,7 @@ test("runSync keeps embedding until qmd no longer reports pending documents", as
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
 
@@ -3652,6 +3680,7 @@ test("runSync marks empty txt extraction output as error", async () => {
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
 
@@ -3713,6 +3742,7 @@ test("runSync indexes txt attachments without Java extraction", async () => {
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
   const fakeExtractBatch = async () => {
@@ -3857,6 +3887,7 @@ test("runSync reuses a ready index when bibliography paths come from another mac
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
 
@@ -4145,6 +4176,7 @@ test("runSync prunes cached outputs when attachment disappears from the current 
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
 
@@ -4247,6 +4279,7 @@ test("runSync reuses cached outputs after an attachment temporarily disappears",
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
 
@@ -4354,6 +4387,7 @@ test("runSync skips unchanged previous extraction errors by default", async () =
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
   let extractCalls = 0;
@@ -4455,6 +4489,7 @@ test("runSync retries unchanged previous errors when requested and passes custom
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
   let extractCalls = 0;
@@ -4567,6 +4602,7 @@ test("runSync extracts book attachments in single-file batches by default", asyn
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
   const batches: string[][] = [];
@@ -4664,6 +4700,7 @@ test("runSync honors explicit PDF batch size", async () => {
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
   const batchSizes: number[] = [];
@@ -4760,6 +4797,7 @@ test("runSync records extraction failures per attachment and continues indexing 
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
 
@@ -4882,6 +4920,7 @@ test("runSync retries a timed out batch one file at a time", async () => {
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
 

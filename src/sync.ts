@@ -2172,6 +2172,16 @@ export async function runSync(
             { console: true },
           );
         }
+        // Run last so the compaction sees the post-cleanup state. Self-gating:
+        // qmd.compactDatabase() inspects FTS5 segment count + freelist and
+        // skips when neither indicates bloat, so it's safe to call every sync.
+        // When it does run, the FTS5 optimize + VACUUM combination is the only
+        // way to recover the documents_fts_data fragmentation that piles up
+        // after qmd upgrades, mass content-hash changes, and interrupted syncs.
+        const compaction = await qmd.compactDatabase();
+        if (compaction.ran) {
+          logger.info(`Compacted qmd database (${compaction.reason}).`, { console: true });
+        }
       } finally {
         await qmd.close();
       }

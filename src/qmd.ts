@@ -59,6 +59,19 @@ export interface QmdLegacyAdoptionResult {
   reason: string;
 }
 
+export interface QmdCompactResult {
+  ran: boolean;
+  reason: string;
+}
+
+// Empirically chosen thresholds: a freshly-rebuilt qmd library on this codebase
+// settles at ~15 fts segments with a near-empty freelist. We let it grow to
+// ~30 segments / ~40 MB free pages before paying for a full rewrite — that
+// keeps churn off the happy path while preventing the 1+ GB documents_fts_data
+// bloat that motivated this hook.
+const QMD_COMPACT_SEGMENT_THRESHOLD = 32;
+const QMD_COMPACT_FREELIST_THRESHOLD = 10_000;
+
 export interface QmdStatus {
   totalDocuments: number;
   needsEmbedding: number;
@@ -122,6 +135,13 @@ export interface QmdClient {
   // current model/format but predate the embed_fingerprint column qmd 2.5.0
   // added. Cheap no-op when nothing legacy is present.
   adoptLegacyEmbeddings(): Promise<QmdLegacyAdoptionResult>;
+  // Merge documents_fts segments and reclaim free pages. After heavy rewrites
+  // (qmd-package upgrade, mass alias migration, vertical-PDF re-extracts),
+  // documents_fts_data can balloon to 2-3× its post-write size because FTS5
+  // segments are append-only; sqlite VACUUM alone leaves the segment fragments
+  // in place. Safe to call every sync — the implementation skips when neither
+  // the segment count nor the freelist exceeds the bloat threshold.
+  compactDatabase(): Promise<QmdCompactResult>;
   close(): Promise<void>;
 }
 
@@ -223,6 +243,29 @@ function wrapStore(store: QMDStore): QmdClient {
         adopted: typeof result.adopted === "number" ? result.adopted : 0,
         checked: Boolean(result.checked),
         reason: typeof result.reason === "string" ? result.reason : "",
+      };
+    },
+    compactDatabase: async () => {
+      const db = getStoreDb(store);
+      const segRow = db.prepare(`SELECT COUNT(DISTINCT segid) AS n FROM documents_fts_idx`).get() as
+        | { n: number }
+        | undefined;
+      const segments = segRow?.n ?? 0;
+      const freelist = (db.pragma("freelist_count", { simple: true }) as number) ?? 0;
+      if (segments < QMD_COMPACT_SEGMENT_THRESHOLD && freelist < QMD_COMPACT_FREELIST_THRESHOLD) {
+        return {
+          ran: false,
+          reason: `lean: ${segments} fts segment(s), ${freelist} free page(s)`,
+        };
+      }
+      // FTS5 segments are append-only; running optimize merges them so VACUUM
+      // can actually reclaim the space. Without the optimize step, VACUUM
+      // touches the rest of the file but leaves documents_fts_data oversized.
+      db.exec(`INSERT INTO documents_fts(documents_fts) VALUES('optimize');`);
+      db.exec(`VACUUM;`);
+      return {
+        ran: true,
+        reason: `merged ${segments} fts segment(s); reclaimed ${freelist} free page(s)`,
       };
     },
     close: () => store.close(),
