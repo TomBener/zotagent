@@ -2091,6 +2091,12 @@ export async function runSync(
         if (keywordRebuildNeeded) {
           logger.info("Rebuilding keyword search index...", { console: true });
           await keywordIndex.rebuildIndex(readyEntries);
+          // VACUUM after rebuild only: dropping & repopulating the FTS5 tables
+          // leaves ~25–30% of the file on the freelist, which sqlite never
+          // reclaims on its own. The incremental updateIndex path edits a small
+          // fraction of rows per sync, so dead pages stay proportional there.
+          logger.info("Compacting keyword search index...", { console: true });
+          await keywordIndex.vacuum();
         } else {
           logger.info(
             `Updating keyword search index (${changedReadyEntries.length} changed, ${removedReadyDocKeys.length} removed)...`,
@@ -2107,6 +2113,38 @@ export async function runSync(
         logger.info("Updating search index...", { console: true });
         await qmd.update();
         await syncQmdContexts(qmd, readyEntries);
+        // qmd 2.5.0 changed how it identifies stored vectors (alias→URI model
+        // name, plus a new embed_fingerprint column). Without these two calls,
+        // every user upgrading qmd silently re-embeds the entire library on
+        // the next sync. Both are cheap fast-paths when nothing legacy exists:
+        // the alias migration is a no-op UPDATE, and qmd's adoption helper
+        // returns immediately when no empty-fingerprint rows are present.
+        const aliasMigration = await qmd.migrateLegacyModelAliases();
+        if (aliasMigration.updated > 0) {
+          const suffix = aliasMigration.conflicts > 0
+            ? ` (dropped ${aliasMigration.conflicts} conflicting partial row(s))`
+            : "";
+          logger.info(
+            `Migrated ${aliasMigration.updated} stored vector row(s) from legacy model alias to current URI${suffix}.`,
+            { console: true },
+          );
+        }
+        const adoption = await qmd.adoptLegacyEmbeddings();
+        if (adoption.adopted > 0) {
+          logger.info(
+            `Adopted ${adoption.adopted} legacy embedding row(s) under the current fingerprint (${adoption.reason}).`,
+            { console: true },
+          );
+        } else if (adoption.checked) {
+          // Sample-verify ran but the distance exceeded qmd's threshold.
+          // Don't suppress — the user is about to see a full re-embed and needs
+          // to know it's legitimate (model/format actually changed) rather than
+          // a silent regression.
+          logger.warn(
+            `Legacy embedding adoption skipped: ${adoption.reason}. The next embedding pass will rebuild these vectors.`,
+            { console: true },
+          );
+        }
         if (qmdResetNeeded) {
           logger.info("Clearing existing qmd embeddings after indexer state change.", {
             console: true,

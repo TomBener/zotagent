@@ -28,6 +28,10 @@ export interface KeywordBlockSearchOptions {
 export interface KeywordIndexClient {
   rebuildIndex(readyEntries: CatalogEntry[]): Promise<void>;
   updateIndex(changedEntries: CatalogEntry[], removedDocKeys: string[]): Promise<void>;
+  // Reclaim freelist pages. After rebuildIndex the FTS5 tables drop and recreate
+  // their contents, leaving 25–30% of the file as dead pages — without VACUUM
+  // they stick around indefinitely. Skip on the incremental updateIndex path.
+  vacuum(): Promise<void>;
   searchDocs(query: string, limit: number, options?: KeywordSearchOptions): Promise<KeywordSearchResult[]>;
   searchBlocks(query: string, limit: number, options?: KeywordBlockSearchOptions): Promise<KeywordBlockSearchResult[]>;
   isEmpty(): Promise<boolean>;
@@ -377,6 +381,10 @@ export async function openKeywordIndex(config: AppConfig): Promise<KeywordIndexC
         updateTable(db, changedEntries, removedDocKeys);
       });
       tx();
+    },
+
+    vacuum: async () => {
+      db.exec("VACUUM");
     },
 
     isEmpty: async () => {
