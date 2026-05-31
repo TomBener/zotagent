@@ -2094,6 +2094,26 @@ test("runSync rebuilds indexes but preserves embeddings when only the indexer si
   assert.equal(persisted.indexerSignature, buildIndexerSignature("same-embed-model"));
 });
 
+test("buildIndexerSignature incorporates the opencc-js version", () => {
+  // opencc-js drives toSimplified, which normalizes both the keyword index (at
+  // write time) and queries (at read time). An opencc upgrade that changes
+  // conversion output must change the signature so the keyword index is rebuilt;
+  // otherwise indexed rows and queries normalize differently and silently miss
+  // matches. The behavioral "signature change -> rebuild, embeddings preserved"
+  // path is covered by the indexer-signature test above.
+  const model = "fake-embed-model";
+  assert.notEqual(
+    buildIndexerSignature(model),
+    buildIndexerSignature(model, { openccVersion: "0.0.0-test" }),
+    "opencc-js version must be part of the indexer signature",
+  );
+  assert.equal(
+    buildIndexerSignature(model, { openccVersion: "9.9.9" }),
+    buildIndexerSignature(model, { openccVersion: "9.9.9" }),
+    "signature must be deterministic for identical inputs",
+  );
+});
+
 test("runSync keeps old indexer state in progress catalog until changed qmd embeddings are cleared", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-sync-indexer-progress-"));
   const attachmentsRoot = join(root, "attachments");

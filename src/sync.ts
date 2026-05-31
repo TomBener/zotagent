@@ -26,6 +26,7 @@ import { fetchTopLevelItemKeysByTags } from "./zotero-tags.js";
 import { getReadConfig, type FetchLike } from "./zotero-read.js";
 import { KEYWORD_INDEX_SCHEMA_VERSION, openKeywordIndex, type KeywordIndexFactory } from "./keyword-db.js";
 import { QMD_PACKAGE_VERSION, openQmdClient, resolveQmdEmbedModel, type QmdFactory } from "./qmd.js";
+import { OPENCC_PACKAGE_VERSION } from "./zh-convert.js";
 import { mapEntriesByDocKey, readCatalogFile, summarizeCatalog, writeCatalogFile } from "./state.js";
 import type { AttachmentCatalogEntry, AttachmentManifest, CatalogEntry, CatalogFile, SyncStats } from "./types.js";
 import {
@@ -82,12 +83,19 @@ const ODL_JAR_PATH = resolve(dirname(ODL_PACKAGE_ENTRY), "..", "lib", ODL_JAR_NA
 // re-embed of the library.
 const SYNC_INDEXER_VERSION = "sync-index-v1";
 
-export function buildIndexerSignature(qmdEmbedModel: string): string {
+export function buildIndexerSignature(
+  qmdEmbedModel: string,
+  overrides: { openccVersion?: string } = {},
+): string {
   return createHash("sha1")
     .update(
       [
         `syncIndexer=${SYNC_INDEXER_VERSION}`,
         `keywordSchema=${KEYWORD_INDEX_SCHEMA_VERSION}`,
+        // opencc-js drives toSimplified, which normalizes keyword rows at write
+        // time and queries at read time; an upgrade that changes its output must
+        // rebuild the keyword index. The override exists only for tests.
+        `opencc=${overrides.openccVersion ?? OPENCC_PACKAGE_VERSION}`,
         `qmdPackage=${QMD_PACKAGE_VERSION}`,
         `qmdEmbedModel=${qmdEmbedModel}`,
       ].join("\n"),
