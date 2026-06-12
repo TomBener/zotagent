@@ -11,6 +11,11 @@ export interface AppConfig {
   zoteroLibraryType?: ZoteroLibraryType;
   zoteroCollectionKey?: string;
   zoteroApiKey?: string;
+  // Base URL of a Zotero translation-server instance (e.g.
+  // http://127.0.0.1:1969). When set, `add --doi` resolves identifiers
+  // through it (richer metadata than doi.org CSL JSON) and the
+  // `add --from-url` / `add --identifier` paths become available.
+  translationServerUrl?: string;
   syncEnabled?: boolean;
   // Name of the Zotero tag whose items should be extracted with
   // --reading-order=off (vertical CJK layout). Unset = no PDFs are treated

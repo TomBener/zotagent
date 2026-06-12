@@ -282,7 +282,10 @@ test("help summarizes current commands and keeps config-only overrides out of th
   );
   assert.match(result.stdout, /^\s+status$/m);
   assert.match(result.stdout, /^Add to Zotero$/m);
-  assert.match(result.stdout, /add \[--doi <doi> \| --s2-paper-id <id> \| --json <file\|->\]/);
+  assert.match(
+    result.stdout,
+    /add \[--doi <doi> \| --s2-paper-id <id> \| --from-url <url> \| --identifier <id> \| --json <file\|->\]/,
+  );
   assert.match(result.stdout, /s2 "<text>" \[--limit <n>\]/);
   assert.match(result.stdout, /recent \[--limit <n>\] \[--sort added\|modified\]/);
   assert.match(result.stdout, /^Search$/m);
@@ -426,7 +429,10 @@ test("add requires doi or title", () => {
 
   assert.equal(result.status, 1);
   assert.match(result.stdout, /"code": "MISSING_ARGUMENT"/);
-  assert.match(result.stdout, /Provide --doi <doi>, --s2-paper-id <id>, --json <file\|->, or --title <text> for add\./);
+  assert.match(
+    result.stdout,
+    /Provide --doi <doi>, --s2-paper-id <id>, --from-url <url>, --identifier <id>, --json <file\|->, or --title <text> for add\./,
+  );
 });
 
 test("add rejects positional arguments", () => {
@@ -442,7 +448,23 @@ test("add rejects combining doi and s2-paper-id", () => {
 
   assert.equal(result.status, 1);
   assert.match(result.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
-  assert.match(result.stdout, /Use either --doi <doi> or --s2-paper-id <id>, not both\./);
+  assert.match(result.stdout, /Use only one of --doi, --s2-paper-id, --from-url, --identifier\. Got: --doi, --s2-paper-id/);
+});
+
+test("add rejects combining from-url with another source flag", () => {
+  const result = runCli(["add", "--from-url", "https://example.com", "--identifier", "9780000000000"]);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
+  assert.match(result.stdout, /Use only one of --doi, --s2-paper-id, --from-url, --identifier\. Got: --from-url, --identifier/);
+});
+
+test("add rejects --select without --from-url", () => {
+  const result = runCli(["add", "--identifier", "9780000000000", "--select", "0"]);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
+  assert.match(result.stdout, /--select is only valid together with --from-url\./);
 });
 
 test("add accepts attach-file as a known flag", () => {

@@ -63,6 +63,9 @@ test("addToZotero creates a manual item from basic fields", async () => {
       zoteroLibraryId: "123456",
       zoteroLibraryType: "user",
       zoteroApiKey: "secret",
+      // Pin the doi.org CSL path: a translationServerUrl in the developer's
+      // real ~/.zotagent/config.json must not reroute these tests.
+      translationServerUrl: "",
     },
     fetchMock,
   );
@@ -248,6 +251,9 @@ test("addToZotero falls back to manual fields when DOI lookup fails", async () =
       zoteroLibraryId: "123456",
       zoteroLibraryType: "user",
       zoteroApiKey: "secret",
+      // Pin the doi.org CSL path: a translationServerUrl in the developer's
+      // real ~/.zotagent/config.json must not reroute these tests.
+      translationServerUrl: "",
     },
     fetchMock,
   );
@@ -317,6 +323,9 @@ test("addToZotero omits publisher for journal articles imported from DOI", async
       zoteroLibraryId: "123456",
       zoteroLibraryType: "user",
       zoteroApiKey: "secret",
+      // Pin the doi.org CSL path: a translationServerUrl in the developer's
+      // real ~/.zotagent/config.json must not reroute these tests.
+      translationServerUrl: "",
     },
     fetchMock,
   );
@@ -398,6 +407,7 @@ test("addS2PaperToZotero imports via DOI and allows manual overrides", async () 
       zoteroLibraryId: "123456",
       zoteroLibraryType: "user",
       zoteroApiKey: "secret",
+      translationServerUrl: "",
     },
     fetchMock,
   );
@@ -467,6 +477,7 @@ test("addS2PaperToZotero creates a manual item when no DOI is available", async 
       zoteroLibraryId: "123456",
       zoteroLibraryType: "user",
       zoteroApiKey: "secret",
+      translationServerUrl: "",
     },
     fetchMock,
   );
@@ -719,6 +730,9 @@ test("addJsonItemsToZotero creates a single item from a Zotero-shaped object", a
       zoteroLibraryId: "123456",
       zoteroLibraryType: "user",
       zoteroApiKey: "secret",
+      // Pin the doi.org CSL path: a translationServerUrl in the developer's
+      // real ~/.zotagent/config.json must not reroute these tests.
+      translationServerUrl: "",
     },
     undefined,
     fetchMock,
@@ -783,6 +797,9 @@ test("addJsonItemsToZotero processes a batch of mixed item types", async () => {
       zoteroLibraryId: "123456",
       zoteroLibraryType: "user",
       zoteroApiKey: "secret",
+      // Pin the doi.org CSL path: a translationServerUrl in the developer's
+      // real ~/.zotagent/config.json must not reroute these tests.
+      translationServerUrl: "",
     },
     undefined,
     fetchMock,
@@ -818,6 +835,9 @@ test("addJsonItemsToZotero passes a multi-collection array through unchanged", a
       zoteroLibraryId: "123456",
       zoteroLibraryType: "user",
       zoteroApiKey: "secret",
+      // Pin the doi.org CSL path: a translationServerUrl in the developer's
+      // real ~/.zotagent/config.json must not reroute these tests.
+      translationServerUrl: "",
     },
     undefined,
     fetchMock,
@@ -866,6 +886,9 @@ test("addJsonItemsToZotero converts keywords[] into tags and appends the agent t
       zoteroLibraryId: "123456",
       zoteroLibraryType: "user",
       zoteroApiKey: "secret",
+      // Pin the doi.org CSL path: a translationServerUrl in the developer's
+      // real ~/.zotagent/config.json must not reroute these tests.
+      translationServerUrl: "",
     },
     undefined,
     fetchMock,
@@ -921,6 +944,9 @@ test("addJsonItemsToZotero returns a per-item error when Zotero rejects the item
       zoteroLibraryId: "123456",
       zoteroLibraryType: "user",
       zoteroApiKey: "secret",
+      // Pin the doi.org CSL path: a translationServerUrl in the developer's
+      // real ~/.zotagent/config.json must not reroute these tests.
+      translationServerUrl: "",
     },
     undefined,
     fetchMock,
@@ -951,6 +977,9 @@ test("addJsonItemsToZotero CLI collection key overrides per-item collections", a
       zoteroLibraryId: "123456",
       zoteroLibraryType: "user",
       zoteroApiKey: "secret",
+      // Pin the doi.org CSL path: a translationServerUrl in the developer's
+      // real ~/.zotagent/config.json must not reroute these tests.
+      translationServerUrl: "",
     },
     "BBBBBBBB",
     fetchMock,
@@ -979,6 +1008,9 @@ test("addJsonItemsToZotero passes through volume / issue / pages / ISSN", async 
       zoteroLibraryId: "123456",
       zoteroLibraryType: "user",
       zoteroApiKey: "secret",
+      // Pin the doi.org CSL path: a translationServerUrl in the developer's
+      // real ~/.zotagent/config.json must not reroute these tests.
+      translationServerUrl: "",
     },
     undefined,
     fetchMock,
@@ -1010,6 +1042,7 @@ test("addToZotero with --attach-file creates a linked_file child after the paren
         zoteroLibraryId: "123456",
         zoteroLibraryType: "user",
         zoteroApiKey: "secret",
+        translationServerUrl: "",
       },
       fetchMock,
     );
@@ -1091,6 +1124,7 @@ test("addToZotero throws before any POST when --attach-file path is missing", as
         zoteroLibraryId: "123456",
         zoteroLibraryType: "user",
         zoteroApiKey: "secret",
+        translationServerUrl: "",
       },
       fetchMock,
     ),
@@ -1123,6 +1157,7 @@ test("addJsonItemsToZotero attaches a linked_file per-item via the attachFile fi
         zoteroLibraryId: "123456",
         zoteroLibraryType: "user",
         zoteroApiKey: "secret",
+        translationServerUrl: "",
       },
       undefined,
       fetchMock,
@@ -1195,6 +1230,9 @@ test("addToZotero derives shortTitle from a manual --title that has a subtitle",
       zoteroLibraryId: "123456",
       zoteroLibraryType: "user",
       zoteroApiKey: "secret",
+      // Pin the doi.org CSL path: a translationServerUrl in the developer's
+      // real ~/.zotagent/config.json must not reroute these tests.
+      translationServerUrl: "",
     },
     fetchMock,
   );
@@ -1215,6 +1253,9 @@ test("addToZotero leaves shortTitle empty when the manual title has no subtitle 
       zoteroLibraryId: "123456",
       zoteroLibraryType: "user",
       zoteroApiKey: "secret",
+      // Pin the doi.org CSL path: a translationServerUrl in the developer's
+      // real ~/.zotagent/config.json must not reroute these tests.
+      translationServerUrl: "",
     },
     fetchMock,
   );
@@ -1254,6 +1295,9 @@ test("addToZotero derives shortTitle from CSL title text when CSL has no subtitl
       zoteroLibraryId: "123456",
       zoteroLibraryType: "user",
       zoteroApiKey: "secret",
+      // Pin the doi.org CSL path: a translationServerUrl in the developer's
+      // real ~/.zotagent/config.json must not reroute these tests.
+      translationServerUrl: "",
     },
     fetchMock,
   );
@@ -1300,6 +1344,9 @@ test("addToZotero re-derives shortTitle when --title overrides DOI metadata", as
       zoteroLibraryId: "123456",
       zoteroLibraryType: "user",
       zoteroApiKey: "secret",
+      // Pin the doi.org CSL path: a translationServerUrl in the developer's
+      // real ~/.zotagent/config.json must not reroute these tests.
+      translationServerUrl: "",
     },
     tracingFetch,
   );
@@ -1345,6 +1392,9 @@ test("addToZotero stamps DOI accessDate as local YYYY-MM-DD HH:MM:SS", async () 
       zoteroLibraryId: "123456",
       zoteroLibraryType: "user",
       zoteroApiKey: "secret",
+      // Pin the doi.org CSL path: a translationServerUrl in the developer's
+      // real ~/.zotagent/config.json must not reroute these tests.
+      translationServerUrl: "",
     },
     tracingFetch,
   );
@@ -1373,6 +1423,9 @@ test("addJsonItemsToZotero derives shortTitle from a JSON title with a subtitle"
       zoteroLibraryId: "123456",
       zoteroLibraryType: "user",
       zoteroApiKey: "secret",
+      // Pin the doi.org CSL path: a translationServerUrl in the developer's
+      // real ~/.zotagent/config.json must not reroute these tests.
+      translationServerUrl: "",
     },
     undefined,
     fetchMock,
@@ -1400,6 +1453,9 @@ test("addJsonItemsToZotero respects an explicit shortTitle in JSON input", async
       zoteroLibraryId: "123456",
       zoteroLibraryType: "user",
       zoteroApiKey: "secret",
+      // Pin the doi.org CSL path: a translationServerUrl in the developer's
+      // real ~/.zotagent/config.json must not reroute these tests.
+      translationServerUrl: "",
     },
     undefined,
     fetchMock,
@@ -1426,6 +1482,9 @@ test("addJsonItemsToZotero records a per-item INVALID_ATTACH_FILE failure for a 
       zoteroLibraryId: "123456",
       zoteroLibraryType: "user",
       zoteroApiKey: "secret",
+      // Pin the doi.org CSL path: a translationServerUrl in the developer's
+      // real ~/.zotagent/config.json must not reroute these tests.
+      translationServerUrl: "",
     },
     undefined,
     fetchMock,

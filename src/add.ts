@@ -6,6 +6,13 @@ import { basename, isAbsolute, resolve as resolvePath, sep } from "node:path";
 import { resolveConfig, type ConfigOverrides } from "./config.js";
 import type { AddJsonInput } from "./json-input.js";
 import { getSemanticScholarPaper, inferSemanticScholarItemType } from "./s2.js";
+import {
+  searchByIdentifier,
+  translateWebUrl,
+  TranslationServerError,
+  type TranslationChoice,
+  type TranslationItem,
+} from "./translation-server.js";
 import type { AppConfig, ZoteroLibraryType } from "./types.js";
 
 const DOI_CSL_ACCEPT_HEADER = "application/vnd.citationstyles.csl+json";
@@ -77,13 +84,27 @@ export interface AddResult {
   title: string;
   itemType: string;
   created: boolean;
-  source: "doi" | "manual" | "manual-fallback" | "json";
+  source: "doi" | "manual" | "manual-fallback" | "json" | "url" | "identifier";
   doi?: string;
+  identifier?: string;
   s2PaperId?: string;
   attachmentItemKey?: string;
+  // Child notes created from translator output (translation-server paths only).
+  noteItemKeys?: string[];
   // Optional: omitted from the JSON envelope when empty so a clean run doesn't
   // emit `"warnings": []`. Matches the pattern in recent.ts / metadata.ts.
   warnings?: string[];
+}
+
+/**
+ * Returned by addFromUrl when the page lists multiple candidate items
+ * (translation-server HTTP 300). Nothing was created in Zotero; re-run with
+ * `--select <key>` to import one of the candidates.
+ */
+export interface AddUrlChoicesResult {
+  multiple: true;
+  url: string;
+  choices: TranslationChoice[];
 }
 
 export interface AddJsonItemFailure {
@@ -392,6 +413,192 @@ function mapCslAuthors(cslJson: Record<string, unknown>): ZoteroCreator[] {
     .filter((value): value is ZoteroCreator => value !== null);
 }
 
+// Keys of a translation-server item that must not be copied verbatim onto the
+// template: children and identity fields are handled separately, and
+// accessDate needs the CURRENT_TIMESTAMP placeholder resolved.
+const TRANSLATION_SPECIAL_KEYS = new Set([
+  "itemType",
+  "creators",
+  "tags",
+  "notes",
+  "attachments",
+  "seeAlso",
+  "collections",
+  "relations",
+  "accessDate",
+  "key",
+  "version",
+  "itemID",
+  "id",
+]);
+
+function mapTranslationCreators(raw: unknown): ZoteroCreator[] {
+  if (!Array.isArray(raw)) return [];
+  const creators: ZoteroCreator[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") continue;
+    const source = entry as Record<string, unknown>;
+    const creatorType =
+      typeof source.creatorType === "string" && source.creatorType.trim()
+        ? source.creatorType.trim()
+        : "author";
+    const name = typeof source.name === "string" ? normalizeSpace(source.name) : "";
+    const firstName = typeof source.firstName === "string" ? normalizeSpace(source.firstName) : "";
+    const lastName = typeof source.lastName === "string" ? normalizeSpace(source.lastName) : "";
+    if (name) {
+      creators.push({ creatorType, name });
+      continue;
+    }
+    // fieldMode 1 is Zotero's internal single-field form; the API expects it
+    // as `name`. translation-server normally converts already, but be lenient.
+    if (source.fieldMode === 1 && lastName) {
+      creators.push({ creatorType, name: lastName });
+      continue;
+    }
+    if (firstName || lastName) {
+      const creator: ZoteroCreator = { creatorType };
+      if (firstName) creator.firstName = firstName;
+      if (lastName) creator.lastName = lastName;
+      creators.push(creator);
+    }
+  }
+  return creators;
+}
+
+// Translator tags arrive as strings or {tag, type} objects; type 1 marks
+// automatic (publisher keyword) tags and is preserved so the items look the
+// same as a browser-connector save.
+function mapTranslationTags(raw: unknown): Array<{ tag: string; type?: number }> {
+  if (!Array.isArray(raw)) return [];
+  const tags: Array<{ tag: string; type?: number }> = [];
+  for (const entry of raw) {
+    if (typeof entry === "string") {
+      const tag = normalizeSpace(entry);
+      if (tag) tags.push({ tag });
+      continue;
+    }
+    if (!entry || typeof entry !== "object") continue;
+    const tagValue = (entry as { tag?: unknown }).tag;
+    if (typeof tagValue !== "string") continue;
+    const tag = normalizeSpace(tagValue);
+    if (!tag) continue;
+    const type = (entry as { type?: unknown }).type;
+    tags.push(typeof type === "number" ? { tag, type } : { tag });
+  }
+  return tags;
+}
+
+/**
+ * Merge a translation-server item (already Zotero API JSON, produced by the
+ * same translators the browser connector runs) onto a fresh /items/new
+ * template. Field values are template-gated like the JSON path, so a schema
+ * drift between the server's bundled translators and the live API can't
+ * produce a 400.
+ */
+function buildItemFromTranslation(
+  template: EditableZoteroItem,
+  item: TranslationItem,
+): EditableZoteroItem {
+  const payload = structuredClone(template);
+
+  for (const [key, value] of Object.entries(item)) {
+    if (TRANSLATION_SPECIAL_KEYS.has(key)) continue;
+    if (!(key in payload)) continue;
+    // Zotero data fields are all strings. Keep values verbatim (fields like
+    // `extra` are legitimately multi-line), only skipping blanks so template
+    // defaults survive.
+    if (typeof value !== "string" || !value.trim()) continue;
+    payload[key] = value;
+  }
+
+  if (typeof payload.title !== "string" || !payload.title.trim()) {
+    throw new TranslationServerError(
+      "TRANSLATION_NO_TITLE",
+      "Translated metadata did not include a title.",
+    );
+  }
+
+  const creators = mapTranslationCreators(item.creators);
+  if (creators.length > 0) payload.creators = creators;
+
+  // Only stamp accessDate on items that carry a URL (web pages, online
+  // articles), matching the doi.org CSL path (buildItemFromCsl) and Zotero's
+  // own convention — a print book resolved by ISBN should not get an access
+  // date even though the translator emits a CURRENT_TIMESTAMP placeholder. The
+  // translator value is always "now", so re-stamp it in zotagent's local
+  // YYYY-MM-DD HH:MM:SS form (see currentAccessDate).
+  if ("accessDate" in payload && typeof payload.url === "string" && payload.url) {
+    payload.accessDate = currentAccessDate();
+  }
+
+  const tags = mapTranslationTags(item.tags);
+  if (tags.length > 0) payload.tags = tags;
+
+  ensureAgentTag(payload);
+  ensureShortTitle(payload);
+
+  return payload;
+}
+
+interface PickedTranslation {
+  item: TranslationItem;
+  /** Note HTML of child-note entries that reference the picked item. */
+  childNotes: string[];
+}
+
+/**
+ * Reduce a translation result to the one regular item to create, plus its
+ * child notes. translation-server flattens children in Zotero API JSON form:
+ * a note arrives as a sibling array entry `{itemType: "note", parentItem:
+ * <parent temp key>, note}` (attachments are dropped by the server entirely).
+ * Extra regular items (rare — a single page save almost always yields one)
+ * are dropped with a warning rather than silently multiplying the add.
+ */
+function pickSingleTranslationItem(
+  items: TranslationItem[],
+  source: string,
+  warnings: string[],
+): PickedTranslation {
+  const regular = items.filter((item) => {
+    const itemType = typeof item.itemType === "string" ? item.itemType : "";
+    return itemType !== "" && itemType !== "attachment" && itemType !== "note";
+  });
+  if (regular.length === 0) {
+    throw new TranslationServerError(
+      "TRANSLATION_NO_ITEMS",
+      `Translation returned no regular item for ${source}.`,
+    );
+  }
+  if (regular.length > 1) {
+    warnings.push(`Translation returned ${regular.length} items for ${source}; created the first.`);
+  }
+  const picked = regular[0];
+  const pickedKey = typeof picked.key === "string" ? picked.key : "";
+
+  const childNotes: string[] = [];
+  for (const entry of items) {
+    if (entry === picked) continue;
+    if (entry.itemType !== "note") continue;
+    const parentItem = typeof entry.parentItem === "string" ? entry.parentItem : "";
+    if (!pickedKey || parentItem !== pickedKey) continue;
+    const note = typeof entry.note === "string" ? entry.note : "";
+    if (note.trim()) childNotes.push(note);
+  }
+  return { item: picked, childNotes };
+}
+
+function requireTranslationServer(config: AppConfig, flagLabel: string): string {
+  if (!config.translationServerUrl) {
+    throw new TranslationServerError(
+      "TRANSLATION_SERVER_NOT_CONFIGURED",
+      `${flagLabel} requires a Zotero translation-server. Set translationServerUrl in ~/.zotagent/config.json ` +
+        `(or ZOTAGENT_TRANSLATION_SERVER_URL), e.g. http://127.0.0.1:1969 — ` +
+        `start one with: docker run -d -p 1969:1969 zotero/translation-server`,
+    );
+  }
+  return config.translationServerUrl;
+}
+
 function normalizeInput(input: AddInput): Required<Omit<AddInput, "doi" | "itemType" | "attachFile">> & Pick<AddInput, "doi" | "itemType" | "attachFile"> {
   return {
     ...(input.doi ? { doi: normalizeSpace(input.doi) } : {}),
@@ -682,6 +889,38 @@ async function maybeCreateAttachment(
   }
 }
 
+/**
+ * Create child note items under `parentKey` from translator-provided note
+ * HTML. Mirrors what the browser connector saves. Failures don't abort —
+ * the parent item already exists and is worth returning; each failure is
+ * surfaced as a warning instead.
+ */
+async function createChildNotes(
+  parentKey: string,
+  notes: string[],
+  config: ResolvedWriteConfig,
+  fetchImpl: FetchLike,
+  warnings: string[],
+): Promise<string[]> {
+  if (notes.length === 0) return [];
+  const noteKeys: string[] = [];
+  let template: EditableZoteroItem | undefined;
+  for (const note of notes) {
+    try {
+      template ??= await fetchTemplate("note", fetchImpl);
+      const payload = structuredClone(template);
+      payload.note = note;
+      payload.parentItem = parentKey;
+      noteKeys.push(await createItem(config, payload, fetchImpl));
+    } catch (error) {
+      warnings.push(
+        `Created parent item but a child note failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  return noteKeys;
+}
+
 export async function addToZotero(
   input: AddInput,
   overrides: ConfigOverrides = {},
@@ -716,6 +955,26 @@ export async function addToZotero(
   if (normalizedWithDefaults.doi) {
     const cleanedDoi = cleanDoi(normalizedWithDefaults.doi);
     try {
+      if (config.translationServerUrl) {
+        // Same translator chain the browser connector uses for identifiers
+        // (Crossref / DataCite via DOI Content Negotiation) — noticeably
+        // richer than the raw CSL JSON mapping below.
+        const items = await searchByIdentifier(config.translationServerUrl, cleanedDoi, fetchImpl);
+        const picked = pickSingleTranslationItem(items, `DOI ${cleanedDoi}`, warnings);
+        const created = await createFromTranslationItem(
+          picked,
+          normalizedWithDefaults,
+          writeConfig,
+          attach,
+          warnings,
+          fetchImpl,
+          cleanedDoi,
+        );
+        // Spread order matters: translationAddResult reports the DOI actually
+        // written to the item (translators may normalize the requested form);
+        // cleanedDoi only fills in when the item type has no DOI field.
+        return { doi: cleanedDoi, ...translationAddResult("doi", created, warnings) };
+      }
       const cslJson = await fetchCslJsonForDoi(cleanedDoi, fetchImpl);
       const itemType = normalizedWithDefaults.itemType || determineDoiItemType(cslJson);
       const template = await fetchTemplate(itemType, fetchImpl);
@@ -789,6 +1048,162 @@ export async function addToZotero(
     source: "manual",
     ...(attachmentItemKey ? { attachmentItemKey } : {}),
     ...(warnings.length > 0 ? { warnings } : {}),
+  };
+}
+
+/**
+ * Shared tail of the translation-server add paths: fetch the template for
+ * the translated item, apply manual override flags, create the parent plus
+ * translator child notes and the optional --attach-file child.
+ */
+async function createFromTranslationItem(
+  picked: PickedTranslation,
+  normalizedInput: ReturnType<typeof normalizeInput>,
+  writeConfig: ResolvedWriteConfig,
+  attach: ResolvedAttachFile | undefined,
+  warnings: string[],
+  fetchImpl: FetchLike,
+  ensureDoi?: string,
+): Promise<{
+  payload: EditableZoteroItem;
+  itemKey: string;
+  noteItemKeys: string[];
+  attachmentItemKey?: string;
+}> {
+  const itemType = normalizedInput.itemType || String(picked.item.itemType);
+  const template = await fetchTemplate(itemType, fetchImpl);
+  const payload = buildItemFromTranslation(template, picked.item);
+  if (ensureDoi && "DOI" in payload && !payload.DOI) {
+    payload.DOI = ensureDoi;
+  }
+  applyManualOverrides(payload, normalizedInput);
+  ensureShortTitle(payload);
+  const itemKey = await createItem(writeConfig, payload, fetchImpl);
+  const noteItemKeys = await createChildNotes(itemKey, picked.childNotes, writeConfig, fetchImpl, warnings);
+  const attachmentItemKey = await maybeCreateAttachment(itemKey, attach, writeConfig, fetchImpl, warnings);
+  return {
+    payload,
+    itemKey,
+    noteItemKeys,
+    ...(attachmentItemKey ? { attachmentItemKey } : {}),
+  };
+}
+
+function translationAddResult(
+  source: "doi" | "url" | "identifier",
+  created: Awaited<ReturnType<typeof createFromTranslationItem>>,
+  warnings: string[],
+): AddResult {
+  const doi = typeof created.payload.DOI === "string" && created.payload.DOI ? created.payload.DOI : undefined;
+  return {
+    itemKey: created.itemKey,
+    title: typeof created.payload.title === "string" ? created.payload.title : "",
+    itemType: created.payload.itemType,
+    created: true,
+    source,
+    ...(doi ? { doi } : {}),
+    ...(created.attachmentItemKey ? { attachmentItemKey: created.attachmentItemKey } : {}),
+    ...(created.noteItemKeys.length > 0 ? { noteItemKeys: created.noteItemKeys } : {}),
+    ...(warnings.length > 0 ? { warnings } : {}),
+  };
+}
+
+/**
+ * Translate a web page through the configured translation-server (`/web`) —
+ * the same site translators the Zotero browser connector runs — and create
+ * the resulting item. Pages that list multiple candidates (HTTP 300) return
+ * `{multiple: true, choices}` without creating anything; pass `select` with
+ * a choice key to import one of them.
+ */
+export async function addFromUrl(
+  pageUrl: string,
+  input: Omit<AddInput, "doi"> = {},
+  options: { select?: string } = {},
+  overrides: ConfigOverrides = {},
+  fetchImpl: FetchLike = fetch,
+): Promise<AddResult | AddUrlChoicesResult> {
+  const trimmedUrl = pageUrl.trim();
+  if (!trimmedUrl) {
+    throw new Error("Provide a non-empty URL for --from-url.");
+  }
+  const config = resolveConfig(overrides);
+  // Check the translation-server prerequisite before write credentials: it is
+  // the prerequisite specific to this command, so its absence is the more
+  // actionable error when both happen to be missing.
+  const serverUrl = requireTranslationServer(config, "add --from-url");
+  const writeConfig = getWriteConfig(config);
+  const normalizedInput = normalizeInput(input);
+  const warnings = [...config.warnings];
+  const normalizedWithDefaults = {
+    ...normalizedInput,
+    collectionKey: normalizedInput.collectionKey || config.zoteroCollectionKey || "",
+  };
+
+  // Validate attach-file *before* any network call, mirroring addToZotero —
+  // a bad path must not leave an orphan parent item behind.
+  const attach = normalizedWithDefaults.attachFile
+    ? resolveAttachFile(normalizedWithDefaults.attachFile, config.attachmentsRoot)
+    : undefined;
+
+  const outcome = await translateWebUrl(serverUrl, trimmedUrl, options.select, fetchImpl);
+  if (outcome.kind === "choices") {
+    return { multiple: true, url: trimmedUrl, choices: outcome.choices };
+  }
+
+  const picked = pickSingleTranslationItem(outcome.items, trimmedUrl, warnings);
+  const created = await createFromTranslationItem(
+    picked,
+    normalizedWithDefaults,
+    writeConfig,
+    attach,
+    warnings,
+    fetchImpl,
+  );
+  return translationAddResult("url", created, warnings);
+}
+
+/**
+ * Resolve an identifier (DOI, ISBN, PMID, or arXiv ID) through the configured
+ * translation-server (`/search`) and create the resulting item. This is the
+ * CLI equivalent of Zotero's "Add Item by Identifier" magic wand.
+ */
+export async function addFromIdentifier(
+  identifier: string,
+  input: Omit<AddInput, "doi"> = {},
+  overrides: ConfigOverrides = {},
+  fetchImpl: FetchLike = fetch,
+): Promise<AddResult> {
+  const trimmedIdentifier = identifier.trim();
+  if (!trimmedIdentifier) {
+    throw new Error("Provide a non-empty identifier (DOI, ISBN, PMID, or arXiv ID).");
+  }
+  const config = resolveConfig(overrides);
+  const serverUrl = requireTranslationServer(config, "add --identifier");
+  const writeConfig = getWriteConfig(config);
+  const normalizedInput = normalizeInput(input);
+  const warnings = [...config.warnings];
+  const normalizedWithDefaults = {
+    ...normalizedInput,
+    collectionKey: normalizedInput.collectionKey || config.zoteroCollectionKey || "",
+  };
+
+  const attach = normalizedWithDefaults.attachFile
+    ? resolveAttachFile(normalizedWithDefaults.attachFile, config.attachmentsRoot)
+    : undefined;
+
+  const items = await searchByIdentifier(serverUrl, trimmedIdentifier, fetchImpl);
+  const picked = pickSingleTranslationItem(items, trimmedIdentifier, warnings);
+  const created = await createFromTranslationItem(
+    picked,
+    normalizedWithDefaults,
+    writeConfig,
+    attach,
+    warnings,
+    fetchImpl,
+  );
+  return {
+    ...translationAddResult("identifier", created, warnings),
+    identifier: trimmedIdentifier,
   };
 }
 

@@ -3,6 +3,8 @@
 import { readFileSync } from "node:fs";
 
 import {
+  addFromIdentifier,
+  addFromUrl,
   addJsonItemsToZotero,
   addS2PaperToZotero,
   addToZotero,
@@ -21,6 +23,7 @@ import { openQmdClient } from "./qmd.js";
 import { listRecentItems, type RecentSort } from "./recent.js";
 import { searchSemanticScholar } from "./s2.js";
 import { runSync } from "./sync.js";
+import { TranslationServerError } from "./translation-server.js";
 import type { MetadataField } from "./types.js";
 import { compactHomePath } from "./utils.js";
 import {
@@ -63,6 +66,9 @@ const COMMAND_FLAG_ALLOWLIST: Record<string, ReadonlyArray<string>> = {
   add: [
     "doi",
     "s2-paper-id",
+    "from-url",
+    "identifier",
+    "select",
     "json",
     "title",
     "author",
@@ -97,6 +103,7 @@ const GLOBAL_OVERRIDE_FLAGS: ReadonlyArray<string> = [
   "zotero-library-type",
   "zotero-collection-key",
   "zotero-api-key",
+  "translation-server-url",
   "embedding-provider",
   "embedding-model",
   "google-api-key",
@@ -303,6 +310,7 @@ function overridesFromFlags(flags: Record<string, FlagValue>): ConfigOverrides {
     zoteroLibraryType: getStringFlag(flags, "zotero-library-type"),
     zoteroCollectionKey: getStringFlag(flags, "zotero-collection-key"),
     zoteroApiKey: getStringFlag(flags, "zotero-api-key"),
+    translationServerUrl: getStringFlag(flags, "translation-server-url"),
     embeddingProvider: getStringFlag(flags, "embedding-provider"),
     embeddingModel: getStringFlag(flags, "embedding-model"),
     googleApiKey: getStringFlag(flags, "google-api-key"),
@@ -434,16 +442,31 @@ Document selector (used by search-in, blocks, fulltext, expand)
                                 identifies items by itemKey only.
 
 Add to Zotero
-  add [--doi <doi> | --s2-paper-id <id> | --json <file|->] [--title <text>] [--author <name>]
+  add [--doi <doi> | --s2-paper-id <id> | --from-url <url> | --identifier <id> | --json <file|->]
+      [--select <key>] [--title <text>] [--author <name>]
       [--year <text>] [--publication <text>] [--url <url>] [--url-date <date>]
       [--collection-key <key>] [--item-type <type>] [--attach-file <path>]
       Create one or many Zotero items and return their itemKeys. Prefer --doi when available.
       --s2-paper-id imports from Semantic Scholar (and still prefers DOI when present).
+      --from-url and --identifier run Zotero's site translators through a configured
+      translation-server (translationServerUrl) — the same metadata extraction the Zotero
+      browser connector does, including publisher keywords as tags and translator notes as
+      child notes (attachments are not saved; use --attach-file for a downloaded file).
+      When translationServerUrl is set, --doi also resolves through it for richer
+      metadata; otherwise --doi uses doi.org CSL JSON.
       --json reads pre-shaped JSON metadata from a file or stdin and is best for batch
       ingest from sources without working DOIs (e.g. CNKI). The JSON form is mutually
       exclusive with all other input flags except --collection-key.
         --doi <doi>                 Import from DOI metadata when possible.
         --s2-paper-id <id>          Import a Semantic Scholar paper by paperId.
+        --from-url <url>            Translate a web page into an item via translation-server.
+                                    If the page lists multiple candidates, add fails with
+                                    MULTIPLE_RESULTS and details.choices; re-run with
+                                    --select <key> to import one of them.
+        --identifier <id>           Import by DOI, ISBN, PMID, or arXiv ID via
+                                    translation-server (Zotero's "magic wand").
+        --select <key>              Pick one candidate from a MULTIPLE_RESULTS response.
+                                    Only valid with --from-url.
         --json <file|->             Read one JSON object or an array of JSON objects from
                                     a file or stdin (use '-'). Lenient Zotero schema:
                                     accepts authors[]/keywords[]/abstract/doi aliases plus
@@ -636,6 +659,9 @@ async function main(): Promise<void> {
         const missingValueFlags = [
           "doi",
           "s2-paper-id",
+          "from-url",
+          "identifier",
+          "select",
           "json",
           "title",
           "author",
@@ -660,6 +686,9 @@ async function main(): Promise<void> {
           const conflicting = [
             "doi",
             "s2-paper-id",
+            "from-url",
+            "identifier",
+            "select",
             "title",
             "author",
             "year",
@@ -728,13 +757,34 @@ async function main(): Promise<void> {
         }
         const doi = getStringFlag(parsed.flags, "doi");
         const s2PaperId = getStringFlag(parsed.flags, "s2-paper-id");
+        const fromUrl = getStringFlag(parsed.flags, "from-url");
+        const identifier = getStringFlag(parsed.flags, "identifier");
+        const select = getStringFlag(parsed.flags, "select");
         const title = getStringFlag(parsed.flags, "title");
-        if (doi && s2PaperId) {
-          emitError("UNEXPECTED_ARGUMENT", "Use either --doi <doi> or --s2-paper-id <id>, not both.");
+        const sourceFlags = [
+          ["--doi", doi],
+          ["--s2-paper-id", s2PaperId],
+          ["--from-url", fromUrl],
+          ["--identifier", identifier],
+        ].filter(([, value]) => value !== undefined);
+        if (sourceFlags.length > 1) {
+          emitError(
+            "UNEXPECTED_ARGUMENT",
+            `Use only one of --doi, --s2-paper-id, --from-url, --identifier. Got: ${sourceFlags
+              .map(([flag]) => flag)
+              .join(", ")}`,
+          );
           return;
         }
-        if (!doi && !s2PaperId && !title) {
-          emitError("MISSING_ARGUMENT", "Provide --doi <doi>, --s2-paper-id <id>, --json <file|->, or --title <text> for add.");
+        if (select && !fromUrl) {
+          emitError("UNEXPECTED_ARGUMENT", "--select is only valid together with --from-url.");
+          return;
+        }
+        if (sourceFlags.length === 0 && !title) {
+          emitError(
+            "MISSING_ARGUMENT",
+            "Provide --doi <doi>, --s2-paper-id <id>, --from-url <url>, --identifier <id>, --json <file|->, or --title <text> for add.",
+          );
           return;
         }
         const authors = getStringListFlag(parsed.flags, "author");
@@ -760,10 +810,35 @@ async function main(): Promise<void> {
             ? { attachFile: getStringFlag(parsed.flags, "attach-file")! }
             : {}),
         };
-        const data = s2PaperId
-          ? await addS2PaperToZotero(s2PaperId, sharedInput, overrides)
-          : await addToZotero(sharedInput, overrides);
-        emitOk(data);
+        try {
+          if (fromUrl) {
+            const outcome = await addFromUrl(fromUrl, sharedInput, { ...(select ? { select } : {}) }, overrides);
+            if ("multiple" in outcome) {
+              emitError(
+                "MULTIPLE_RESULTS",
+                `${outcome.choices.length} candidate items found at ${outcome.url}. Re-run the same command with --select <key> to import one.`,
+                { url: outcome.url, choices: outcome.choices },
+              );
+              return;
+            }
+            emitOk(outcome);
+            return;
+          }
+          if (identifier) {
+            emitOk(await addFromIdentifier(identifier, sharedInput, overrides));
+            return;
+          }
+          const data = s2PaperId
+            ? await addS2PaperToZotero(s2PaperId, sharedInput, overrides)
+            : await addToZotero(sharedInput, overrides);
+          emitOk(data);
+        } catch (error) {
+          if (error instanceof TranslationServerError) {
+            emitError(error.code, error.message, error.details);
+            return;
+          }
+          throw error;
+        }
         return;
       }
 

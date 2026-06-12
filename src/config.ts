@@ -15,6 +15,7 @@ interface RawConfig {
   zoteroLibraryType?: string;
   zoteroCollectionKey?: string;
   zoteroApiKey?: string;
+  translationServerUrl?: string;
   syncEnabled?: unknown;
   verticalTextTag?: string;
   excludeTag?: string;
@@ -33,6 +34,7 @@ export interface ConfigOverrides {
   zoteroLibraryType?: string;
   zoteroCollectionKey?: string;
   zoteroApiKey?: string;
+  translationServerUrl?: string;
   verticalTextTag?: string;
   excludeTag?: string;
   embeddingProvider?: string;
@@ -70,6 +72,22 @@ function resolveSyncEnabled(raw: unknown, envValue: string | undefined, warnings
     warnings.push(`Config field 'syncEnabled' must be a boolean; ignoring value of type ${typeof raw}.`);
   }
   return undefined;
+}
+
+// Trailing slashes are stripped so endpoint paths can be appended verbatim.
+// Anything that isn't an http(s) URL is ignored with a warning rather than
+// failing later with an opaque fetch error.
+function resolveTranslationServerUrl(raw: string | undefined, warnings: string[]): string | undefined {
+  if (!raw) return undefined;
+  const trimmed = raw.trim().replace(/\/+$/u, "");
+  if (!trimmed) return undefined;
+  if (!/^https?:\/\//iu.test(trimmed)) {
+    warnings.push(
+      `Config field 'translationServerUrl' must be an http(s) URL like http://127.0.0.1:1969; ignoring '${raw}'.`,
+    );
+    return undefined;
+  }
+  return trimmed;
 }
 
 function resolveLibraryType(raw: string | undefined, warnings: string[]): ZoteroLibraryType | undefined {
@@ -168,6 +186,18 @@ export function resolveConfig(overrides: ConfigOverrides = {}): AppConfig {
       process.env.ZOTAGENT_ZOTERO_API_KEY,
       process.env.ZOTERO_API_KEY,
       fileConfig.zoteroApiKey,
+    ),
+    // An explicit override wins even when empty: `translationServerUrl: ""`
+    // disables the server regardless of env / config file. Tests rely on this
+    // to pin the doi.org path on machines where the user has a server
+    // configured for real use.
+    translationServerUrl: resolveTranslationServerUrl(
+      overrides.translationServerUrl ??
+        firstDefined(
+          process.env.ZOTAGENT_TRANSLATION_SERVER_URL,
+          fileConfig.translationServerUrl,
+        ),
+      warnings,
     ),
     syncEnabled: resolveSyncEnabled(
       fileConfig.syncEnabled,

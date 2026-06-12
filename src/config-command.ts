@@ -65,6 +65,11 @@ const FIELDS: FieldSpec[] = [
     help: "Semantic Scholar API key. Required by `s2` and `add --s2-paper-id`.",
   },
   {
+    key: "translationServerUrl",
+    required: false,
+    help: "Zotero translation-server URL (e.g. http://127.0.0.1:1969). Enables `add --from-url` / `add --identifier` and richer `add --doi` imports.",
+  },
+  {
     key: "verticalTextTag",
     required: false,
     help: "Override the Zotero tag for vertical-CJK PDFs (default: zotagent:vertical). Leave blank to use the default.",
