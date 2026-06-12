@@ -119,7 +119,9 @@ zotagent blocks --key KG326EEI --limit-blocks 40    # paginated structured view;
 
 ### Add a paper to Zotero
 
-Source priority when adding: a web page URL → `--from-url`; a DOI → `--doi`; an ISBN / PMID / arXiv ID → `--identifier`; CNKI or other pre-extracted metadata → `--json`; otherwise manual fields. `--from-url` / `--identifier` need `translationServerUrl` configured (error code `TRANSLATION_SERVER_NOT_CONFIGURED` tells the user how to start one); `--doi` works either way and automatically uses the server when configured.
+Source priority when adding: a web page URL → `--from-url`; a DOI → `--doi`; an ISBN / PMID / arXiv ID → `--identifier`; CNKI or other pre-extracted metadata → `--json`; otherwise manual fields. `--from-url` / `--identifier` need `translationServerUrl` configured (error code `TRANSLATION_SERVER_NOT_CONFIGURED`); `--doi` uses the server when configured and plain doi.org CSL JSON when not.
+
+**No translation server** (`TRANSLATION_SERVER_NOT_CONFIGURED`, or `TRANSLATION_SERVER_UNREACHABLE` once it stops): don't retry the same flag — reroute by source. A DOI → `--doi` works without the server. A web page → find the DOI on the page (citation block, meta tags) and use `--doi`; no DOI → extract the metadata yourself into `--json` or manual fields. An arXiv ID → `--doi 10.48550/arXiv.<id>`. A PMID → resolve to a DOI on PubMed, then `--doi`. An ISBN → metadata from Open Library / Google Books into `--json` or manual fields with `--item-type book`. A paper with no DOI at all → `s2` search, then `add --s2-paper-id`. Note a configured-but-dead server also fails `--doi` (no silent doi.org fallback): remove `translationServerUrl` from `~/.zotagent/config.json` while no server is running, and set it again only after one is up (`docker run -d -p 1969:1969 zotero/translation-server`).
 
 ```bash
 # Add by DOI
@@ -181,6 +183,8 @@ zotagent recent --limit 20 --sort modified
 `recent` hits the Zotero Web API directly (no index required), so items just created with `add` show up immediately — useful for confirming an `add` landed, or for orienting yourself in the library. Returns regular top-level bibliography items only; standalone notes and attachments are skipped. Max `--limit` is 100.
 
 ### Check or repair the local index
+
+**Never run `sync` unprompted — only when the user explicitly asks for it.** The device you are running on may not hold the complete attachment set (e.g. PDFs in `attachmentsRoot` still cloud placeholders or mid-download): a sync from an incomplete copy rewrites the shared index/data files and can corrupt them as they replicate to other devices. A stale index is the user's call to refresh, not yours.
 
 ```bash
 # Counts, paths, and qmd status
