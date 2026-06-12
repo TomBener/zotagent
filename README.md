@@ -41,7 +41,8 @@ All three address an item by `--key`, which accepts either `itemKey` or `citatio
 
 ### Add to Zotero
 
-- `add` — create Zotero items by DOI, by basic fields, from Semantic Scholar (`--s2-paper-id`), or by piping pre-shaped JSON via `--json` (single object or batch). New items are tagged `Added by AI Agent`, collection routing can come from config or `--collection-key`, and `add` returns the new `itemKey` immediately.
+- `add` — create Zotero items by DOI, by basic fields, from Semantic Scholar (`--s2-paper-id`), from a web page (`--from-url`), by identifier (`--identifier`), or by piping pre-shaped JSON via `--json` (single object or batch). New items are tagged `Added by AI Agent`, collection routing can come from config or `--collection-key`, and `add` returns the new `itemKey` immediately.
+- `add --from-url` / `add --identifier` — run Zotero's site translators through a [translation-server](https://github.com/zotero/translation-server) instance (`translationServerUrl` in config). This is the same metadata extraction the Zotero browser connector performs: full field coverage, editors/translators, publisher keywords as tags, and translator notes as child notes (attachments are not saved — translation-server strips them; use `--attach-file` for a downloaded file). `--identifier` accepts DOI, ISBN, PMID, or arXiv ID — the CLI equivalent of Zotero's "Add Item by Identifier". When `translationServerUrl` is configured, `add --doi` also resolves through the server for richer metadata; without it, `--doi` uses doi.org CSL JSON as before.
 - `add --json` — accepts lenient Zotero-like metadata (`authors`, `keywords`, `abstract`, `doi`, `year`, collections, and direct Zotero fields), returns an array in all cases, and reports per-item failures without aborting the rest of a batch.
 - `--attach-file` / per-item `attachFile` — attach a local file as a Zotero `linked_file` child, with known content types for PDF, EPUB, HTML, and TXT. Paths under `attachmentsRoot` are stored with Zotero's portable `attachments:<rel>` form; invalid paths fail before parent creation.
 - `s2` — search Semantic Scholar; pipe a returned `paperId` into `add --s2-paper-id`. Imported papers prefer DOI metadata when available and fall back to Semantic Scholar metadata otherwise.
@@ -79,7 +80,8 @@ The wizard prompts for each basic field, uses the current value (if any) as defa
   "zoteroLibraryId": "<library-id>",
   "zoteroLibraryType": "user",
   "zoteroCollectionKey": "<optional-collection-key>",
-  "zoteroApiKey": "<zotero-api-key>"
+  "zoteroApiKey": "<zotero-api-key>",
+  "translationServerUrl": "http://127.0.0.1:1969"
 }
 ```
 
@@ -98,6 +100,8 @@ Where each field comes from:
 - **`zoteroCollectionKey`** — optional. 8-character key of a collection that `add` will drop new items into. Open the collection in the Zotero web library (`zotero.org/<user>/collections/<key>`); the last segment is the key.
 
 - **`semanticScholarApiKey`** — required by `s2` and `add --s2-paper-id`; other commands ignore it. Request one from the "API Key Form" on [semanticscholar.org/product/api](https://www.semanticscholar.org/product/api#api-key) (approval typically takes a few business days).
+
+- **`translationServerUrl`** — optional. Base URL of a [Zotero translation-server](https://github.com/zotero/translation-server) instance, e.g. `http://127.0.0.1:1969`. Start one locally with `docker run -d -p 1969:1969 --name translation-server zotero/translation-server`. Enables `add --from-url` and `add --identifier`, and upgrades `add --doi` to translator-grade metadata. Leave unset to keep the dependency-free doi.org path.
 
 - **`verticalTextTag`** — optional override. Name of the Zotero tag that flags top-level items whose PDFs render text vertically (Republican Chinese books, Taiwan classical works). Items carrying the tag are extracted with `--reading-order=off` so the default xycut block ordering doesn't scramble columns. Defaults to `"zotagent:vertical"`; set this field only if you want a different name. Requires `zoteroApiKey` to be set; without credentials the tag is silently ignored.
 
@@ -245,16 +249,31 @@ Document selector (used by search-in, blocks, fulltext, expand)
                                 identifies items by itemKey only.
 
 Add to Zotero
-  add [--doi <doi> | --s2-paper-id <id> | --json <file|->] [--title <text>] [--author <name>]
+  add [--doi <doi> | --s2-paper-id <id> | --from-url <url> | --identifier <id> | --json <file|->]
+      [--select <key>] [--title <text>] [--author <name>]
       [--year <text>] [--publication <text>] [--url <url>] [--url-date <date>]
       [--collection-key <key>] [--item-type <type>] [--attach-file <path>]
       Create one or many Zotero items and return their itemKeys. Prefer --doi when available.
       --s2-paper-id imports from Semantic Scholar (and still prefers DOI when present).
+      --from-url and --identifier run Zotero's site translators through a configured
+      translation-server (translationServerUrl) — the same metadata extraction the Zotero
+      browser connector does, including publisher keywords as tags and translator notes as
+      child notes (attachments are not saved; use --attach-file for a downloaded file).
+      When translationServerUrl is set, --doi also resolves through it for richer
+      metadata; otherwise --doi uses doi.org CSL JSON.
       --json reads pre-shaped JSON metadata from a file or stdin and is best for batch
       ingest from sources without working DOIs (e.g. CNKI). The JSON form is mutually
       exclusive with all other input flags except --collection-key.
         --doi <doi>                 Import from DOI metadata when possible.
         --s2-paper-id <id>          Import a Semantic Scholar paper by paperId.
+        --from-url <url>            Translate a web page into an item via translation-server.
+                                    If the page lists multiple candidates, add fails with
+                                    MULTIPLE_RESULTS and details.choices; re-run with
+                                    --select <key> to import one of them.
+        --identifier <id>           Import by DOI, ISBN, PMID, or arXiv ID via
+                                    translation-server (Zotero's "magic wand").
+        --select <key>              Pick one candidate from a MULTIPLE_RESULTS response.
+                                    Only valid with --from-url.
         --json <file|->             Read one JSON object or an array of JSON objects from
                                     a file or stdin (use '-'). Lenient Zotero schema:
                                     accepts authors[]/keywords[]/abstract/doi aliases plus
@@ -293,6 +312,8 @@ Add to Zotero
 A few behaviors worth knowing:
 
 - `add` does not deduplicate against your existing Zotero library — it is speed-first and returns `itemKey` immediately. New items are tagged `Added by AI Agent`.
+- `add --from-url` / `--identifier` run against a translation-server, which fetches the raw page server-side: no JavaScript execution and no browser login session. Open-web pages and identifier lookups match what the browser connector extracts; paywalled or heavily scripted pages may translate worse (or not at all) — the in-browser connector remains the best tool there, and CNKI-style sources are still best served by `add --json`.
+- Translation never saves attachments: translation-server strips attachment entries (PDF, snapshot) from translator output before zotagent sees them. To attach a file, download it yourself and pass `--attach-file`.
 - `--tag` on `search` and `metadata` calls the Zotero Web API to resolve top-level item keys, then filters local results. Repeating `--tag` ANDs the tags. It requires Zotero read API config and applies to keyword search only; `--tag` cannot be combined with `search --semantic`.
 - `search` returns a compact character-windowed `passage` centered on the hit and capped at 500 tokens; use `expand --key <key> --offset <charOffset>` to pull fuller context. Title-driven lookups belong in `metadata`, not `search`, because keyword search indexes attachment body text only. `metadata` omits `abstract` by default for the same compactness reason — pass `--abstract` to include it.
 - Traditional Chinese is folded to simplified at both index and query time. This applies to `search`, `search-in`, and `metadata`; `search --semantic` does not fold. Returned text (`passage`, `blocks`, `fulltext`, `expand`) preserves the original form as stored in the attachment.
@@ -301,6 +322,37 @@ A few behaviors worth knowing:
 - `sync` detects attachments renamed or moved inside `attachmentsRoot` by matching `(itemKey, size, mtimeMs)` and migrates the cached `normalized/<docKey>.md` + `manifests/<docKey>.json.gz` to the new `docKey` — no re-extract, no re-embed.
 - `sync` is crash-safe across indexer-state changes: the progress catalog keeps the previous embed model and indexer signature until stored vectors have actually been cleared, so interrupting `sync` never leaves the index in a "claims fresh / is stale" state.
 - `search`, `blocks`, `fulltext`, and `expand` work entirely on the local index — run `sync` first when the library has changed.
+
+### Adding from a web page or identifier (translation-server)
+
+`add --from-url` and `add --identifier` reuse Zotero's own [translators](https://github.com/zotero/translators) — the ~600 site-specific extractors behind the browser connector's save button — by talking to a [translation-server](https://github.com/zotero/translation-server) instance. Compared to the doi.org CSL path, translator output carries the full Zotero field set (journal abbreviation, language, place, edition, editors/translators as proper creators), publisher keywords as tags, and translator notes as child notes.
+
+Run the server once and point zotagent at it:
+
+```bash
+docker run -d -p 1969:1969 --name translation-server zotero/translation-server
+# then set "translationServerUrl": "http://127.0.0.1:1969" in ~/.zotagent/config.json
+```
+
+Add directly from a page or an identifier:
+
+```bash
+# Any article / news / publisher page a Zotero translator understands
+zotagent add --from-url "https://www.nature.com/articles/s41586-020-2649-2"
+
+# DOI, ISBN, PMID, or arXiv ID — Zotero's "Add Item by Identifier"
+zotagent add --identifier 9780691237558
+zotagent add --identifier "arXiv:2406.01234"
+
+# --doi automatically upgrades to the server when configured
+zotagent add --doi "10.1111/dech.70058"
+```
+
+Pages that list multiple candidate items (search results, journal tables of contents) fail with `MULTIPLE_RESULTS` and a `details.choices` array of `{key, title}`; re-run the same command with `--select <key>` to import one candidate.
+
+The manual flags (`--title`, `--author`, `--collection-key`, `--attach-file`, ...) compose with both paths and override the translated fields. The `AddResult` additionally exposes `noteItemKeys` when translator notes were created as child notes.
+
+Because the server fetches raw HTML without a browser session, paywalled or JS-only pages may translate worse than the in-browser connector; identifier lookups (`--identifier`, `--doi`) are unaffected by this.
 
 ### Adding items from JSON (`add --json`)
 

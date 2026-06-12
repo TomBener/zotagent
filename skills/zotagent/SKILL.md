@@ -1,11 +1,11 @@
 ---
 name: zotagent
-description: Search, retrieve, inspect, or add Zotero literature via the `zotagent` CLI. Load this skill whenever the user wants to query their Zotero library (keyword / semantic / metadata), pull quotations or context from indexed papers, add new items by DOI, Semantic Scholar paperId, JSON, or manual metadata, inspect recent Zotero items, diagnose indexed attachments, or resolve bibliographic metadata. Use it even when the request is indirect — any mention of references, citations, bibliography checks, PDF passages, or literature discovery should trigger this skill. Do not guess at zotagent's flags — consult this reference first.
+description: Search, retrieve, inspect, or add Zotero literature via the `zotagent` CLI. Load this skill whenever the user wants to query their Zotero library (keyword / semantic / metadata), pull quotations or context from indexed papers, add new items by DOI, web page URL, ISBN / PMID / arXiv identifier, Semantic Scholar paperId, JSON, or manual metadata, inspect recent Zotero items, diagnose indexed attachments, or resolve bibliographic metadata. Use it even when the request is indirect — any mention of references, citations, bibliography checks, PDF passages, or literature discovery should trigger this skill. Do not guess at zotagent's flags — consult this reference first.
 ---
 
 # zotagent
 
-`zotagent` is a CLI for a Zotero library: search and retrieve indexed attachments (PDF / EPUB / HTML / TXT) and bibliography metadata, add items by DOI, Semantic Scholar paperId, JSON, or manual fields, and inspect recent Zotero items. Task commands emit JSON (`{ok: true, data, meta?}` on success, `{ok: false, error, meta?}` + exit 1 on failure).
+`zotagent` is a CLI for a Zotero library: search and retrieve indexed attachments (PDF / EPUB / HTML / TXT) and bibliography metadata, add items by DOI, web page URL, identifier (ISBN / PMID / arXiv), Semantic Scholar paperId, JSON, or manual fields, and inspect recent Zotero items. Task commands emit JSON (`{ok: true, data, meta?}` on success, `{ok: false, error, meta?}` + exit 1 on failure).
 
 Don't invent citation keys, item keys, or passage text. If a query returns nothing, say so.
 
@@ -119,9 +119,19 @@ zotagent blocks --key KG326EEI --limit-blocks 40    # paginated structured view;
 
 ### Add a paper to Zotero
 
+Source priority when adding: a web page URL → `--from-url`; a DOI → `--doi`; an ISBN / PMID / arXiv ID → `--identifier`; CNKI or other pre-extracted metadata → `--json`; otherwise manual fields. `--from-url` / `--identifier` need `translationServerUrl` configured (error code `TRANSLATION_SERVER_NOT_CONFIGURED` tells the user how to start one); `--doi` works either way and automatically uses the server when configured.
+
 ```bash
 # Add by DOI
 zotagent add --doi "10.1111/dech.70058"
+
+# Add from a web page (publisher page, news article, blog post...) — runs the
+# same Zotero site translators as the browser connector, via translation-server
+zotagent add --from-url "https://www.nature.com/articles/s41586-020-2649-2"
+
+# Add by ISBN / PMID / arXiv ID (also accepts DOI) — Zotero's "magic wand"
+zotagent add --identifier 9780691237558
+zotagent add --identifier "arXiv:2406.01234"
 
 # Search Semantic Scholar, then add by paperId
 zotagent s2 "state-owned enterprise governance" --limit 5
@@ -146,6 +156,8 @@ zotagent add --title "Paper" --author "Doe, Jane" --attach-file ~/Downloads/foo.
 # In --json mode, each item carries its own attachFile / attach-file field.
 echo '{"itemType":"journalArticle","title":"...","attachFile":"/path/to/foo.pdf"}' | zotagent add --json -
 ```
+
+`add --from-url` on a page that lists multiple items (search results, journal TOC) fails with code `MULTIPLE_RESULTS` and `details.choices: [{key, title}]`. Show the choices, then re-run the same command with `--select <key>`. Translator notes are created as child notes (`noteItemKeys` in the result); attachments are **not** saved — translation-server strips them, so download a PDF yourself and attach it with `--attach-file` when the user wants the file. Paywalled or JS-heavy pages can translate poorly — the server fetches raw HTML without a browser session; CNKI is still best served by `--json`.
 
 `add --json` always returns `data` as an array, even for one input object. Per-item failures are returned in-place as `{ok: false, error: ...}` and do not abort the rest of a batch; parse/config/empty-input failures fail the whole envelope.
 
