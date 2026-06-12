@@ -119,21 +119,12 @@ zotagent blocks --key KG326EEI --limit-blocks 40    # paginated structured view;
 
 ### Add a paper to Zotero
 
-Source priority when adding: a web page URL → `--from-url`; a DOI → `--doi`; an ISBN / PMID / arXiv ID → `--identifier`; CNKI or other pre-extracted metadata → `--json`; otherwise manual fields. `--from-url` / `--identifier` need `translationServerUrl` configured (error code `TRANSLATION_SERVER_NOT_CONFIGURED`); `--doi` uses the server when configured and plain doi.org CSL JSON when not.
-
-**No translation server** (`TRANSLATION_SERVER_NOT_CONFIGURED`, or `TRANSLATION_SERVER_UNREACHABLE` once it stops): don't retry the same flag — reroute by source. A DOI → `--doi` works without the server. A web page → find the DOI on the page (citation block, meta tags) and use `--doi`; no DOI → extract the metadata yourself into `--json` or manual fields. An arXiv ID → `--doi 10.48550/arXiv.<id>`. A PMID → resolve to a DOI on PubMed, then `--doi`. An ISBN → metadata from Open Library / Google Books into `--json` or manual fields with `--item-type book`. A paper with no DOI at all → `s2` search, then `add --s2-paper-id`. Note a configured-but-dead server also fails `--doi` (no silent doi.org fallback): remove `translationServerUrl` from `~/.zotagent/config.json` while no server is running, and set it again only after one is up (`docker run -d -p 1969:1969 zotero/translation-server`).
+Source priority when adding: a DOI → `--doi` (an arXiv ID works as `--doi 10.48550/arXiv.<id>`; a PMID resolves to a DOI on PubMed); CNKI or other pre-extracted metadata → `--json`; a web page → find the DOI on the page (citation block, meta tags) and use `--doi`, otherwise extract the metadata yourself into `--json` or manual fields; an ISBN → Open Library / Google Books metadata into `--json` or manual fields with `--item-type book`; a paper with no DOI at all → `s2` search, then `add --s2-paper-id`.
 
 ```bash
-# Add by DOI
+# Add by DOI (arXiv IDs have a DOI form)
 zotagent add --doi "10.1111/dech.70058"
-
-# Add from a web page (publisher page, news article, blog post...) — runs the
-# same Zotero site translators as the browser connector, via translation-server
-zotagent add --from-url "https://www.nature.com/articles/s41586-020-2649-2"
-
-# Add by ISBN / PMID / arXiv ID (also accepts DOI) — Zotero's "magic wand"
-zotagent add --identifier 9780691237558
-zotagent add --identifier "arXiv:2406.01234"
+zotagent add --doi "10.48550/arXiv.2406.01234"
 
 # Search Semantic Scholar, then add by paperId
 zotagent s2 "state-owned enterprise governance" --limit 5
@@ -159,8 +150,6 @@ zotagent add --title "Paper" --author "Doe, Jane" --attach-file ~/Downloads/foo.
 echo '{"itemType":"journalArticle","title":"...","attachFile":"/path/to/foo.pdf"}' | zotagent add --json -
 ```
 
-`add --from-url` on a page that lists multiple items (search results, journal TOC) fails with code `MULTIPLE_RESULTS` and `details.choices: [{key, title}]`. Show the choices, then re-run the same command with `--select <key>`. Translator notes are created as child notes (`noteItemKeys` in the result); attachments are **not** saved — translation-server strips them, so download a PDF yourself and attach it with `--attach-file` when the user wants the file. Paywalled or JS-heavy pages can translate poorly — the server fetches raw HTML without a browser session; CNKI is still best served by `--json`.
-
 `add --json` always returns `data` as an array, even for one input object. Per-item failures are returned in-place as `{ok: false, error: ...}` and do not abort the rest of a batch; parse/config/empty-input failures fail the whole envelope.
 
 `AddResult.attachmentItemKey` is set when an attachment was created. A bad
@@ -169,6 +158,8 @@ echo '{"itemType":"journalArticle","title":"...","attachFile":"/path/to/foo.pdf"
 `s2` results include `openAccessPdfUrl` when available — surface it to the user as a free PDF link alongside the `add` suggestion.
 
 **S2 rate limit**: 1 request/second, cumulative across Semantic Scholar endpoints (`s2` and `add --s2-paper-id`). Run these sequentially, never in parallel — parallel calls will 429. Spacing between separate tool calls is usually enough; no sleep needed.
+
+`add --from-url` / `add --identifier` exist but assume a self-hosted Zotero translation server, which is normally not configured — expect `TRANSLATION_SERVER_NOT_CONFIGURED` and reroute by the source priority above instead of retrying. Set `translationServerUrl` only while a server is actually running (configured-but-dead fails `--doi` too); server-mode details are in the README.
 
 ### List recently added or modified items
 
