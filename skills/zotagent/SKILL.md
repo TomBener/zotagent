@@ -50,7 +50,7 @@ Chinese trad/simp folding: keyword `search`, `search-in`, and `metadata` match a
 Paraphrase by default and cite in **Pandoc source form** using the returned `itemKey` with `pageStart` / `pageEnd` as the locator. Reach for a verbatim quote only when the exact wording matters (a distinctive phrase, primary-source quotation, or a definition) — quoting indiscriminately turns the document into a transcript.
 
 - Paraphrase + locator: `[@itemKey, p. 23]`
-- Page range: `[@itemKey, pp. 23–25]`
+- Page range: `[@itemKey, p. 23-25]`
 - No page available: `[@itemKey]` (EPUB and some scans never set page numbers)
 - Verbatim phrase when wording is load-bearing: `... a "non-trivial role" [@itemKey, p. 137]`
 - Narrative reference: `@itemKey says ...`
