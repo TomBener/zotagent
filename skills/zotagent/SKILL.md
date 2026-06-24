@@ -1,6 +1,6 @@
 ---
 name: zotagent
-description: Search, retrieve, inspect, or add Zotero literature via the `zotagent` CLI. Load this skill whenever the user wants to query their Zotero library (keyword / semantic / metadata), pull quotations or context from indexed papers, add new items by DOI, web page URL, ISBN / PMID / arXiv identifier, Semantic Scholar paperId, JSON, or manual metadata, inspect recent Zotero items, diagnose indexed attachments, or resolve bibliographic metadata. Use it even when the request is indirect — any mention of references, citations, bibliography checks, PDF passages, or literature discovery should trigger this skill. Do not guess at zotagent's flags — consult this reference first.
+description: Search, retrieve, inspect, or add Zotero literature via the `zotagent` CLI. Load this skill whenever the user wants to query their Zotero library (keyword / semantic / metadata), pull quotations or context from indexed papers, add items by DOI, web page URL, ISBN / PMID / arXiv identifier, Semantic Scholar paperId, JSON, or manual metadata, inspect recent Zotero items, or diagnose indexed attachments. Use it even on indirect requests — any mention of references, citations, bibliography checks, PDF passages, or literature discovery. Do not guess at zotagent's flags — consult this reference first.
 ---
 
 # zotagent
@@ -21,9 +21,9 @@ Metadata quick rules:
 
 - Positional query, field filters (`--author` / `--year` / `--title` / `--journal` / `--publisher`), or both are valid.
 - `--field` scopes only the positional query; filter flags AND together.
-- `--tag "PhD Thesis"` fetches matching top-level item keys from the Zotero Web API, then filters local results. Repeat `--tag` to AND tags. Requires Zotero read API config.
+- `--tag "PhD Thesis"` fetches matching top-level item keys from the Zotero Web API, then filters local results — so put workflow tags on the parent item, not the PDF attachment. Repeat `--tag` to AND tags. Requires Zotero read API config.
 - `--collection-key ABCD1234` filters to top-level items directly in the named Zotero collection (the 8-char key shown at the end of `zotero.org/<user>/collections/<key>`). Repeat `--collection-key` to union across collections; combine with `--tag` for an intersection. Direct members only — sub-collections are not included. Requires Zotero read API config.
-- `--abstract` includes abstract text in the output. To search abstract text, use a positional query with `--field abstract`.
+- `--abstract` includes abstract text in the output (omitted by default to keep responses compact). To search abstract text, use a positional query with `--field abstract`.
 - `metadata "Pratt 1985"` generally returns empty (year is not OR'd in) — split into `--author "Pratt" --year "1985"`.
 
 Keyword syntax — `search` and `search-in` both run SQLite FTS5 with a porter stemmer over a Trad→Simp folded index:
@@ -51,7 +51,7 @@ Paraphrase by default and cite in **Pandoc source form** using the returned `ite
 
 - Paraphrase + locator: `[@itemKey, p. 23]`
 - Page range: `[@itemKey, p. 23-25]`
-- No page available: `[@itemKey]` (EPUB and some scans never set page numbers)
+- No page available: `[@itemKey]` (EPUB, some scans, and multi-attachment hits near a separator may set no page numbers)
 - Verbatim phrase when wording is load-bearing: `... a "non-trivial role" [@itemKey, p. 137]`
 - Narrative reference: `@itemKey says ...`
 
@@ -200,9 +200,6 @@ zotagent diagnose --limit 20
 
 - **`passage` is a compact character window centered on the hit**, capped at ~500 tokens. A leading/trailing `…` means there is more text outside the returned slice or the token cap was hit; call `expand --key <k> --offset <charOffset>` (with a bigger `--radius`) to fetch a longer slice.
 - **`charOffset` is item-global, not per-attachment.** When an item has multiple indexed attachments, offsets run monotonically across them with `# Attachment: <name>` dividers in the merged markdown. Feed `charOffset` from any search result straight into `expand`.
-- **`pageStart` / `pageEnd` may be absent** (EPUB, some old scans, multi-attachment items where the hit lives near a separator). Fall back to `[@itemKey]` without a locator in that case.
-- **`metadata` omits `abstract` by default** to keep bulk responses compact. Pass `--abstract` when you need it.
-- **`--tag` filters top-level Zotero items only.** Put manual workflow tags on the parent item, not just the PDF attachment. It uses the Zotero Web API to resolve item keys but still searches local metadata/full-text indexes.
 - **`--key` accepts `itemKey` or `citationKey`**, with or without a leading `@` (so Pandoc `@citekey` pastes straight in). Output always identifies items by `itemKey` only — `citationKey` is accepted as input but never emitted, so chain subsequent calls on `itemKey`.
 - **`search-in` on a chapter key may miss.** `SEARCH_IN_FAILED: No indexed attachment found` usually means the chapter's PDF is indexed only inside its parent volume. Look the parent up with `metadata`, then `search-in` against the parent's key and locate the chapter by its heading. Common for edited collections and proceedings.
 - **`search-in` returns scoped matches; `search` returns one passage per item.** Most `search-in` rows are single-block FTS matches; a single quoted phrase can span blocks via the manifest-level exact scanner. A `search` result means *this document* matches and here is one representative passage. When the user asks "does this paper say X" or "where in this paper does Y appear", reach for `search-in`.
