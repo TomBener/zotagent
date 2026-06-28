@@ -226,7 +226,7 @@ test("addFromUrl creates an item from translator output with tags and flattened 
   assert.deepEqual(parent.tags, [
     { tag: "automatic keyword", type: 1 },
     { tag: "plain keyword" },
-    { tag: "Added by AI Agent" },
+    { tag: "Added by Zotagent" },
   ]);
 
   assert.equal(note.itemType, "note");

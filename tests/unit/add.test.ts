@@ -87,7 +87,7 @@ test("addToZotero creates a manual item from basic fields", async () => {
   assert.equal(body[0]?.publicationTitle, "Journal of Testing");
   assert.equal(body[0]?.url, "https://example.com/article");
   assert.equal(body[0]?.accessDate, "2026-04-02");
-  assert.deepEqual(body[0]?.tags, [{ tag: "Added by AI Agent" }]);
+  assert.deepEqual(body[0]?.tags, [{ tag: "Added by Zotagent" }]);
   assert.deepEqual(body[0]?.creators, [
     {
       creatorType: "author",
@@ -339,7 +339,7 @@ test("addToZotero omits publisher for journal articles imported from DOI", async
   const body = JSON.parse(String(createRequest?.init?.body)) as Array<Record<string, unknown>>;
   assert.equal(body[0]?.publicationTitle, "Journal of Testing");
   assert.equal(body[0]?.publisher, "");
-  assert.deepEqual(body[0]?.tags, [{ tag: "Added by AI Agent" }]);
+  assert.deepEqual(body[0]?.tags, [{ tag: "Added by Zotagent" }]);
 });
 
 test("addS2PaperToZotero imports via DOI and allows manual overrides", async () => {
@@ -763,7 +763,7 @@ test("addJsonItemsToZotero creates a single item from a Zotero-shaped object", a
   const tags = payload?.tags as Array<{ tag: string }>;
   assert.deepEqual(
     tags.map((t) => t.tag).sort(),
-    ["Added by AI Agent", "西北垦殖", "西北开发", "抗战时期", "安汉"].sort(),
+    ["Added by Zotagent", "西北垦殖", "西北开发", "抗战时期", "安汉"].sort(),
   );
 });
 
@@ -900,7 +900,7 @@ test("addJsonItemsToZotero converts keywords[] into tags and appends the agent t
   assert.deepEqual(tags, [
     { tag: "国家治理" },
     { tag: "边疆" },
-    { tag: "Added by AI Agent" },
+    { tag: "Added by Zotagent" },
   ]);
 });
 

@@ -41,7 +41,7 @@ All three address an item by `--key`, which accepts either `itemKey` or `citatio
 
 ### Add to Zotero
 
-- `add` — create Zotero items by DOI, by basic fields, from Semantic Scholar (`--s2-paper-id`), from a web page (`--from-url`), by identifier (`--identifier`), or by piping pre-shaped JSON via `--json` (single object or batch). New items are tagged `Added by AI Agent`, collection routing can come from config or `--collection-key`, and `add` returns the new `itemKey` immediately.
+- `add` — create Zotero items by DOI, by basic fields, from Semantic Scholar (`--s2-paper-id`), from a web page (`--from-url`), by identifier (`--identifier`), or by piping pre-shaped JSON via `--json` (single object or batch). New items are tagged `Added by Zotagent`, collection routing can come from config or `--collection-key`, and `add` returns the new `itemKey` immediately.
 - `add --from-url` / `add --identifier` — run Zotero's site translators through a [translation-server](https://github.com/zotero/translation-server) instance (`translationServerUrl` in config). This is the same metadata extraction the Zotero browser connector performs: full field coverage, editors/translators, publisher keywords as tags, and translator notes as child notes (attachments are not saved — translation-server strips them; use `--attach-file` for a downloaded file). `--identifier` accepts DOI, ISBN, PMID, or arXiv ID — the CLI equivalent of Zotero's "Add Item by Identifier". When `translationServerUrl` is configured, `add --doi` also resolves through the server for richer metadata; without it, `--doi` uses doi.org CSL JSON as before.
 - `add --json` — accepts lenient Zotero-like metadata (`authors`, `keywords`, `abstract`, `doi`, `year`, collections, and direct Zotero fields), returns an array in all cases, and reports per-item failures without aborting the rest of a batch.
 - `--attach-file` / per-item `attachFile` — attach a local file as a Zotero `linked_file` child, with known content types for PDF, EPUB, HTML, and TXT. Paths under `attachmentsRoot` are stored with Zotero's portable `attachments:<rel>` form; invalid paths fail before parent creation.
@@ -311,7 +311,7 @@ Add to Zotero
 
 A few behaviors worth knowing:
 
-- `add` does not deduplicate against your existing Zotero library — it is speed-first and returns `itemKey` immediately. New items are tagged `Added by AI Agent`.
+- `add` does not deduplicate against your existing Zotero library — it is speed-first and returns `itemKey` immediately. New items are tagged `Added by Zotagent`.
 - `add --from-url` / `--identifier` run against a translation-server, which fetches the raw page server-side: no JavaScript execution and no browser login session. Open-web pages and identifier lookups match what the browser connector extracts; paywalled or heavily scripted pages may translate worse (or not at all) — the in-browser connector remains the best tool there, and CNKI-style sources are still best served by `add --json`.
 - Translation never saves attachments: translation-server strips attachment entries (PDF, snapshot) from translator output before zotagent sees them. To attach a file, download it yourself and pass `--attach-file`.
 - `--tag` on `search` and `metadata` calls the Zotero Web API to resolve top-level item keys, then filters local results. Repeating `--tag` ANDs the tags. It requires Zotero read API config and applies to keyword search only; `--tag` cannot be combined with `search --semantic`.
@@ -405,7 +405,7 @@ Every key below is optional except `title`. `itemType` defaults to `journalArtic
 | `attachFile` / `attach-file` | linked_file child item | Path to a local file to attach as a `linkMode: "linked_file"` child of the new parent. See `--attach-file` below. Bad paths fail the single item with code `INVALID_ATTACH_FILE` *before* the parent is created (no orphans). |
 | Any other Zotero-native key | same key | `volume`, `issue`, `pages`, `ISSN`, `ISBN`, `extra`, `language`, `date`, `url`, `publisher`, `series`, `seriesNumber`, `shortTitle`, `libraryCatalog`, ... |
 
-Every created item is auto-tagged `Added by AI Agent`, matching the other `add` paths.
+Every created item is auto-tagged `Added by Zotagent`, matching the other `add` paths.
 
 ### Attaching a local file (`--attach-file`)
 

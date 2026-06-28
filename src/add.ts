@@ -35,7 +35,7 @@ const PUBLICATION_FIELDS = ["publicationTitle", "websiteTitle", "bookTitle", "pr
 const DOI_URL_PREFIX_RE = /^(?:doi:\s*|https?:\/\/(?:dx\.)?doi\.org\/)/iu;
 const DOI_VALID_RE = /^10\.\S+\/\S+$/iu;
 const TAG_RE = /<[^>]+>/gu;
-const AI_AGENT_TAG = "Added by AI Agent";
+const AI_AGENT_TAG = "Added by Zotagent";
 
 type FetchLike = typeof fetch;
 type ZoteroCreator = Record<string, string>;
@@ -1266,7 +1266,7 @@ const JSON_INPUT_RESERVED_KEYS = new Set(["title", "itemType"]);
  *                           templates pick `bookTitle` / `proceedingsTitle` etc.)
  *   - other `input.fields`  spread onto template, gated by `key in payload`
  *   - collections           CLI override > per-item collections > config default
- *   - tags                  always appended `{tag: "Added by AI Agent"}` via
+ *   - tags                  always appended `{tag: "Added by Zotagent"}` via
  *                           `ensureAgentTag`
  */
 export async function addJsonItemsToZotero(
