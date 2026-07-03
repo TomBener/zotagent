@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { createInterface } from "node:readline/promises";
 
@@ -88,6 +88,18 @@ const FIELDS: FieldSpec[] = [
 ];
 
 type RawConfig = Record<string, unknown>;
+
+// The config file holds the Zotero and Semantic Scholar API keys, so write it
+// (and its parent directory) owner-only, matching the convention for other CLI
+// credential stores (~/.netrc, ~/.ssh, ~/.npmrc). The `mode` options only apply
+// when the file/dir is first created, so chmod unconditionally to also tighten
+// files written by earlier versions. On Windows chmodSync is effectively a
+// no-op, which is acceptable.
+export function writeConfigFile(path: string, config: Record<string, unknown>): void {
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`, { encoding: "utf-8", mode: 0o600 });
+  chmodSync(path, 0o600);
+}
 
 function readRawConfig(path: string): RawConfig {
   if (!existsSync(path)) return {};
@@ -318,8 +330,7 @@ export async function runConfigCommand(): Promise<ConfigCommandResult> {
     return { path, updated, unchanged, cleared, written: false };
   }
 
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(next, null, 2)}\n`, "utf-8");
+  writeConfigFile(path, next);
 
   const summary = [
     updated.length > 0 ? `${updated.length} updated` : null,
