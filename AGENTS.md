@@ -5,7 +5,7 @@
 ## Core invariants
 
 - `dataDir` is `~/Zotagent` — holds long-lived indexes (`index/`, `manifests/`, `normalized/`, `logs/`).
-- Config lives in `~/.zotagent` — `config.json` and `excludes.txt`.
+- Config lives in `~/.zotagent` — `config.json`. Sync exclusions come from the Zotero tag `zotagent:exclude` (configurable via `excludeTag`), not a local file.
 
 ## Development Principles
 

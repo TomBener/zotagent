@@ -194,7 +194,7 @@ zotagent sync --pdf-concurrency 1 --pdf-batch-size 4 --pdf-timeout-ms 900000
 zotagent diagnose --limit 20
 ```
 
-`sync` auto-loads `~/.zotagent/excludes.txt` when present: one `itemKey` or `citationKey` per line, `#` comments allowed. Use `diagnose` to find candidates such as OCR-failed scans, vertical-CJK PDFs, or multi-column gazetteers, then exclude or re-OCR them before re-syncing.
+Sync exclusions are driven by a Zotero tag, not a local file: tag a top-level item `zotagent:exclude` in Zotero and the next `sync` skips it entirely (no extraction, no indexing) and removes it from the local indexes. The tag name can be changed via `excludeTag` in `~/.zotagent/config.json` or the `ZOTAGENT_EXCLUDE_TAG` environment variable; resolving tagged items requires the Zotero read API config (`zoteroLibraryId` + `zoteroApiKey`). Use `diagnose` to find candidates such as OCR-failed scans, vertical-CJK PDFs, or multi-column gazetteers, then tag or re-OCR them before re-syncing.
 
 ## Output-shape gotchas
 
