@@ -2,7 +2,7 @@ import Database from "better-sqlite3";
 
 import { getDataPaths } from "./config.js";
 import type { AppConfig, CatalogEntry } from "./types.js";
-import { ensureDir, exists, readManifestFile } from "./utils.js";
+import { ensureDir, exists, tryReadManifestFile } from "./utils.js";
 import { toSimplified } from "./zh-convert.js";
 
 export interface KeywordSearchResult {
@@ -26,8 +26,8 @@ export interface KeywordBlockSearchOptions {
 }
 
 export interface KeywordIndexClient {
-  rebuildIndex(readyEntries: CatalogEntry[]): Promise<void>;
-  updateIndex(changedEntries: CatalogEntry[], removedDocKeys: string[]): Promise<void>;
+  rebuildIndex(readyEntries: CatalogEntry[]): Promise<{ skippedDocKeys: string[] }>;
+  updateIndex(changedEntries: CatalogEntry[], removedDocKeys: string[]): Promise<{ skippedDocKeys: string[] }>;
   // Reclaim freelist pages. After rebuildIndex the FTS5 tables drop and recreate
   // their contents, leaving 25–30% of the file as dead pages — without VACUUM
   // they stick around indefinitely. Skip on the incremental updateIndex path.
@@ -131,9 +131,14 @@ function resetFtsTable(db: Database.Database): void {
   createKeywordBlockFts(db);
 }
 
-function indexedBlocksForEntry(entry: CatalogEntry): Array<{ blockIndex: number; indexed: string }> {
+// Returns the indexable blocks for an entry, or `null` when the manifest file
+// exists but cannot be read (corrupt/truncated gzip). `null` means "skip this
+// doc but leave its existing rows alone"; `[]` means "no content to index"
+// (missing file or empty after segmentation) and is safe to delete on.
+function indexedBlocksForEntry(entry: CatalogEntry): Array<{ blockIndex: number; indexed: string }> | null {
   if (!entry.manifestPath || !exists(entry.manifestPath)) return [];
-  const manifest = readManifestFile(entry.manifestPath);
+  const manifest = tryReadManifestFile(entry.manifestPath);
+  if (!manifest) return null;
   return manifest.blocks
     .map((block) => ({ blockIndex: block.blockIndex, indexed: segmentCjk(toSimplified(block.text)) }))
     .filter((b) => b.indexed.length > 0);
@@ -169,11 +174,18 @@ function allocateDocId(db: Database.Database): number {
   return row.docId;
 }
 
-function upsertEntry(db: Database.Database, entry: CatalogEntry): void {
+// Returns the docKey when the entry was skipped because its manifest is
+// unreadable (existing rows are left in place), otherwise null.
+function upsertEntry(db: Database.Database, entry: CatalogEntry): string | null {
   const indexedBlocks = indexedBlocksForEntry(entry);
+  if (indexedBlocks === null) {
+    // Unreadable manifest: keep any existing rows (stale-but-searchable beats
+    // silently vanished) and report the skip.
+    return entry.docKey;
+  }
   if (indexedBlocks.length === 0) {
     deleteDoc(db, entry.docKey);
-    return;
+    return null;
   }
 
   const existing = db.prepare("SELECT docId FROM keyword_doc_lookup WHERE docKey = ?")
@@ -192,18 +204,25 @@ function upsertEntry(db: Database.Database, entry: CatalogEntry): void {
     const rowid = docId * DOC_ID_MULTIPLIER + b.blockIndex;
     insertBlockFts.run(rowid, b.indexed);
   }
+  return null;
 }
 
-function rebuildTable(db: Database.Database, readyEntries: CatalogEntry[]): void {
+// Returns the docKeys skipped because their manifests were unreadable.
+function rebuildTable(db: Database.Database, readyEntries: CatalogEntry[]): string[] {
   resetFtsTable(db);
   db.exec("DELETE FROM keyword_doc_lookup");
 
   const insertLookup = db.prepare("INSERT INTO keyword_doc_lookup (docId, docKey) VALUES (?, ?)");
   const insertBlockFts = db.prepare("INSERT INTO keyword_block_fts (rowid, text) VALUES (?, ?)");
 
+  const skippedDocKeys: string[] = [];
   let nextDocId = 1;
   for (const entry of readyEntries) {
     const indexedBlocks = indexedBlocksForEntry(entry);
+    if (indexedBlocks === null) {
+      skippedDocKeys.push(entry.docKey);
+      continue;
+    }
     if (indexedBlocks.length === 0) continue;
 
     const docId = nextDocId++;
@@ -214,22 +233,27 @@ function rebuildTable(db: Database.Database, readyEntries: CatalogEntry[]): void
       insertBlockFts.run(rowid, b.indexed);
     }
   }
+  return skippedDocKeys;
 }
 
+// Returns the docKeys skipped because their manifests were unreadable.
 function updateTable(
   db: Database.Database,
   changedEntries: CatalogEntry[],
   removedDocKeys: string[],
-): void {
+): string[] {
   const changedDocKeys = new Set(changedEntries.map((entry) => entry.docKey));
   for (const docKey of new Set(removedDocKeys)) {
     if (!changedDocKeys.has(docKey)) {
       deleteDoc(db, docKey);
     }
   }
+  const skippedDocKeys: string[] = [];
   for (const entry of changedEntries) {
-    upsertEntry(db, entry);
+    const skipped = upsertEntry(db, entry);
+    if (skipped !== null) skippedDocKeys.push(skipped);
   }
+  return skippedDocKeys;
 }
 
 function cjkRunToNear(run: string): string {
@@ -370,17 +394,21 @@ export async function openKeywordIndex(config: AppConfig): Promise<KeywordIndexC
 
   return {
     rebuildIndex: async (readyEntries) => {
+      let skippedDocKeys: string[] = [];
       const tx = db.transaction(() => {
-        rebuildTable(db, readyEntries);
+        skippedDocKeys = rebuildTable(db, readyEntries);
       });
       tx();
+      return { skippedDocKeys };
     },
 
     updateIndex: async (changedEntries, removedDocKeys) => {
+      let skippedDocKeys: string[] = [];
       const tx = db.transaction(() => {
-        updateTable(db, changedEntries, removedDocKeys);
+        skippedDocKeys = updateTable(db, changedEntries, removedDocKeys);
       });
       tx();
+      return { skippedDocKeys };
     },
 
     vacuum: async () => {

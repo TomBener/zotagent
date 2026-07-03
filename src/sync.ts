@@ -827,6 +827,14 @@ async function fetchTaggedItemKeys(
   }
 }
 
+function warnSkippedManifests(logger: SyncLogger, skippedDocKeys: string[]): void {
+  if (skippedDocKeys.length === 0) return;
+  logger.warn(
+    `Keyword indexing skipped ${skippedDocKeys.length} attachment(s) with unreadable manifests: ${skippedDocKeys.join(", ")}. ` +
+      `Delete the corresponding manifests/<docKey>.json.gz file(s) and re-run sync to re-extract them.`,
+  );
+}
+
 function resolveVerticalItemKeys(
   config: ReturnType<typeof resolveConfig>,
   fetchImpl: FetchLike,
@@ -2098,7 +2106,8 @@ export async function runSync(
       try {
         if (keywordRebuildNeeded) {
           logger.info("Rebuilding keyword search index...", { console: true });
-          await keywordIndex.rebuildIndex(readyEntries);
+          const { skippedDocKeys } = await keywordIndex.rebuildIndex(readyEntries);
+          warnSkippedManifests(logger, skippedDocKeys);
           // VACUUM after rebuild only: dropping & repopulating the FTS5 tables
           // leaves ~25–30% of the file on the freelist, which sqlite never
           // reclaims on its own. The incremental updateIndex path edits a small
@@ -2110,7 +2119,8 @@ export async function runSync(
             `Updating keyword search index (${changedReadyEntries.length} changed, ${removedReadyDocKeys.length} removed)...`,
             { console: true },
           );
-          await keywordIndex.updateIndex(changedReadyEntries, removedReadyDocKeys);
+          const { skippedDocKeys } = await keywordIndex.updateIndex(changedReadyEntries, removedReadyDocKeys);
+          warnSkippedManifests(logger, skippedDocKeys);
         }
       } finally {
         await keywordIndex.close();

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -678,6 +678,95 @@ test("search handles malformed FTS5 queries gracefully", async () => {
     // Unbalanced quotes should not throw, should fall back to sanitized query
     const results = await client.searchDocs('"aging in', 10);
     assert.equal(results.length, 1);
+  } finally {
+    await client.close();
+  }
+});
+
+function writeValidManifest(dataDir: string, manifestsDir: string, docKey: string, text: string): string {
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
+  writeManifestFile(manifestPath, {
+    docKey, itemKey: `ITEM-${docKey}`, title: "Test", authors: ["A"],
+    filePath: `/tmp/${docKey}.pdf`, normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+    blocks: [{ blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"],
+      text, charStart: 0, charEnd: text.length, lineStart: 1, lineEnd: 1, isReferenceLike: false }],
+  });
+  return manifestPath;
+}
+
+test("rebuildIndex skips entries with unreadable manifests and indexes the rest", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-db-skip-rebuild-"));
+  const dataDir = join(root, "data");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const goodDocKey = "a".repeat(40);
+  const corruptDocKey = "b".repeat(40);
+  const goodManifestPath = writeValidManifest(dataDir, manifestsDir, goodDocKey, "cadres manage resources");
+  const corruptManifestPath = join(manifestsDir, `${corruptDocKey}${MANIFEST_EXT}`);
+  // Non-gzip bytes (no 0x1f 0x8b magic) make readManifestFile throw.
+  writeFileSync(corruptManifestPath, "this is not a gzip manifest");
+
+  const goodEntry = readyEntry(dataDir, goodDocKey, "GOOD", "Good", "/tmp/good.pdf", goodManifestPath);
+  const corruptEntry = readyEntry(dataDir, corruptDocKey, "BAD", "Bad", "/tmp/bad.pdf", corruptManifestPath);
+
+  const client = await openKeywordIndex(createConfig(dataDir));
+  try {
+    const { skippedDocKeys } = await client.rebuildIndex([goodEntry, corruptEntry]);
+    assert.deepEqual(skippedDocKeys, [corruptDocKey]);
+    assert.equal((await client.searchDocs("cadres", 10)).length, 1);
+    assert.deepEqual(await client.searchDocs("Bad", 10), []);
+  } finally {
+    await client.close();
+  }
+});
+
+test("updateIndex leaves existing rows when a manifest turns unreadable", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-db-skip-update-"));
+  const dataDir = join(root, "data");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docKey = "c".repeat(40);
+  const manifestPath = writeValidManifest(dataDir, manifestsDir, docKey, "dangwei shuji appointed");
+  const entry = readyEntry(dataDir, docKey, "ITEM", "Test", "/tmp/test.pdf", manifestPath);
+
+  const client = await openKeywordIndex(createConfig(dataDir));
+  try {
+    await client.rebuildIndex([entry]);
+    assert.equal((await client.searchDocs("dangwei", 10)).length, 1);
+
+    // Corrupt the manifest, then re-run the incremental update for that entry.
+    writeFileSync(manifestPath, "no longer a gzip manifest");
+    const { skippedDocKeys } = await client.updateIndex([entry], []);
+    assert.deepEqual(skippedDocKeys, [docKey]);
+    // Stale-but-searchable: the previously indexed rows are left in place.
+    assert.equal((await client.searchDocs("dangwei", 10)).length, 1);
+  } finally {
+    await client.close();
+  }
+});
+
+test("updateIndex still deletes rows when a manifest goes missing", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-db-missing-update-"));
+  const dataDir = join(root, "data");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docKey = "e".repeat(40);
+  const manifestPath = writeValidManifest(dataDir, manifestsDir, docKey, "resources allocated by cadres");
+  const entry = readyEntry(dataDir, docKey, "ITEM", "Test", "/tmp/test.pdf", manifestPath);
+
+  const client = await openKeywordIndex(createConfig(dataDir));
+  try {
+    await client.rebuildIndex([entry]);
+    assert.equal((await client.searchDocs("allocated", 10)).length, 1);
+
+    // A removed attachment: the manifest file is gone entirely.
+    rmSync(manifestPath);
+    const { skippedDocKeys } = await client.updateIndex([entry], []);
+    assert.deepEqual(skippedDocKeys, []);
+    assert.deepEqual(await client.searchDocs("allocated", 10), []);
   } finally {
     await client.close();
   }

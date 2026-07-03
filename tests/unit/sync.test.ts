@@ -541,8 +541,8 @@ test("runSync re-extracts vertical PDFs whose cached manifest predates verticalT
     close: async () => {},
   });
   const keywordFactory = async () => ({
-    rebuildIndex: async () => {},
-    updateIndex: async () => {},
+    rebuildIndex: async () => ({ skippedDocKeys: [] }),
+    updateIndex: async () => ({ skippedDocKeys: [] }),
     vacuum: async () => {},
     searchDocs: async () => [],
     searchBlocks: async () => [],
@@ -693,12 +693,14 @@ test("runSync re-extraction of a vertical PDF with unchanged sourceHash still up
   const keywordFactory = async () => ({
     rebuildIndex: async () => {
       keywordCalls.rebuild += 1;
+      return { skippedDocKeys: [] };
     },
     updateIndex: async (changedEntries: Array<{ docKey: string }>, removedDocKeys: string[]) => {
       keywordCalls.updates.push({
         changedDocKeys: changedEntries.map((entry) => entry.docKey),
         removedDocKeys,
       });
+      return { skippedDocKeys: [] };
     },
     vacuum: async () => {},
     searchDocs: async () => [],
@@ -852,12 +854,14 @@ test("runSync preserves previous artifacts when a vertical-PDF re-extraction fai
   const keywordFactory = async () => ({
     rebuildIndex: async () => {
       keywordCalls.rebuild += 1;
+      return { skippedDocKeys: [] };
     },
     updateIndex: async (changedEntries: Array<{ docKey: string }>, removedDocKeys: string[]) => {
       keywordCalls.updates.push({
         changedDocKeys: changedEntries.map((entry) => entry.docKey),
         removedDocKeys,
       });
+      return { skippedDocKeys: [] };
     },
     vacuum: async () => {},
     searchDocs: async () => [],
@@ -1494,8 +1498,8 @@ test("runSync reuses unchanged horizontal PDFs without re-extraction", async () 
     close: async () => {},
   });
   const keywordFactory = async () => ({
-    rebuildIndex: async () => {},
-    updateIndex: async () => {},
+    rebuildIndex: async () => ({ skippedDocKeys: [] }),
+    updateIndex: async () => ({ skippedDocKeys: [] }),
     vacuum: async () => {},
     searchDocs: async () => [],
     searchBlocks: async () => [],
@@ -1624,6 +1628,7 @@ test("runSync short-circuits both index rebuilds when the catalog is identical t
     return {
       rebuildIndex: async () => {
         keywordCalls.rebuild += 1;
+        return { skippedDocKeys: [] };
       },
       search: async () => [],
       isEmpty: async () => true,
@@ -1796,12 +1801,14 @@ test("runSync incrementally updates the keyword index after a completed sync", a
   const keywordFactory = async () => ({
     rebuildIndex: async () => {
       keywordCalls.rebuild += 1;
+      return { skippedDocKeys: [] };
     },
     updateIndex: async (changedEntries: Array<{ docKey: string }>, removedDocKeys: string[]) => {
       keywordCalls.updates.push({
         changedDocKeys: changedEntries.map((entry) => entry.docKey),
         removedDocKeys,
       });
+      return { skippedDocKeys: [] };
     },
     vacuum: async () => {},
     searchDocs: async () => [],
