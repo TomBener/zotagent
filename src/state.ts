@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 
@@ -76,7 +76,25 @@ export function readCatalogFile(path: string): CatalogFile {
       entries: [],
     };
   }
-  const catalog = JSON.parse(readFileSync(catalogPath, "utf-8")) as CatalogFile;
+  let catalog: CatalogFile;
+  try {
+    catalog = JSON.parse(readFileSync(catalogPath, "utf-8")) as CatalogFile;
+  } catch {
+    // Corrupt/truncated catalog (e.g. a crash mid-write): move the evidence
+    // aside so the next write starts clean, then degrade to an empty catalog.
+    // Sync treats this the same as "never indexed" and performs a full
+    // rebuild, so the tool self-heals instead of throwing on every command.
+    try {
+      renameSync(catalogPath, `${catalogPath}.corrupt`);
+    } catch {
+      // If the rename itself fails, fall through with the empty catalog.
+    }
+    return {
+      version: 1,
+      generatedAt: "",
+      entries: [],
+    };
+  }
   const dataDir = dataDirFromCatalogPath(catalogPath);
   assertManifestsCurrent(resolve(dataDir, "manifests"));
   return {
@@ -88,8 +106,9 @@ export function readCatalogFile(path: string): CatalogFile {
 export function writeCatalogFile(path: string, catalog: CatalogFile): void {
   const catalogPath = normalizePathForLookup(path);
   ensureParentDir(catalogPath);
+  const tmp = `${catalogPath}.tmp`;
   writeFileSync(
-    catalogPath,
+    tmp,
     JSON.stringify(
       {
         ...catalog,
@@ -100,6 +119,7 @@ export function writeCatalogFile(path: string, catalog: CatalogFile): void {
     ),
     "utf-8",
   );
+  renameSync(tmp, catalogPath);
 }
 
 export function summarizeCatalog(catalog: CatalogFile): CatalogCounts {
