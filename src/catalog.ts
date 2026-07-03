@@ -181,6 +181,12 @@ function relocateAttachmentPath(
   const normalizedPath = normalizePathForLookup(filePath);
   const normalizedRoot = normalizePathForLookup(attachmentsRoot);
 
+  // Attachment paths never legitimately contain dot segments; a `..` here can
+  // defeat the prefix containment check below and reach outside attachmentsRoot.
+  if (splitPathSegments(normalizedPath).some((segment) => segment === "." || segment === "..")) {
+    return undefined;
+  }
+
   if (isWithinRoot(normalizedPath, normalizedRoot)) {
     const relativePath = normalizedPath.slice(normalizedRoot.length).replace(/^\/+/u, "");
     if (!relativePath) return undefined;

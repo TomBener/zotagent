@@ -207,6 +207,70 @@ test("loadCatalog only relocates files that match the requested Zotero subfolder
   assert.equal(catalog.attachments[0]?.filePath, keptPdfPath);
 });
 
+test("loadCatalog drops attachment paths that escape the root via dot segments", () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-catalog-traversal-"));
+  const attachmentsRoot = join(root, "attachments");
+  mkdirSync(join(attachmentsRoot, "papers"), { recursive: true });
+
+  // A legitimate file inside the root, and a secret file outside it.
+  const goodPdfPath = join(attachmentsRoot, "papers", "paper.pdf");
+  const outsidePath = join(root, "outside.pdf");
+  writeFileSync(goodPdfPath, "pdf");
+  writeFileSync(outsidePath, "secret");
+
+  const bibliographyPath = join(root, "bibliography.json");
+  writeFileSync(
+    bibliographyPath,
+    JSON.stringify([
+      {
+        id: "attacker",
+        title: "Traversal",
+        author: [{ family: "Smith", given: "Jane" }],
+        // Passes a naive prefix check against attachmentsRoot, but resolves outside it.
+        file: `${attachmentsRoot}/../outside.pdf`,
+        type: "article-journal",
+        "zotero-item-key": "EVIL",
+      },
+      {
+        id: "safe",
+        title: "Safe Paper",
+        author: [{ family: "Smith", given: "Jane" }],
+        file: goodPdfPath,
+        type: "article-journal",
+        "zotero-item-key": "SAFE",
+      },
+    ]),
+    "utf-8",
+  );
+
+  const catalog = loadCatalog({
+    bibliographyJsonPath: bibliographyPath,
+    attachmentsRoot,
+    dataDir: join(root, "data"),
+    warnings: [],
+  });
+
+  // The traversal path is dropped entirely.
+  const evil = catalog.records.find((r) => r.itemKey === "EVIL");
+  assert.deepEqual(evil?.attachmentPaths, []);
+  assert.equal(
+    catalog.attachments.some((entry) => entry.itemKey === "EVIL"),
+    false,
+  );
+  assert.equal(
+    catalog.attachments.some((entry) => entry.filePath === outsidePath),
+    false,
+  );
+
+  // A normal sibling path under the root still resolves (no over-rejection).
+  const safe = catalog.records.find((r) => r.itemKey === "SAFE");
+  assert.deepEqual(safe?.attachmentPaths, [goodPdfPath]);
+  assert.deepEqual(
+    catalog.attachments.map((entry) => entry.filePath),
+    [goodPdfPath],
+  );
+});
+
 test("loadCatalog keeps semicolons inside attachment file names", () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-catalog-semicolon-"));
   const attachmentsRoot = join(root, "attachments");
