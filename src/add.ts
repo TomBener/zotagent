@@ -16,13 +16,23 @@ import {
 import type { AppConfig, ZoteroLibraryType } from "./types.js";
 
 const DOI_CSL_ACCEPT_HEADER = "application/vnd.citationstyles.csl+json";
+// Keys cover both the CSL 1.0 vocabulary (returned by some registrars) and the
+// CrossRef work-type vocabulary that leaks into DOI content-negotiated CSL JSON
+// (e.g. OUP returns "book-chapter", not the CSL "chapter"). Missing keys fall
+// back to "document" in determineDoiItemType, so list both spellings.
 const CSL_TO_ZOTERO_ITEM_TYPE: Record<string, string> = {
   "article-journal": "journalArticle",
   "journal-article": "journalArticle",
   "paper-conference": "conferencePaper",
+  "proceedings-article": "conferencePaper",
   chapter: "bookSection",
+  "book-chapter": "bookSection",
+  "book-part": "bookSection",
+  "book-section": "bookSection",
   book: "book",
   "edited-book": "book",
+  monograph: "book",
+  "reference-book": "book",
   report: "report",
   thesis: "thesis",
   webpage: "webpage",
