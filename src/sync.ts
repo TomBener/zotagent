@@ -1841,6 +1841,14 @@ export async function runSync(
       }
       stats.removedAttachments += sweep.staleDocKeys.length;
     }
+    if (sweep.orphanDocKeys.length > 0) {
+      // Not counted as removed attachments: these were never in any catalog
+      // (crashed-run residue or foreign leftovers), only on disk.
+      logger.info(
+        `Swept ${sweep.orphanDocKeys.length} orphaned artifact(s) not referenced by any catalog.`,
+        { console: true },
+      );
+    }
 
     nextEntries.sort((a, b) => a.filePath.localeCompare(b.filePath));
     const nextCatalog: CatalogFile = {
@@ -1880,6 +1888,9 @@ export async function runSync(
       !indexerSignatureChanged &&
       changedAttachments.length === 0 &&
       sweep.staleDocKeys.length === 0 &&
+      // Orphans were part of qmd's normalized-dir corpus until this sweep;
+      // run the index update once so their stale vectors get reaped.
+      sweep.orphanDocKeys.length === 0 &&
       nextEntries.every((entry) => {
         const prev = previousByDocKey.get(entry.docKey);
         return prev !== undefined && isEntryContentUnchanged(prev, entry);

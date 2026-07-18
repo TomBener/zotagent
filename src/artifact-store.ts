@@ -92,7 +92,12 @@ export type AdoptOutcome =
 export interface SessionReport {
   /** docKeys judged stale: expected but never touched this session. */
   staleDocKeys: string[];
-  /** Artifact files actually removed (stale pairs + staging residue). */
+  /** On-disk artifacts keyed by a well-formed docKey that neither the
+   *  expected set nor this session's touches account for — residue of
+   *  crashed runs or foreign catalogs. Swept, but reported separately so
+   *  callers don't count them as removed catalog attachments. */
+  orphanDocKeys: string[];
+  /** Artifact files actually removed (stale + orphan pairs + staging residue). */
   sweptFiles: number;
 }
 
@@ -192,6 +197,11 @@ export type ArtifactStoreFactory = (dirs: StoreDirs) => ArtifactStore;
 // stage of a staged manifest). Swept by ArtifactSession.finish().
 const STAGING_RESIDUE_RE = /\.(?:new|stale)-\d+-\d+-\d+(?:\.tmp)?$/;
 
+/** Production docKeys are sha1 hex. Orphan enumeration is gated on this
+ *  exact shape so a user's stray files in the artifact directories are
+ *  never treated as sweepable. */
+export const ARTIFACT_DOC_KEY_RE = /^[0-9a-f]{40}$/;
+
 /** Shared write-side validity gate: publish refuses exactly what the reuse
  *  verdict would classify as absent. Exported for adapter parity. */
 export function assertPublishable(built: BuiltArtifact): void {
@@ -239,12 +249,15 @@ export function rewriteManifestIdentity(
   };
 }
 
-/** Session bookkeeping shared by all adapters; only the sweeps differ. */
+/** Session bookkeeping shared by all adapters; only the sweeps and the
+ *  on-disk enumeration differ. */
 export function createArtifactSession(
   expectedDocKeys: Iterable<string>,
   hooks: {
     sweepDocKey: (docKey: string) => number;
     sweepResidue: () => number;
+    /** Well-formed docKeys of artifacts the adapter can currently see. */
+    enumerateDocKeys: () => Iterable<string>;
     onFinish: () => void;
   },
 ): ArtifactSession {
@@ -259,12 +272,18 @@ export function createArtifactSession(
     finish(): SessionReport {
       if (report) return report;
       const staleDocKeys = [...expected].filter((docKey) => !touched.has(docKey));
+      const orphanDocKeys = [...new Set(hooks.enumerateDocKeys())].filter(
+        (docKey) => !expected.has(docKey) && !touched.has(docKey),
+      );
       let sweptFiles = 0;
       for (const docKey of staleDocKeys) {
         sweptFiles += hooks.sweepDocKey(docKey);
       }
+      for (const docKey of orphanDocKeys) {
+        sweptFiles += hooks.sweepDocKey(docKey);
+      }
       sweptFiles += hooks.sweepResidue();
-      report = { staleDocKeys, sweptFiles };
+      report = { staleDocKeys, orphanDocKeys, sweptFiles };
       hooks.onFinish();
       return report;
     },
@@ -373,6 +392,26 @@ export function openFsArtifactStore(dirs: StoreDirs, testHooks: StoreTestHooks =
       }
     }
     return removed;
+  }
+
+  function enumerateDocKeys(): Set<string> {
+    const found = new Set<string>();
+    const collect = (dir: string, suffix: string): void => {
+      let names: string[];
+      try {
+        names = readdirSync(dir);
+      } catch {
+        return;
+      }
+      for (const name of names) {
+        if (!name.endsWith(suffix)) continue;
+        const docKey = name.slice(0, -suffix.length);
+        if (ARTIFACT_DOC_KEY_RE.test(docKey)) found.add(docKey);
+      }
+    };
+    collect(normalizedDir, ".md");
+    collect(manifestsDir, MANIFEST_EXT);
+    return found;
   }
 
   return {
@@ -521,6 +560,7 @@ export function openFsArtifactStore(dirs: StoreDirs, testHooks: StoreTestHooks =
       const session = createArtifactSession(expectedDocKeys, {
         sweepDocKey: sweepPair,
         sweepResidue,
+        enumerateDocKeys,
         onFinish: () => {
           activeSession = null;
         },

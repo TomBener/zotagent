@@ -13,6 +13,7 @@ import type {
   StoreTestHooks,
 } from "../../src/artifact-store.js";
 import {
+  ARTIFACT_DOC_KEY_RE,
   assertPublishable,
   createArtifactSession,
   manifestRefusal,
@@ -249,6 +250,9 @@ export function openMemoryArtifactStore(testHooks: StoreTestHooks = {}): MemoryA
       const session = createArtifactSession(expectedDocKeys, {
         sweepDocKey: sweepPair,
         sweepResidue: () => 0,
+        // Same gate as the fs adapter: only well-formed docKeys are
+        // enumerable as orphans, so short test keys never get swept.
+        enumerateDocKeys: () => [...records.keys()].filter((key) => ARTIFACT_DOC_KEY_RE.test(key)),
         onFinish: () => {
           activeSession = null;
         },

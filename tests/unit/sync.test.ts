@@ -5068,3 +5068,47 @@ test("runSync re-extracts after a crash between adoption move and identity rewri
   const catalog = readCatalogFile(join(s.indexDir, "catalog.json"));
   assert.equal(catalog.entries[0]?.extractStatus, "ready");
 });
+
+test("runSync sweeps orphan artifacts without counting them as removed attachments", async () => {
+  const s = stageRenameScenario("zotagent-sync-orphan-sweep-");
+  // Valid source pair at the OLD docKey so the rename adoption succeeds and
+  // nothing needs extraction — isolating the orphan sweep.
+  writeFileSync(join(s.normalizedDir, `${s.oldDocKey}.md`), "Body from the original extraction");
+  writeManifestFile(join(s.manifestsDir, `${s.oldDocKey}${MANIFEST_EXT}`), {
+    docKey: s.oldDocKey,
+    itemKey: "ITEM1",
+    title: "Paper",
+    authors: ["A Author"],
+    filePath: `${s.attachmentsRoot}/papers/old.pdf`,
+    blocks: [trivialBlock()],
+  });
+  // An orphan pair no catalog has ever referenced (crashed-run residue).
+  const orphanKey = "0123456789".repeat(4);
+  writeFileSync(join(s.normalizedDir, `${orphanKey}.md`), "orphan body");
+  writeManifestFile(join(s.manifestsDir, `${orphanKey}${MANIFEST_EXT}`), {
+    docKey: orphanKey,
+    itemKey: "GHOST",
+    title: "Ghost",
+    authors: [],
+    filePath: "/nowhere.pdf",
+    blocks: [trivialBlock()],
+  });
+  // A stray user file that must survive the sweep.
+  writeFileSync(join(s.normalizedDir, "notes.md"), "user notes");
+
+  const result = await runSync(
+    { bibliographyJsonPath: s.bibliographyPath, attachmentsRoot: s.attachmentsRoot, dataDir: s.dataDir },
+    s.quietQmdFactory,
+    undefined,
+    s.publishingExtractBatchFn as never,
+  );
+
+  assert.deepEqual(s.extractCalls, [], "adoption must succeed; nothing extracts");
+  assert.equal(result.stats.readyAttachments, 1);
+  // The orphan is swept but is NOT a removed catalog attachment.
+  assert.equal(result.stats.removedAttachments, 0);
+  assert.ok(!existsSync(join(s.normalizedDir, `${orphanKey}.md`)), "orphan normalized must be swept");
+  assert.ok(!existsSync(join(s.manifestsDir, `${orphanKey}${MANIFEST_EXT}`)), "orphan manifest must be swept");
+  assert.equal(readFileSync(join(s.normalizedDir, "notes.md"), "utf-8"), "user notes");
+  assert.ok(existsSync(join(s.normalizedDir, `${s.newDocKey}.md`)), "adopted artifact must survive");
+});

@@ -20,7 +20,9 @@ tests, commits, and reviews — one name per concept.
   `verticalText` marker for PDFs.
 - **Artifact Store** — the module that owns artifacts: the docKey→file
   mapping, staged pair publishes (publish-or-restore), the reuse verdict,
-  rename adoption, tolerant discard, and the per-sync stale sweep. It speaks
+  rename adoption, tolerant discard, and the per-sync sweep (stale pairs,
+  staging residue, and hex-keyed orphans no catalog references — never
+  files whose names don't match the docKey shape). It speaks
   only in docKeys, identities, and verdicts — it never touches source files
   and never knows Zotero exists. Lives in `src/artifact-store.ts`; sync,
   engine, diagnose, and the keyword index all go through it.

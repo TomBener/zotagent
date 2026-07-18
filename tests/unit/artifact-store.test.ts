@@ -297,6 +297,34 @@ for (const harness of harnesses) {
     const second = store.beginSession([]);
     second.finish();
   });
+
+  t("session sweeps hex-keyed orphans but never short-keyed records", () => {
+    const { store, seedRaw } = harness.make();
+    const orphanKey = "f".repeat(40);
+    seedRaw(orphanKey, { markdown: "orphan", manifest: sampleManifest(orphanKey) });
+    seedRaw("SHORTKEY", { markdown: "content", manifest: sampleManifest("SHORTKEY") });
+
+    const report = store.beginSession([]).finish();
+
+    assert.deepEqual(report.orphanDocKeys, [orphanKey]);
+    assert.deepEqual(report.staleDocKeys, []);
+    assert.deepEqual(store.probe(orphanKey), { hasNormalized: false, hasManifest: false });
+    // Not a well-formed docKey — enumeration must never treat it as sweepable.
+    assert.ok(store.reuseVerdict({ docKey: "SHORTKEY", itemKey: "ITEM-SHORTKEY" }).reusable);
+  });
+
+  t("a touched hex-keyed artifact is not an orphan", () => {
+    const { store, seedRaw } = harness.make();
+    const docKey = "e".repeat(40);
+    seedRaw(docKey, { markdown: "content", manifest: sampleManifest(docKey) });
+
+    const session = store.beginSession([]);
+    session.touch(docKey);
+    const report = session.finish();
+
+    assert.deepEqual(report.orphanDocKeys, []);
+    assert.ok(store.reuseVerdict({ docKey, itemKey: `ITEM-${docKey}` }).reusable);
+  });
 }
 
 // ---------- fs-adapter-only: fault injection and on-disk facts ----------
@@ -417,6 +445,28 @@ test("[fs] session sweep removes staging residue but never a live pair", () => {
 
   assert.equal(report.sweptFiles, 3);
   assert.deepEqual(dirListing(dirs.normalizedDir), ["LIVE.md"]);
+  assert.deepEqual(dirListing(dirs.manifestsDir), [`LIVE${MANIFEST_EXT}`]);
+});
+
+test("[fs] orphan enumeration matches only exact 40-hex artifact names", () => {
+  const { store, dirs, seedRaw } = makeFsHarness();
+  const orphanKey = "d".repeat(40);
+  // A half-pair orphan: only the manifest exists.
+  writeManifestFile(join(dirs.manifestsDir, `${orphanKey}${MANIFEST_EXT}`), sampleManifest(orphanKey));
+  // Stray files that must survive: not artifacts, wrong length, wrong case.
+  // (The uppercase stray uses different letters than orphanKey — macOS
+  // filesystems are case-insensitive, so identical letters would collide
+  // with the orphan's own unlink.)
+  writeFileSync(join(dirs.normalizedDir, "notes.md"), "user notes");
+  writeFileSync(join(dirs.normalizedDir, "ABCDEF.md"), "short name");
+  writeFileSync(join(dirs.normalizedDir, `${"F".repeat(40)}.md`), "uppercase hex");
+  seedRaw("LIVE", { markdown: "content", manifest: sampleManifest("LIVE") });
+
+  const report = store.beginSession([]).finish();
+
+  assert.deepEqual(report.orphanDocKeys, [orphanKey]);
+  assert.equal(report.sweptFiles, 1);
+  assert.deepEqual(dirListing(dirs.normalizedDir), ["ABCDEF.md", `${"F".repeat(40)}.md`, "LIVE.md", "notes.md"]);
   assert.deepEqual(dirListing(dirs.manifestsDir), [`LIVE${MANIFEST_EXT}`]);
 });
 
