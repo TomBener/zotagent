@@ -5,16 +5,16 @@ import {
   fetchTopLevelItemKeysByCollections,
   isValidCollectionKey,
   normalizeCollectionFilters,
-} from "../../src/zotero-collections.js";
-import type { ResolvedReadConfig } from "../../src/zotero-read.js";
+} from "../../src/zotero-http.js";
+import type { ZoteroCredentials } from "../../src/zotero-http.js";
 
-const userReadConfig: ResolvedReadConfig = {
+const userReadConfig: ZoteroCredentials = {
   apiKey: "secret",
   libraryId: "123456",
   libraryType: "user",
 };
 
-const groupReadConfig: ResolvedReadConfig = {
+const groupReadConfig: ZoteroCredentials = {
   apiKey: "secret",
   libraryId: "7890",
   libraryType: "group",

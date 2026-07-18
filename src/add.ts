@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { basename, isAbsolute, resolve as resolvePath, sep } from "node:path";
 
 import { resolveConfig, type ConfigOverrides } from "./config.js";
+import { fetchWithTimeout, readJsonResponse, type FetchLike } from "./http.js";
 import {
   cleanDoi,
   determineDoiItemType,
@@ -26,13 +27,18 @@ import {
   type TranslationChoice,
   type TranslationItem,
 } from "./translation-server.js";
-import type { AppConfig, ZoteroLibraryType } from "./types.js";
+import type { AppConfig } from "./types.js";
+import {
+  getWriteConfig,
+  libraryBaseUrl,
+  zoteroJsonHeaders,
+  type ZoteroCredentials,
+} from "./zotero-http.js";
 
 const DOI_CSL_ACCEPT_HEADER = "application/vnd.citationstyles.csl+json";
 const PUBLICATION_FIELDS = ["publicationTitle", "websiteTitle", "bookTitle", "proceedingsTitle"];
 const AI_AGENT_TAG = "Added by Zotagent";
 
-type FetchLike = typeof fetch;
 const REQUEST_TIMEOUT_MS = 8000;
 
 interface EditableZoteroItem {
@@ -109,12 +115,6 @@ export interface AddJsonItemFailure {
 }
 
 export type AddJsonItemResult = AddResult | AddJsonItemFailure;
-
-interface ResolvedWriteConfig {
-  apiKey: string;
-  libraryId: string;
-  libraryType: ZoteroLibraryType;
-}
 
 function createWriteToken(): string {
   return randomBytes(16).toString("hex");
@@ -451,76 +451,11 @@ function applyCollectionKey(payload: EditableZoteroItem, collectionKey: string |
   payload.collections = [collectionKey];
 }
 
-function getWriteConfig(config: AppConfig): ResolvedWriteConfig {
-  if (!config.zoteroLibraryId || !config.zoteroApiKey || !config.zoteroLibraryType) {
-    throw new Error(
-      "Missing Zotero write config. Set zoteroLibraryId, zoteroLibraryType, and zoteroApiKey in ~/.zotagent/config.json or ZOTAGENT_ZOTERO_* environment variables.",
-    );
-  }
-  return {
-    apiKey: config.zoteroApiKey,
-    libraryId: config.zoteroLibraryId,
-    libraryType: config.zoteroLibraryType,
-  };
-}
-
-function libraryBaseUrl(config: ResolvedWriteConfig): string {
-  const prefix = config.libraryType === "group" ? "groups" : "users";
-  return `https://api.zotero.org/${prefix}/${encodeURIComponent(config.libraryId)}`;
-}
-
-function buildHeaders(apiKey?: string, extra: Record<string, string> = {}): HeadersInit {
-  return {
-    Accept: "application/json",
-    "Content-Type": "application/json",
-    "Zotero-API-Version": "3",
-    ...(apiKey ? { "Zotero-API-Key": apiKey } : {}),
-    ...extra,
-  };
-}
-
-async function readJsonResponse<T>(response: Response, url: string): Promise<T> {
-  const text = await response.text();
-  if (!response.ok) {
-    let detail = text.trim();
-    if (!detail) detail = response.statusText;
-    throw new Error(`Request failed (${response.status}) for ${url}: ${detail}`);
-  }
-  if (!text.trim()) {
-    throw new Error(`Expected JSON response from ${url}`);
-  }
-  return JSON.parse(text) as T;
-}
-
-async function fetchWithTimeout(
-  fetchImpl: FetchLike,
-  input: string,
-  init: RequestInit,
-  timeoutMs = REQUEST_TIMEOUT_MS,
-): Promise<Response> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    return await fetchImpl(input, {
-      ...init,
-      signal: controller.signal,
-    });
-  } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
-      throw new Error(`Request timed out after ${timeoutMs}ms for ${input}`);
-    }
-    throw error;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
 async function fetchTemplate(itemType: string, fetchImpl: FetchLike): Promise<EditableZoteroItem> {
   const url = `https://api.zotero.org/items/new?itemType=${encodeURIComponent(itemType)}`;
   const response = await fetchWithTimeout(fetchImpl, url, {
-    headers: buildHeaders(undefined, { Accept: "application/json" }),
-  });
+    headers: zoteroJsonHeaders(undefined, { Accept: "application/json" }),
+  }, REQUEST_TIMEOUT_MS);
   return await readJsonResponse<EditableZoteroItem>(response, url);
 }
 
@@ -530,7 +465,7 @@ async function fetchCslJsonForDoi(doi: string, fetchImpl: FetchLike): Promise<Re
     headers: {
       Accept: DOI_CSL_ACCEPT_HEADER,
     },
-  });
+  }, REQUEST_TIMEOUT_MS);
   return await readJsonResponse<Record<string, unknown>>(response, url);
 }
 
@@ -629,16 +564,16 @@ function buildManualItem(
 }
 
 async function createItem(
-  config: ResolvedWriteConfig,
+  config: ZoteroCredentials,
   payload: EditableZoteroItem,
   fetchImpl: FetchLike,
 ): Promise<string> {
   const url = `${libraryBaseUrl(config)}/items`;
   const response = await fetchWithTimeout(fetchImpl, url, {
     method: "POST",
-    headers: buildHeaders(config.apiKey, { "Zotero-Write-Token": createWriteToken() }),
+    headers: zoteroJsonHeaders(config.apiKey, { "Zotero-Write-Token": createWriteToken() }),
     body: JSON.stringify([payload]),
-  });
+  }, REQUEST_TIMEOUT_MS);
   const data = await readJsonResponse<{ success?: Record<string, string>; successful?: Record<string, { key?: string }> }>(
     response,
     url,
@@ -659,8 +594,8 @@ async function fetchAttachmentTemplate(
 ): Promise<EditableZoteroItem> {
   const url = `https://api.zotero.org/items/new?itemType=attachment&linkMode=${encodeURIComponent(linkMode)}`;
   const response = await fetchWithTimeout(fetchImpl, url, {
-    headers: buildHeaders(undefined, { Accept: "application/json" }),
-  });
+    headers: zoteroJsonHeaders(undefined, { Accept: "application/json" }),
+  }, REQUEST_TIMEOUT_MS);
   return await readJsonResponse<EditableZoteroItem>(response, url);
 }
 
@@ -675,7 +610,7 @@ async function fetchAttachmentTemplate(
 async function createLinkedFileAttachment(
   parentKey: string,
   attach: ResolvedAttachFile,
-  config: ResolvedWriteConfig,
+  config: ZoteroCredentials,
   fetchImpl: FetchLike,
 ): Promise<string> {
   const template = await fetchAttachmentTemplate("linked_file", fetchImpl);
@@ -703,7 +638,7 @@ async function createLinkedFileAttachment(
 async function maybeCreateAttachment(
   parentKey: string,
   attach: ResolvedAttachFile | undefined,
-  config: ResolvedWriteConfig,
+  config: ZoteroCredentials,
   fetchImpl: FetchLike,
   warnings: string[],
 ): Promise<string | undefined> {
@@ -727,7 +662,7 @@ async function maybeCreateAttachment(
 async function createChildNotes(
   parentKey: string,
   notes: string[],
-  config: ResolvedWriteConfig,
+  config: ZoteroCredentials,
   fetchImpl: FetchLike,
   warnings: string[],
 ): Promise<string[]> {
@@ -752,7 +687,7 @@ async function createChildNotes(
 
 interface WriteContext {
   config: AppConfig;
-  writeConfig: ResolvedWriteConfig;
+  writeConfig: ZoteroCredentials;
   input: ReturnType<typeof normalizeInput>;
   attach: ResolvedAttachFile | undefined;
   warnings: string[];

@@ -1,16 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { fetchTopLevelItemKeysByTags, normalizeTagFilters } from "../../src/zotero-tags.js";
-import type { ResolvedReadConfig } from "../../src/zotero-read.js";
+import { fetchTopLevelItemKeysByTags, normalizeTagFilters } from "../../src/zotero-http.js";
+import type { ZoteroCredentials } from "../../src/zotero-http.js";
 
-const userReadConfig: ResolvedReadConfig = {
+const userReadConfig: ZoteroCredentials = {
   apiKey: "secret",
   libraryId: "123456",
   libraryType: "user",
 };
 
-const groupReadConfig: ResolvedReadConfig = {
+const groupReadConfig: ZoteroCredentials = {
   apiKey: "secret",
   libraryId: "7890",
   libraryType: "group",

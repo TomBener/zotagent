@@ -19,12 +19,12 @@ import { TranslationServerError } from "./translation-server.js";
 import type { MetadataField } from "./types.js";
 import { compactHomePath } from "./utils.js";
 import {
-  fetchTopLevelItemKeysByCollections,
+  getReadConfig,
   isValidCollectionKey,
   normalizeCollectionFilters,
-} from "./zotero-collections.js";
-import { getReadConfig, type ResolvedReadConfig } from "./zotero-read.js";
-import { fetchTopLevelItemKeysByTags, normalizeTagFilters } from "./zotero-tags.js";
+  normalizeTagFilters,
+  resolveItemKeyFilter,
+} from "./zotero-http.js";
 
 type FlagValue = string | string[] | boolean;
 
@@ -235,21 +235,6 @@ function parseCollectionFilters(
     };
   }
   return { collectionKeys: keys };
-}
-
-async function resolveItemKeyFilter(
-  tags: string[] | undefined,
-  collectionKeys: string[] | undefined,
-  readConfig: ResolvedReadConfig,
-): Promise<string[] | undefined> {
-  const tagItemKeys = tags ? await fetchTopLevelItemKeysByTags(tags, readConfig) : undefined;
-  const collectionItemKeys = collectionKeys
-    ? await fetchTopLevelItemKeysByCollections(collectionKeys, readConfig)
-    : undefined;
-  if (tagItemKeys === undefined) return collectionItemKeys;
-  if (collectionItemKeys === undefined) return tagItemKeys;
-  const collectionSet = new Set(collectionItemKeys);
-  return tagItemKeys.filter((key) => collectionSet.has(key));
 }
 
 interface NumericFlagOptions {

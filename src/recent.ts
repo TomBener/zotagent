@@ -1,11 +1,11 @@
 import { resolveConfig, type ConfigOverrides } from "./config.js";
+import { fetchWithTimeout, type FetchLike } from "./http.js";
 import {
-  fetchWithTimeout,
   getReadConfig,
   libraryBaseUrl,
-  type FetchLike,
-  type ResolvedReadConfig,
-} from "./zotero-read.js";
+  ZOTERO_REQUEST_TIMEOUT_MS,
+  type ZoteroCredentials,
+} from "./zotero-http.js";
 
 const API_PAGE_SIZE = 100;
 const EXCLUDED_TOP_LEVEL_ITEM_TYPES = new Set(["attachment", "note"]);
@@ -83,7 +83,7 @@ function isRegularBibliographicItem(item: ZoteroItemResponse): boolean {
 
 async function fetchRecentPage(
   fetchImpl: FetchLike,
-  readConfig: ResolvedReadConfig,
+  readConfig: ZoteroCredentials,
   options: { limit: number; sort: RecentSort; start: number },
 ): Promise<ZoteroItemResponse[]> {
   const params = new URLSearchParams({
@@ -99,7 +99,7 @@ async function fetchRecentPage(
       "Zotero-API-Version": "3",
       "Zotero-API-Key": readConfig.apiKey,
     },
-  });
+  }, ZOTERO_REQUEST_TIMEOUT_MS);
   const text = await response.text();
   if (!response.ok) {
     const detail = text.trim() || response.statusText;

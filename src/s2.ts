@@ -1,4 +1,5 @@
 import { resolveConfig, type ConfigOverrides } from "./config.js";
+import { fetchWithTimeout, readJsonResponse, type FetchLike } from "./http.js";
 import type { AppConfig, SemanticScholarPaper, SemanticScholarSearchResultRow } from "./types.js";
 
 const SEMANTIC_SCHOLAR_API_BASE = "https://api.semanticscholar.org/graph/v1";
@@ -16,8 +17,6 @@ const PAPER_FIELDS = [
   "venue",
   "abstract",
 ].join(",");
-
-type FetchLike = typeof fetch;
 
 interface SemanticScholarAuthor {
   name?: unknown;
@@ -82,43 +81,6 @@ function getSemanticScholarHeaders(config: AppConfig): HeadersInit {
     Accept: "application/json",
     ...(config.semanticScholarApiKey ? { "x-api-key": config.semanticScholarApiKey } : {}),
   };
-}
-
-async function readJsonResponse<T>(response: Response, url: string): Promise<T> {
-  const text = await response.text();
-  if (!response.ok) {
-    let detail = text.trim();
-    if (!detail) detail = response.statusText;
-    throw new Error(`Request failed (${response.status}) for ${url}: ${detail}`);
-  }
-  if (!text.trim()) {
-    throw new Error(`Expected JSON response from ${url}`);
-  }
-  return JSON.parse(text) as T;
-}
-
-async function fetchWithTimeout(
-  fetchImpl: FetchLike,
-  input: string,
-  init: RequestInit,
-  timeoutMs = REQUEST_TIMEOUT_MS,
-): Promise<Response> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    return await fetchImpl(input, {
-      ...init,
-      signal: controller.signal,
-    });
-  } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
-      throw new Error(`Request timed out after ${timeoutMs}ms for ${input}`);
-    }
-    throw error;
-  } finally {
-    clearTimeout(timeout);
-  }
 }
 
 function extractAuthorNames(value: unknown): string[] {
@@ -190,7 +152,7 @@ async function fetchPaper(
 
   const response = await fetchWithTimeout(fetchImpl, url.toString(), {
     headers: getSemanticScholarHeaders(config),
-  });
+  }, REQUEST_TIMEOUT_MS);
   return mapPaper(await readJsonResponse<SemanticScholarPaperApiRow>(response, url.toString()));
 }
 
@@ -231,7 +193,7 @@ export async function searchSemanticScholar(
 
   const response = await fetchWithTimeout(fetchImpl, url.toString(), {
     headers: getSemanticScholarHeaders(config),
-  });
+  }, REQUEST_TIMEOUT_MS);
   const data = await readJsonResponse<SemanticScholarSearchApiResponse>(response, url.toString());
   const rows = Array.isArray(data.data) ? data.data : [];
   const results = rows.map((row) => mapPaper((row || {}) as SemanticScholarPaperApiRow));
