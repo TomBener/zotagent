@@ -4,7 +4,20 @@ import { homedir } from "node:os";
 import { basename, isAbsolute, resolve as resolvePath, sep } from "node:path";
 
 import { resolveConfig, type ConfigOverrides } from "./config.js";
-import type { AddJsonInput } from "./json-input.js";
+import {
+  cleanDoi,
+  determineDoiItemType,
+  extractTitle,
+  firstString,
+  formatIssuedDate,
+  mapCslAuthors,
+  mapManualAuthors,
+  normalizeSpace,
+  sanitizeAbstract,
+  deriveShortTitle,
+  type ZoteroCreator,
+} from "./item-metadata.js";
+import { JsonInputError, mapLenientItem, readJsonInput, type AddJsonInput } from "./json-input.js";
 import { getSemanticScholarPaper, inferSemanticScholarItemType } from "./s2.js";
 import {
   searchByIdentifier,
@@ -16,39 +29,10 @@ import {
 import type { AppConfig, ZoteroLibraryType } from "./types.js";
 
 const DOI_CSL_ACCEPT_HEADER = "application/vnd.citationstyles.csl+json";
-// Keys cover both the CSL 1.0 vocabulary (returned by some registrars) and the
-// CrossRef work-type vocabulary that leaks into DOI content-negotiated CSL JSON
-// (e.g. OUP returns "book-chapter", not the CSL "chapter"). Missing keys fall
-// back to "document" in determineDoiItemType, so list both spellings.
-const CSL_TO_ZOTERO_ITEM_TYPE: Record<string, string> = {
-  "article-journal": "journalArticle",
-  "journal-article": "journalArticle",
-  "paper-conference": "conferencePaper",
-  "proceedings-article": "conferencePaper",
-  chapter: "bookSection",
-  "book-chapter": "bookSection",
-  "book-part": "bookSection",
-  "book-section": "bookSection",
-  book: "book",
-  "edited-book": "book",
-  monograph: "book",
-  "reference-book": "book",
-  report: "report",
-  thesis: "thesis",
-  webpage: "webpage",
-  "post-weblog": "webpage",
-  "article-magazine": "magazineArticle",
-  "article-newspaper": "newspaperArticle",
-};
-
 const PUBLICATION_FIELDS = ["publicationTitle", "websiteTitle", "bookTitle", "proceedingsTitle"];
-const DOI_URL_PREFIX_RE = /^(?:doi:\s*|https?:\/\/(?:dx\.)?doi\.org\/)/iu;
-const DOI_VALID_RE = /^10\.\S+\/\S+$/iu;
-const TAG_RE = /<[^>]+>/gu;
 const AI_AGENT_TAG = "Added by Zotagent";
 
 type FetchLike = typeof fetch;
-type ZoteroCreator = Record<string, string>;
 const REQUEST_TIMEOUT_MS = 8000;
 
 interface EditableZoteroItem {
@@ -75,7 +59,7 @@ interface EditableZoteroItem {
   [key: string]: unknown;
 }
 
-interface AddInput {
+export interface AddInput {
   doi?: string;
   title?: string;
   authors?: string[];
@@ -136,42 +120,8 @@ function createWriteToken(): string {
   return randomBytes(16).toString("hex");
 }
 
-function normalizeSpace(value: string): string {
-  return value.replace(/\u00a0/gu, " ").replace(/\s+/gu, " ").trim();
-}
-
-export function cleanDoi(rawDoi: string): string {
-  const cleaned = decodeURIComponent(rawDoi || "")
-    .trim()
-    .replace(DOI_URL_PREFIX_RE, "")
-    .replace(/\/+$/u, "");
-  if (!cleaned || !DOI_VALID_RE.test(cleaned)) {
-    throw new Error(`Invalid DOI: ${rawDoi}`);
-  }
-  return cleaned;
-}
-
 function encodeDoiPath(doi: string): string {
   return encodeURIComponent(doi).replace(/%2F/gu, "/");
-}
-
-function formatIssuedDate(issuedValue: unknown): string {
-  if (!issuedValue || typeof issuedValue !== "object") return "";
-  const dateParts = (issuedValue as { "date-parts"?: unknown[] })["date-parts"];
-  if (!Array.isArray(dateParts) || dateParts.length === 0) return "";
-  const firstPart = dateParts[0];
-  if (!Array.isArray(firstPart) || firstPart.length === 0) return "";
-
-  const cleanedParts: string[] = [];
-  for (const part of firstPart.slice(0, 3)) {
-    if (typeof part !== "number" || !Number.isInteger(part)) break;
-    if (cleanedParts.length === 0) {
-      cleanedParts.push(`${part}`.padStart(4, "0"));
-    } else {
-      cleanedParts.push(`${part}`.padStart(2, "0"));
-    }
-  }
-  return cleanedParts.join("-");
 }
 
 // Match Zotero's UI rendering: `YYYY-MM-DD HH:MM:SS` in *local* time. Zotero
@@ -254,61 +204,6 @@ export function resolveAttachFile(
   return { absolutePath: absolute, basename: base, contentType, zoteroPath };
 }
 
-function firstString(value: unknown): string {
-  if (typeof value === "string") return normalizeSpace(value);
-  if (!Array.isArray(value)) return "";
-  for (const entry of value) {
-    if (typeof entry !== "string") continue;
-    const normalized = normalizeSpace(entry);
-    if (normalized) return normalized;
-  }
-  return "";
-}
-
-function sanitizeAbstract(value: unknown): string {
-  if (typeof value !== "string") return "";
-  return normalizeSpace(value.replace(TAG_RE, " "));
-}
-
-function extractTitle(cslJson: Record<string, unknown>): { fullTitle: string; shortTitle?: string } {
-  const title = firstString(cslJson.title);
-  const subtitle = firstString(cslJson.subtitle);
-  const explicitShortTitle = firstString(cslJson["short-title"]);
-  const fullTitle = title && subtitle ? `${title}: ${subtitle}` : title;
-  if (!fullTitle) return { fullTitle: "" };
-  if (explicitShortTitle) {
-    return { fullTitle, shortTitle: explicitShortTitle };
-  }
-  if (title && subtitle) {
-    return { fullTitle, shortTitle: title };
-  }
-  return { fullTitle };
-}
-
-// Subtitle separator. Fullwidth `：` is lenient (Chinese titles routinely
-// write `标题：副标题` without spaces). Every ASCII separator (`:`, em dash
-// `—`, en dash `–`, hyphen `-`) requires whitespace on at least one side so
-// we don't slice up titles where the punctuation is part of a token —
-// `E. coli O157:H7`, `COVID-19–related`, `long-term`, `10:30`. Only the FIRST
-// match in the title is used.
-const SUBTITLE_SEP_RE = /\s*：\s*|\s+[:—–]\s*|\s*[:—–]\s+|\s+-\s+/u;
-
-/**
- * Pull the leading "main title" out of a title that uses a subtitle separator
- * (e.g. "Foo: Bar" → "Foo"). Returns undefined when there is no separator,
- * the prefix is empty, or there is nothing after the separator — there's no
- * point advertising a short title that's identical to the full title.
- */
-export function deriveShortTitle(fullTitle: string): string | undefined {
-  const trimmed = (fullTitle || "").trim();
-  if (!trimmed) return undefined;
-  const match = SUBTITLE_SEP_RE.exec(trimmed);
-  if (!match || match.index === 0) return undefined;
-  const candidate = trimmed.slice(0, match.index).trim();
-  const remainder = trimmed.slice(match.index + match[0].length).trim();
-  if (!candidate || !remainder || candidate === trimmed) return undefined;
-  return candidate;
-}
 
 /**
  * Auto-populate `shortTitle` from `title` when the template supports it and
@@ -330,20 +225,6 @@ function inferManualItemType(input: Required<Pick<AddInput, "url" | "publication
   return "journalArticle";
 }
 
-function determineDoiItemType(cslJson: Record<string, unknown>): string {
-  const cslType = firstString(cslJson.type);
-  const publisher = firstString(cslJson.publisher).toLowerCase();
-  const url = firstString(cslJson.URL).toLowerCase();
-  const containerTitle = firstString(cslJson["container-title"]);
-  if (cslType === "article" && (publisher === "arxiv" || url.includes("arxiv.org"))) {
-    return "preprint";
-  }
-  if (cslType === "article" && containerTitle) {
-    return "journalArticle";
-  }
-  return CSL_TO_ZOTERO_ITEM_TYPE[cslType] ?? "document";
-}
-
 function applyPublicationField(payload: EditableZoteroItem, publication: string | undefined): void {
   if (!publication) return;
   for (const field of PUBLICATION_FIELDS) {
@@ -359,68 +240,6 @@ function ensureAgentTag(payload: EditableZoteroItem): void {
     tags.push({ tag: AI_AGENT_TAG });
   }
   payload.tags = tags;
-}
-
-function parseAuthorName(rawAuthor: string): ZoteroCreator | null {
-  const author = normalizeSpace(rawAuthor);
-  if (!author) return null;
-
-  if (author.includes(",")) {
-    const [lastName, firstName] = author.split(",", 2).map((value) => normalizeSpace(value));
-    if (lastName || firstName) {
-      const creator: ZoteroCreator = {
-        creatorType: "author",
-      };
-      if (firstName) creator.firstName = firstName;
-      if (lastName) creator.lastName = lastName;
-      return creator;
-    }
-  }
-
-  const parts = author.split(" ").filter(Boolean);
-  if (parts.length >= 2) {
-    return {
-      creatorType: "author",
-      firstName: parts.slice(0, -1).join(" "),
-      lastName: parts.at(-1)!,
-    };
-  }
-
-  return {
-    creatorType: "author",
-    name: author,
-  };
-}
-
-export function mapManualAuthors(authors: string[]): ZoteroCreator[] {
-  return authors.map(parseAuthorName).filter((value): value is ZoteroCreator => value !== null);
-}
-
-function mapCslAuthors(cslJson: Record<string, unknown>): ZoteroCreator[] {
-  const authorList = Array.isArray(cslJson.author) ? cslJson.author : [];
-  return authorList
-    .map((author) => {
-      if (!author || typeof author !== "object") return null;
-      const family = normalizeSpace(String((author as { family?: unknown }).family || ""));
-      const given = normalizeSpace(String((author as { given?: unknown }).given || ""));
-      const literal = normalizeSpace(String((author as { literal?: unknown }).literal || ""));
-      if (family || given) {
-        const creator: ZoteroCreator = {
-          creatorType: "author",
-        };
-        if (given) creator.firstName = given;
-        if (family) creator.lastName = family;
-        return creator;
-      }
-      if (literal) {
-        return {
-          creatorType: "author",
-          name: literal,
-        };
-      }
-      return null;
-    })
-    .filter((value): value is ZoteroCreator => value !== null);
 }
 
 // Keys of a translation-server item that must not be copied verbatim onto the
@@ -931,191 +750,171 @@ async function createChildNotes(
   return noteKeys;
 }
 
-export async function addToZotero(
-  input: AddInput,
-  overrides: ConfigOverrides = {},
-  fetchImpl: FetchLike = fetch,
-): Promise<AddResult> {
+interface WriteContext {
+  config: AppConfig;
+  writeConfig: ResolvedWriteConfig;
+  input: ReturnType<typeof normalizeInput>;
+  attach: ResolvedAttachFile | undefined;
+  warnings: string[];
+}
+
+/**
+ * Shared preamble of every add path: resolve config (checking the
+ * translation-server prerequisite before write credentials when asked — its
+ * absence is the more actionable error when both are missing), normalize the
+ * input, apply the config-default collection key, and validate --attach-file
+ * up front so a bad path can never leave an orphan parent item behind.
+ */
+function prepareWrite(
+  rawInput: AddInput,
+  overrides: ConfigOverrides,
+  options: { requireServerFor?: string } = {},
+): { ctx: WriteContext; serverUrl?: string } {
   const config = resolveConfig(overrides);
-  const writeConfig = getWriteConfig(config);
-  const normalizedInput = normalizeInput(input);
-  const warnings = [...config.warnings];
-  const effectiveCollectionKey = normalizedInput.collectionKey || config.zoteroCollectionKey || "";
-  const normalizedWithDefaults = {
-    ...normalizedInput,
-    collectionKey: effectiveCollectionKey,
-  };
-
-  if (!normalizedWithDefaults.doi && !normalizedWithDefaults.title) {
-    throw new Error("Provide --doi <doi> or --title <text>.");
-  }
-
-  // Validate attach-file *before* hitting Zotero, so a bad path can't leave
-  // an orphan parent item behind.
-  const attach = normalizedWithDefaults.attachFile
-    ? resolveAttachFile(normalizedWithDefaults.attachFile, config.attachmentsRoot)
+  const serverUrl = options.requireServerFor
+    ? requireTranslationServer(config, options.requireServerFor)
     : undefined;
+  const writeConfig = getWriteConfig(config);
+  const normalizedInput = normalizeInput(rawInput);
+  const input = {
+    ...normalizedInput,
+    collectionKey: normalizedInput.collectionKey || config.zoteroCollectionKey || "",
+  };
+  const attach = input.attachFile
+    ? resolveAttachFile(input.attachFile, config.attachmentsRoot)
+    : undefined;
+  return {
+    ctx: { config, writeConfig, input, attach, warnings: [...config.warnings] },
+    ...(serverUrl ? { serverUrl } : {}),
+  };
+}
 
-  const manualItemType = inferManualItemType({
-    itemType: normalizedWithDefaults.itemType,
-    publication: normalizedWithDefaults.publication,
-    url: normalizedWithDefaults.url,
-  });
-
-  if (normalizedWithDefaults.doi) {
-    const cleanedDoi = cleanDoi(normalizedWithDefaults.doi);
-    try {
-      if (config.translationServerUrl) {
-        // Same translator chain the browser connector uses for identifiers
-        // (Crossref / DataCite via DOI Content Negotiation) — noticeably
-        // richer than the raw CSL JSON mapping below.
-        const items = await searchByIdentifier(config.translationServerUrl, cleanedDoi, fetchImpl);
-        const picked = pickSingleTranslationItem(items, `DOI ${cleanedDoi}`, warnings);
-        const created = await createFromTranslationItem(
-          picked,
-          normalizedWithDefaults,
-          writeConfig,
-          attach,
-          warnings,
-          fetchImpl,
-          cleanedDoi,
-        );
-        // Spread order matters: translationAddResult reports the DOI actually
-        // written to the item (translators may normalize the requested form);
-        // cleanedDoi only fills in when the item type has no DOI field.
-        return { doi: cleanedDoi, ...translationAddResult("doi", created, warnings) };
-      }
-      const cslJson = await fetchCslJsonForDoi(cleanedDoi, fetchImpl);
-      const itemType = normalizedWithDefaults.itemType || determineDoiItemType(cslJson);
-      const template = await fetchTemplate(itemType, fetchImpl);
-      const payload = buildItemFromCsl(template, cslJson, cleanedDoi);
-      applyManualOverrides(payload, normalizedWithDefaults);
-      ensureShortTitle(payload);
-      const itemKey = await createItem(writeConfig, payload, fetchImpl);
-      const attachmentItemKey = await maybeCreateAttachment(
-        itemKey,
-        attach,
-        writeConfig,
-        fetchImpl,
-        warnings,
-      );
-      return {
-        itemKey,
-        title: typeof payload.title === "string" ? payload.title : "",
-        itemType: payload.itemType,
-        created: true,
-        source: "doi",
-        doi: cleanedDoi,
-        ...(attachmentItemKey ? { attachmentItemKey } : {}),
-        ...(warnings.length > 0 ? { warnings } : {}),
-      };
-    } catch (error) {
-      if (!normalizedWithDefaults.title) {
-        throw error;
-      }
-      warnings.push(
-        `DOI import failed; created item from manual fields instead. ${error instanceof Error ? error.message : String(error)}`,
-      );
-      const template = await fetchTemplate(manualItemType, fetchImpl);
-      const payload = buildManualItem(template, normalizedWithDefaults);
-      if ("DOI" in payload) payload.DOI = cleanedDoi;
-      const itemKey = await createItem(writeConfig, payload, fetchImpl);
-      const attachmentItemKey = await maybeCreateAttachment(
-        itemKey,
-        attach,
-        writeConfig,
-        fetchImpl,
-        warnings,
-      );
-      return {
-        itemKey,
-        title: typeof payload.title === "string" ? payload.title : "",
-        itemType: payload.itemType,
-        created: true,
-        source: "manual-fallback",
-        doi: cleanedDoi,
-        ...(attachmentItemKey ? { attachmentItemKey } : {}),
-        ...(warnings.length > 0 ? { warnings } : {}),
-      };
-    }
-  }
-
-  const template = await fetchTemplate(manualItemType, fetchImpl);
-  const payload = buildManualItem(template, normalizedWithDefaults);
-  const itemKey = await createItem(writeConfig, payload, fetchImpl);
+/**
+ * Shared tail of every add path: create the parent item, then translator
+ * child notes, then the optional --attach-file child, and assemble the
+ * AddResult. Optional fields are omitted from the JSON envelope when empty.
+ */
+async function createWithChildren(
+  ctx: Pick<WriteContext, "writeConfig" | "attach" | "warnings">,
+  payload: EditableZoteroItem,
+  meta: { source: AddResult["source"]; doi?: string; childNotes?: string[] },
+  fetchImpl: FetchLike,
+): Promise<AddResult> {
+  const itemKey = await createItem(ctx.writeConfig, payload, fetchImpl);
+  const noteItemKeys = await createChildNotes(
+    itemKey,
+    meta.childNotes ?? [],
+    ctx.writeConfig,
+    fetchImpl,
+    ctx.warnings,
+  );
   const attachmentItemKey = await maybeCreateAttachment(
     itemKey,
-    attach,
-    writeConfig,
+    ctx.attach,
+    ctx.writeConfig,
     fetchImpl,
-    warnings,
+    ctx.warnings,
   );
   return {
     itemKey,
     title: typeof payload.title === "string" ? payload.title : "",
     itemType: payload.itemType,
     created: true,
-    source: "manual",
+    source: meta.source,
+    ...(meta.doi ? { doi: meta.doi } : {}),
     ...(attachmentItemKey ? { attachmentItemKey } : {}),
-    ...(warnings.length > 0 ? { warnings } : {}),
+    ...(noteItemKeys.length > 0 ? { noteItemKeys } : {}),
+    ...(ctx.warnings.length > 0 ? { warnings: ctx.warnings } : {}),
   };
 }
 
 /**
  * Shared tail of the translation-server add paths: fetch the template for
- * the translated item, apply manual override flags, create the parent plus
- * translator child notes and the optional --attach-file child.
+ * the translated item, apply manual override flags, then run the create
+ * tail with the translator's child notes. The DOI on the result is the one
+ * actually written to the item (translators may normalize the requested
+ * form); `ensureDoi` only fills in when the schema's DOI field is blank.
  */
-async function createFromTranslationItem(
+async function createFromTranslation(
+  ctx: WriteContext,
   picked: PickedTranslation,
-  normalizedInput: ReturnType<typeof normalizeInput>,
-  writeConfig: ResolvedWriteConfig,
-  attach: ResolvedAttachFile | undefined,
-  warnings: string[],
+  source: "doi" | "url" | "identifier",
   fetchImpl: FetchLike,
   ensureDoi?: string,
-): Promise<{
-  payload: EditableZoteroItem;
-  itemKey: string;
-  noteItemKeys: string[];
-  attachmentItemKey?: string;
-}> {
-  const itemType = normalizedInput.itemType || String(picked.item.itemType);
+): Promise<AddResult> {
+  const itemType = ctx.input.itemType || String(picked.item.itemType);
   const template = await fetchTemplate(itemType, fetchImpl);
   const payload = buildItemFromTranslation(template, picked.item);
   if (ensureDoi && "DOI" in payload && !payload.DOI) {
     payload.DOI = ensureDoi;
   }
-  applyManualOverrides(payload, normalizedInput);
+  applyManualOverrides(payload, ctx.input);
   ensureShortTitle(payload);
-  const itemKey = await createItem(writeConfig, payload, fetchImpl);
-  const noteItemKeys = await createChildNotes(itemKey, picked.childNotes, writeConfig, fetchImpl, warnings);
-  const attachmentItemKey = await maybeCreateAttachment(itemKey, attach, writeConfig, fetchImpl, warnings);
-  return {
+  const writtenDoi = typeof payload.DOI === "string" && payload.DOI ? payload.DOI : undefined;
+  return await createWithChildren(
+    ctx,
     payload,
-    itemKey,
-    noteItemKeys,
-    ...(attachmentItemKey ? { attachmentItemKey } : {}),
-  };
+    { source, ...(writtenDoi ? { doi: writtenDoi } : {}), childNotes: picked.childNotes },
+    fetchImpl,
+  );
 }
 
-function translationAddResult(
-  source: "doi" | "url" | "identifier",
-  created: Awaited<ReturnType<typeof createFromTranslationItem>>,
-  warnings: string[],
-): AddResult {
-  const doi = typeof created.payload.DOI === "string" && created.payload.DOI ? created.payload.DOI : undefined;
-  return {
-    itemKey: created.itemKey,
-    title: typeof created.payload.title === "string" ? created.payload.title : "",
-    itemType: created.payload.itemType,
-    created: true,
-    source,
-    ...(doi ? { doi } : {}),
-    ...(created.attachmentItemKey ? { attachmentItemKey: created.attachmentItemKey } : {}),
-    ...(created.noteItemKeys.length > 0 ? { noteItemKeys: created.noteItemKeys } : {}),
-    ...(warnings.length > 0 ? { warnings } : {}),
-  };
+export async function addToZotero(
+  input: AddInput,
+  overrides: ConfigOverrides = {},
+  fetchImpl: FetchLike = fetch,
+): Promise<AddResult> {
+  const { ctx } = prepareWrite(input, overrides);
+
+  if (!ctx.input.doi && !ctx.input.title) {
+    throw new Error("Provide --doi <doi> or --title <text>.");
+  }
+
+  const manualItemType = inferManualItemType({
+    itemType: ctx.input.itemType,
+    publication: ctx.input.publication,
+    url: ctx.input.url,
+  });
+
+  if (ctx.input.doi) {
+    const cleanedDoi = cleanDoi(ctx.input.doi);
+    try {
+      if (ctx.config.translationServerUrl) {
+        // Same translator chain the browser connector uses for identifiers
+        // (Crossref / DataCite via DOI Content Negotiation) — noticeably
+        // richer than the raw CSL JSON mapping below.
+        const items = await searchByIdentifier(ctx.config.translationServerUrl, cleanedDoi, fetchImpl);
+        const picked = pickSingleTranslationItem(items, `DOI ${cleanedDoi}`, ctx.warnings);
+        // Spread order matters: the translation result reports the DOI
+        // actually written to the item (translators may normalize the
+        // requested form); cleanedDoi only fills in when the item type has
+        // no DOI field.
+        return { doi: cleanedDoi, ...(await createFromTranslation(ctx, picked, "doi", fetchImpl, cleanedDoi)) };
+      }
+      const cslJson = await fetchCslJsonForDoi(cleanedDoi, fetchImpl);
+      const itemType = ctx.input.itemType || determineDoiItemType(cslJson);
+      const template = await fetchTemplate(itemType, fetchImpl);
+      const payload = buildItemFromCsl(template, cslJson, cleanedDoi);
+      applyManualOverrides(payload, ctx.input);
+      ensureShortTitle(payload);
+      return await createWithChildren(ctx, payload, { source: "doi", doi: cleanedDoi }, fetchImpl);
+    } catch (error) {
+      if (!ctx.input.title) {
+        throw error;
+      }
+      ctx.warnings.push(
+        `DOI import failed; created item from manual fields instead. ${error instanceof Error ? error.message : String(error)}`,
+      );
+      const template = await fetchTemplate(manualItemType, fetchImpl);
+      const payload = buildManualItem(template, ctx.input);
+      if ("DOI" in payload) payload.DOI = cleanedDoi;
+      return await createWithChildren(ctx, payload, { source: "manual-fallback", doi: cleanedDoi }, fetchImpl);
+    }
+  }
+
+  const template = await fetchTemplate(manualItemType, fetchImpl);
+  const payload = buildManualItem(template, ctx.input);
+  return await createWithChildren(ctx, payload, { source: "manual" }, fetchImpl);
 }
 
 /**
@@ -1136,40 +935,15 @@ export async function addFromUrl(
   if (!trimmedUrl) {
     throw new Error("Provide a non-empty URL for --from-url.");
   }
-  const config = resolveConfig(overrides);
-  // Check the translation-server prerequisite before write credentials: it is
-  // the prerequisite specific to this command, so its absence is the more
-  // actionable error when both happen to be missing.
-  const serverUrl = requireTranslationServer(config, "add --from-url");
-  const writeConfig = getWriteConfig(config);
-  const normalizedInput = normalizeInput(input);
-  const warnings = [...config.warnings];
-  const normalizedWithDefaults = {
-    ...normalizedInput,
-    collectionKey: normalizedInput.collectionKey || config.zoteroCollectionKey || "",
-  };
+  const { ctx, serverUrl } = prepareWrite(input, overrides, { requireServerFor: "add --from-url" });
 
-  // Validate attach-file *before* any network call, mirroring addToZotero —
-  // a bad path must not leave an orphan parent item behind.
-  const attach = normalizedWithDefaults.attachFile
-    ? resolveAttachFile(normalizedWithDefaults.attachFile, config.attachmentsRoot)
-    : undefined;
-
-  const outcome = await translateWebUrl(serverUrl, trimmedUrl, options.select, fetchImpl);
+  const outcome = await translateWebUrl(serverUrl!, trimmedUrl, options.select, fetchImpl);
   if (outcome.kind === "choices") {
     return { multiple: true, url: trimmedUrl, choices: outcome.choices };
   }
 
-  const picked = pickSingleTranslationItem(outcome.items, trimmedUrl, warnings);
-  const created = await createFromTranslationItem(
-    picked,
-    normalizedWithDefaults,
-    writeConfig,
-    attach,
-    warnings,
-    fetchImpl,
-  );
-  return translationAddResult("url", created, warnings);
+  const picked = pickSingleTranslationItem(outcome.items, trimmedUrl, ctx.warnings);
+  return await createFromTranslation(ctx, picked, "url", fetchImpl);
 }
 
 /**
@@ -1187,32 +961,12 @@ export async function addFromIdentifier(
   if (!trimmedIdentifier) {
     throw new Error("Provide a non-empty identifier (DOI, ISBN, PMID, or arXiv ID).");
   }
-  const config = resolveConfig(overrides);
-  const serverUrl = requireTranslationServer(config, "add --identifier");
-  const writeConfig = getWriteConfig(config);
-  const normalizedInput = normalizeInput(input);
-  const warnings = [...config.warnings];
-  const normalizedWithDefaults = {
-    ...normalizedInput,
-    collectionKey: normalizedInput.collectionKey || config.zoteroCollectionKey || "",
-  };
+  const { ctx, serverUrl } = prepareWrite(input, overrides, { requireServerFor: "add --identifier" });
 
-  const attach = normalizedWithDefaults.attachFile
-    ? resolveAttachFile(normalizedWithDefaults.attachFile, config.attachmentsRoot)
-    : undefined;
-
-  const items = await searchByIdentifier(serverUrl, trimmedIdentifier, fetchImpl);
-  const picked = pickSingleTranslationItem(items, trimmedIdentifier, warnings);
-  const created = await createFromTranslationItem(
-    picked,
-    normalizedWithDefaults,
-    writeConfig,
-    attach,
-    warnings,
-    fetchImpl,
-  );
+  const items = await searchByIdentifier(serverUrl!, trimmedIdentifier, fetchImpl);
+  const picked = pickSingleTranslationItem(items, trimmedIdentifier, ctx.warnings);
   return {
-    ...translationAddResult("identifier", created, warnings),
+    ...(await createFromTranslation(ctx, picked, "identifier", fetchImpl)),
     identifier: trimmedIdentifier,
   };
 }
@@ -1336,24 +1090,15 @@ export async function addJsonItemsToZotero(
       ensureAgentTag(payload);
       ensureShortTitle(payload);
 
-      const itemKey = await createItem(writeConfig, payload, fetchImpl);
       const itemWarnings = [...baseWarnings, ...input.warnings];
-      const attachmentItemKey = await maybeCreateAttachment(
-        itemKey,
-        attach,
-        writeConfig,
-        fetchImpl,
-        itemWarnings,
+      results.push(
+        await createWithChildren(
+          { writeConfig, attach, warnings: itemWarnings },
+          payload,
+          { source: "json" },
+          fetchImpl,
+        ),
       );
-      results.push({
-        itemKey,
-        title: typeof payload.title === "string" ? payload.title : input.title,
-        itemType: typeof payload.itemType === "string" ? payload.itemType : input.itemType,
-        created: true,
-        source: "json",
-        ...(attachmentItemKey ? { attachmentItemKey } : {}),
-        ...(itemWarnings.length > 0 ? { warnings: itemWarnings } : {}),
-      });
     } catch (error) {
       results.push({
         ok: false,
@@ -1368,4 +1113,85 @@ export async function addJsonItemsToZotero(
   }
 
   return results;
+}
+
+/** One request shape per add input kind — the CLI's flag parsing produces
+ *  this, and programmatic callers can construct it directly. */
+export type AddRequest =
+  | { kind: "doi-or-manual"; input: AddInput }
+  | { kind: "url"; url: string; select?: string; input?: Omit<AddInput, "doi"> }
+  | { kind: "identifier"; identifier: string; input?: Omit<AddInput, "doi"> }
+  | { kind: "s2"; paperId: string; input?: Omit<AddInput, "doi"> };
+
+/**
+ * Single entry point for the four single-item add kinds. Returns the created
+ * item's AddResult, or the choices list when a --from-url page offers
+ * multiple candidates (nothing created; re-run with select).
+ */
+export async function runAdd(
+  request: AddRequest,
+  overrides: ConfigOverrides = {},
+  fetchImpl: FetchLike = fetch,
+): Promise<AddResult | AddUrlChoicesResult> {
+  switch (request.kind) {
+    case "url":
+      return await addFromUrl(
+        request.url,
+        request.input ?? {},
+        request.select ? { select: request.select } : {},
+        overrides,
+        fetchImpl,
+      );
+    case "identifier":
+      return await addFromIdentifier(request.identifier, request.input ?? {}, overrides, fetchImpl);
+    case "s2":
+      return await addS2PaperToZotero(request.paperId, request.input ?? {}, overrides, fetchImpl);
+    case "doi-or-manual":
+      return await addToZotero(request.input, overrides, fetchImpl);
+  }
+}
+
+/**
+ * The JSON batch flow: read the bundle, leniently map each raw item, and
+ * create the mappable ones. Results line up 1:1 with the input array —
+ * parse failures hold their position as `{ok: false}` entries, and per-item
+ * write failures are reported in-place by addJsonItemsToZotero. Read errors
+ * and JsonInputError from the bundle itself propagate to the caller.
+ */
+export async function runAddJson(
+  source: string,
+  overrides: ConfigOverrides = {},
+  cliCollectionKey?: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<AddJsonItemResult[]> {
+  const bundle = await readJsonInput(source);
+  type Stage =
+    | { kind: "ready"; input: AddJsonInput }
+    | { kind: "failed"; failure: AddJsonItemFailure };
+  const stages: Stage[] = [];
+  for (const raw of bundle.items) {
+    try {
+      stages.push({ kind: "ready", input: mapLenientItem(raw) });
+    } catch (mapError) {
+      if (mapError instanceof JsonInputError) {
+        stages.push({
+          kind: "failed",
+          failure: {
+            ok: false,
+            error: { code: "INVALID_INPUT", message: mapError.message },
+          },
+        });
+        continue;
+      }
+      throw mapError;
+    }
+  }
+  const readyInputs = stages
+    .filter((s): s is Extract<Stage, { kind: "ready" }> => s.kind === "ready")
+    .map((s) => s.input);
+  const successResults = await addJsonItemsToZotero(readyInputs, overrides, cliCollectionKey, fetchImpl);
+  let resultCursor = 0;
+  return stages.map((stage) =>
+    stage.kind === "ready" ? successResults[resultCursor++] : stage.failure,
+  );
 }

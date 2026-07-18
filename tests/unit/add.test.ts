@@ -4,7 +4,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { addJsonItemsToZotero, addS2PaperToZotero, addToZotero, deriveShortTitle } from "../../src/add.js";
+import { addJsonItemsToZotero, addS2PaperToZotero, addToZotero } from "../../src/add.js";
+import { deriveShortTitle } from "../../src/item-metadata.js";
 import { mapLenientItem } from "../../src/json-input.js";
 
 const ACCESS_DATE_LOCAL_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/u;

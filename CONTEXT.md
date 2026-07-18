@@ -61,6 +61,16 @@ tests, commits, and reviews — one name per concept.
   (keyword schema, qmd package, opencc version, embed model sentinel); any
   mismatch with the catalog's recorded signature invalidates the indexes.
 
+## Add
+
+- **Add intake** — the pipeline behind `zotagent add`: every input kind
+  (manual fields, DOI, web page, identifier, Semantic Scholar paperId, JSON
+  batch) produces a Zotero item payload that flows through one shared write
+  tail (create → child notes → attachment → agent tag → result). `runAdd` /
+  `runAddJson` in `src/add.ts` are the entry points the CLI calls; pure
+  metadata mapping (CSL→Zotero types, DOI hygiene, author parsing, title
+  splitting) lives in `src/item-metadata.ts`.
+
 ## Search
 
 - **Keyword index** — the FTS5 sqlite index over manifest blocks.

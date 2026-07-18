@@ -2,21 +2,13 @@
 
 import { readFileSync } from "node:fs";
 
-import {
-  addFromIdentifier,
-  addFromUrl,
-  addJsonItemsToZotero,
-  addS2PaperToZotero,
-  addToZotero,
-  type AddJsonItemFailure,
-  type AddJsonItemResult,
-} from "./add.js";
+import { runAdd, runAddJson, type AddRequest } from "./add.js";
 import { ConfigCommandError, runConfigCommand } from "./config-command.js";
 import { getDataPaths, resolveConfig, type ConfigOverrides } from "./config.js";
 import { diagnoseExtraction } from "./diagnose.js";
 import { expandDocument, fullTextDocument, getDocumentBlocks, getIndexStatus, searchLiterature, searchWithinDocuments } from "./engine.js";
 import { emitError, emitOk } from "./json.js";
-import { JsonInputError, mapLenientItem, readJsonInput, type AddJsonInput } from "./json-input.js";
+import { JsonInputError } from "./json-input.js";
 import { KeywordQuerySyntaxError } from "./keyword-db.js";
 import { searchMetadata } from "./metadata.js";
 import { openQmdClient } from "./qmd.js";
@@ -709,42 +701,7 @@ async function main(): Promise<void> {
             return;
           }
           try {
-            const bundle = await readJsonInput(jsonSource);
-            type Stage =
-              | { kind: "ready"; input: AddJsonInput }
-              | { kind: "failed"; failure: AddJsonItemFailure };
-            const stages: Stage[] = [];
-            for (const raw of bundle.items) {
-              try {
-                stages.push({ kind: "ready", input: mapLenientItem(raw) });
-              } catch (mapError) {
-                if (mapError instanceof JsonInputError) {
-                  stages.push({
-                    kind: "failed",
-                    failure: {
-                      ok: false,
-                      error: { code: "INVALID_INPUT", message: mapError.message },
-                    },
-                  });
-                  continue;
-                }
-                throw mapError;
-              }
-            }
-            const readyInputs = stages
-              .filter((s): s is Extract<Stage, { kind: "ready" }> => s.kind === "ready")
-              .map((s) => s.input);
-            const cliCollectionKey = getStringFlag(parsed.flags, "collection-key");
-            const successResults = await addJsonItemsToZotero(
-              readyInputs,
-              overrides,
-              cliCollectionKey,
-            );
-            let resultCursor = 0;
-            const merged: AddJsonItemResult[] = stages.map((stage) =>
-              stage.kind === "ready" ? successResults[resultCursor++] : stage.failure,
-            );
-            emitOk(merged);
+            emitOk(await runAddJson(jsonSource, overrides, getStringFlag(parsed.flags, "collection-key")));
           } catch (error) {
             if (error instanceof JsonInputError) {
               emitError("INVALID_ARGUMENT", error.message, error.details);
@@ -810,28 +767,24 @@ async function main(): Promise<void> {
             ? { attachFile: getStringFlag(parsed.flags, "attach-file")! }
             : {}),
         };
+        const request: AddRequest = fromUrl
+          ? { kind: "url", url: fromUrl, ...(select ? { select } : {}), input: sharedInput }
+          : identifier
+            ? { kind: "identifier", identifier, input: sharedInput }
+            : s2PaperId
+              ? { kind: "s2", paperId: s2PaperId, input: sharedInput }
+              : { kind: "doi-or-manual", input: sharedInput };
         try {
-          if (fromUrl) {
-            const outcome = await addFromUrl(fromUrl, sharedInput, { ...(select ? { select } : {}) }, overrides);
-            if ("multiple" in outcome) {
-              emitError(
-                "MULTIPLE_RESULTS",
-                `${outcome.choices.length} candidate items found at ${outcome.url}. Re-run the same command with --select <key> to import one.`,
-                { url: outcome.url, choices: outcome.choices },
-              );
-              return;
-            }
-            emitOk(outcome);
+          const outcome = await runAdd(request, overrides);
+          if ("multiple" in outcome) {
+            emitError(
+              "MULTIPLE_RESULTS",
+              `${outcome.choices.length} candidate items found at ${outcome.url}. Re-run the same command with --select <key> to import one.`,
+              { url: outcome.url, choices: outcome.choices },
+            );
             return;
           }
-          if (identifier) {
-            emitOk(await addFromIdentifier(identifier, sharedInput, overrides));
-            return;
-          }
-          const data = s2PaperId
-            ? await addS2PaperToZotero(s2PaperId, sharedInput, overrides)
-            : await addToZotero(sharedInput, overrides);
-          emitOk(data);
+          emitOk(outcome);
         } catch (error) {
           if (error instanceof TranslationServerError) {
             emitError(error.code, error.message, error.details);

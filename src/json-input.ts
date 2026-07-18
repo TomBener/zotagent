@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { text as readStreamText } from "node:stream/consumers";
 
-import { cleanDoi, mapManualAuthors } from "./add.js";
+import { cleanDoi, mapManualAuthors } from "./item-metadata.js";
 
 export interface AddJsonInput {
   itemType: string;
