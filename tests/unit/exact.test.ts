@@ -25,7 +25,6 @@ function manifest(blocks: ManifestBlock[]): AttachmentManifest {
     title: "Test",
     authors: ["A"],
     filePath: "/tmp/test.pdf",
-    normalizedPath: "/tmp/test.md",
     blocks,
   };
 }

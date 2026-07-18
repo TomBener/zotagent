@@ -26,12 +26,10 @@ function createConfig(dataDir: string): AppConfig {
 }
 
 function readyEntry(
-  dataDir: string,
   docKey: string,
   itemKey: string,
   title: string,
   filePath: string,
-  manifestPath: string,
 ): CatalogEntry {
   return {
     docKey,
@@ -47,8 +45,6 @@ function readyEntry(
     mtimeMs: 1,
     sourceHash: `${docKey}-hash`,
     lastIndexedAt: new Date().toISOString(),
-    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
-    manifestPath,
   };
 }
 
@@ -67,7 +63,6 @@ test("openKeywordIndex builds and searches with porter stemming", async () => {
     title: "Party Secretary Governance in SOEs",
     authors: ["A"],
     filePath: "/tmp/test.pdf",
-    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
     blocks: [
       {
         blockIndex: 0,
@@ -83,7 +78,7 @@ test("openKeywordIndex builds and searches with porter stemming", async () => {
     ],
   });
 
-  const entry = readyEntry(dataDir, docKey, "ITEM1", "Party Secretary Governance in SOEs", "/tmp/test.pdf", manifestPath);
+  const entry = readyEntry(docKey, "ITEM1", "Party Secretary Governance in SOEs", "/tmp/test.pdf");
   const client = await openKeywordIndex(createConfig(dataDir));
   try {
     await client.rebuildIndex([entry]);
@@ -131,19 +126,19 @@ test("rebuildIndex replaces old entries with new ones", async () => {
 
   writeManifestFile(oldManifestPath, {
     docKey: oldDocKey, itemKey: "OLD1", title: "Old", authors: ["A"],
-    filePath: "/tmp/old.pdf", normalizedPath: join(dataDir, "normalized", `${oldDocKey}.md`),
+    filePath: "/tmp/old.pdf",
     blocks: [{ blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"],
       text: "cadres manage resources", charStart: 0, charEnd: 24, lineStart: 1, lineEnd: 1, isReferenceLike: false }],
   });
   writeManifestFile(newManifestPath, {
     docKey: newDocKey, itemKey: "NEW1", title: "New", authors: ["A"],
-    filePath: "/tmp/new.pdf", normalizedPath: join(dataDir, "normalized", `${newDocKey}.md`),
+    filePath: "/tmp/new.pdf",
     blocks: [{ blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"],
       text: "dangwei shuji appointed", charStart: 0, charEnd: 24, lineStart: 1, lineEnd: 1, isReferenceLike: false }],
   });
 
-  const oldEntry = readyEntry(dataDir, oldDocKey, "OLD1", "Old", "/tmp/old.pdf", oldManifestPath);
-  const newEntry = readyEntry(dataDir, newDocKey, "NEW1", "New", "/tmp/new.pdf", newManifestPath);
+  const oldEntry = readyEntry(oldDocKey, "OLD1", "Old", "/tmp/old.pdf");
+  const newEntry = readyEntry(newDocKey, "NEW1", "New", "/tmp/new.pdf");
 
   const client = await openKeywordIndex(createConfig(dataDir));
   try {
@@ -178,37 +173,17 @@ test("updateIndex upserts changed entries and removes deleted docKeys", async ()
       title: itemKey,
       authors: ["A"],
       filePath: `/tmp/${docKey}.pdf`,
-      normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
       blocks: [{ blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"],
         text, charStart: 0, charEnd: text.length, lineStart: 1, lineEnd: 1, isReferenceLike: false }],
     });
-    return manifestPath;
   };
 
-  const removedEntry = readyEntry(
-    dataDir,
-    removedDocKey,
-    "REMOVED",
-    "Removed",
-    "/tmp/removed.pdf",
-    writeOneBlockManifest(removedDocKey, "REMOVED", "old removed token"),
-  );
-  const changedEntry = readyEntry(
-    dataDir,
-    changedDocKey,
-    "CHANGED",
-    "Changed",
-    "/tmp/changed.pdf",
-    writeOneBlockManifest(changedDocKey, "CHANGED", "old changed token"),
-  );
-  const unchangedEntry = readyEntry(
-    dataDir,
-    unchangedDocKey,
-    "UNCHANGED",
-    "Unchanged",
-    "/tmp/unchanged.pdf",
-    writeOneBlockManifest(unchangedDocKey, "UNCHANGED", "stable retained token"),
-  );
+  writeOneBlockManifest(removedDocKey, "REMOVED", "old removed token");
+  writeOneBlockManifest(changedDocKey, "CHANGED", "old changed token");
+  writeOneBlockManifest(unchangedDocKey, "UNCHANGED", "stable retained token");
+  const removedEntry = readyEntry(removedDocKey, "REMOVED", "Removed", "/tmp/removed.pdf");
+  const changedEntry = readyEntry(changedDocKey, "CHANGED", "Changed", "/tmp/changed.pdf");
+  const unchangedEntry = readyEntry(unchangedDocKey, "UNCHANGED", "Unchanged", "/tmp/unchanged.pdf");
 
   const client = await openKeywordIndex(createConfig(dataDir));
   try {
@@ -217,10 +192,10 @@ test("updateIndex upserts changed entries and removes deleted docKeys", async ()
     assert.equal((await client.searchDocs("changed", 10)).length, 1);
     assert.equal((await client.searchDocs("retained", 10)).length, 1);
 
-    const changedManifestPath = writeOneBlockManifest(changedDocKey, "CHANGED", "fresh changed token");
-    const addedManifestPath = writeOneBlockManifest(addedDocKey, "ADDED", "newly added token");
-    const changedFreshEntry = readyEntry(dataDir, changedDocKey, "CHANGED", "Changed", "/tmp/changed.pdf", changedManifestPath);
-    const addedEntry = readyEntry(dataDir, addedDocKey, "ADDED", "Added", "/tmp/added.pdf", addedManifestPath);
+    writeOneBlockManifest(changedDocKey, "CHANGED", "fresh changed token");
+    writeOneBlockManifest(addedDocKey, "ADDED", "newly added token");
+    const changedFreshEntry = readyEntry(changedDocKey, "CHANGED", "Changed", "/tmp/changed.pdf");
+    const addedEntry = readyEntry(addedDocKey, "ADDED", "Added", "/tmp/added.pdf");
 
     await client.updateIndex([changedFreshEntry, addedEntry], [removedDocKey]);
 
@@ -362,12 +337,12 @@ test("CJK keyword search matches Chinese content via NEAR", async () => {
   const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
   writeManifestFile(manifestPath, {
     docKey, itemKey: "CJK1", title: "盛世才與新新疆", authors: ["杜重遠"],
-    filePath: "/tmp/cjk.pdf", normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+    filePath: "/tmp/cjk.pdf",
     blocks: [{ blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"],
       text: "盛世才是新疆近代史上的重要人物", charStart: 0, charEnd: 30, lineStart: 1, lineEnd: 1, isReferenceLike: false }],
   });
 
-  const entry = readyEntry(dataDir, docKey, "CJK1", "盛世才與新新疆", "/tmp/cjk.pdf", manifestPath);
+  const entry = readyEntry(docKey, "CJK1", "盛世才與新新疆", "/tmp/cjk.pdf");
   const client = await openKeywordIndex(createConfig(dataDir));
   try {
     await client.rebuildIndex([entry]);
@@ -397,7 +372,7 @@ test("keyword search is agnostic to traditional vs simplified Chinese", async ()
   const tradManifest = join(manifestsDir, `${tradKey}${MANIFEST_EXT}`);
   writeManifestFile(tradManifest, {
     docKey: tradKey, itemKey: "TRAD1", title: "開發新疆研究", authors: ["A"],
-    filePath: "/tmp/trad.pdf", normalizedPath: join(dataDir, "normalized", `${tradKey}.md`),
+    filePath: "/tmp/trad.pdf",
     blocks: [{ blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"],
       text: "本文討論開發新疆的人力財力問題。", charStart: 0, charEnd: 20, lineStart: 1, lineEnd: 1, isReferenceLike: false }],
   });
@@ -407,13 +382,13 @@ test("keyword search is agnostic to traditional vs simplified Chinese", async ()
   const simpManifest = join(manifestsDir, `${simpKey}${MANIFEST_EXT}`);
   writeManifestFile(simpManifest, {
     docKey: simpKey, itemKey: "SIMP1", title: "开发新疆研究", authors: ["A"],
-    filePath: "/tmp/simp.pdf", normalizedPath: join(dataDir, "normalized", `${simpKey}.md`),
+    filePath: "/tmp/simp.pdf",
     blocks: [{ blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"],
       text: "本文讨论开发新疆的人力财力问题。", charStart: 0, charEnd: 20, lineStart: 1, lineEnd: 1, isReferenceLike: false }],
   });
 
-  const tradEntry = readyEntry(dataDir, tradKey, "TRAD1", "開發新疆研究", "/tmp/trad.pdf", tradManifest);
-  const simpEntry = readyEntry(dataDir, simpKey, "SIMP1", "开发新疆研究", "/tmp/simp.pdf", simpManifest);
+  const tradEntry = readyEntry(tradKey, "TRAD1", "開發新疆研究", "/tmp/trad.pdf");
+  const simpEntry = readyEntry(simpKey, "SIMP1", "开发新疆研究", "/tmp/simp.pdf");
 
   const client = await openKeywordIndex(createConfig(dataDir));
   try {
@@ -459,7 +434,7 @@ test("keyword search accepts canonical NEAR/N with CJK phrases against a real FT
   const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
   writeManifestFile(manifestPath, {
     docKey, itemKey: "NEAR1", title: "盛世才與新新疆", authors: ["A"],
-    filePath: "/tmp/near.pdf", normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+    filePath: "/tmp/near.pdf",
     blocks: [
       { blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"],
         text: "欢迎英美人力财力开发新疆;请中央交涉。",
@@ -467,7 +442,7 @@ test("keyword search accepts canonical NEAR/N with CJK phrases against a real FT
     ],
   });
 
-  const entry = readyEntry(dataDir, docKey, "NEAR1", "盛世才與新新疆", "/tmp/near.pdf", manifestPath);
+  const entry = readyEntry(docKey, "NEAR1", "盛世才與新新疆", "/tmp/near.pdf");
   const client = await openKeywordIndex(createConfig(dataDir));
   try {
     await client.rebuildIndex([entry]);
@@ -497,7 +472,7 @@ test("quoted literal containing the word NEAR still matches the original text", 
   const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
   writeManifestFile(manifestPath, {
     docKey, itemKey: "NEARLIT", title: "Near Study", authors: ["A"],
-    filePath: "/tmp/near-literal.pdf", normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+    filePath: "/tmp/near-literal.pdf",
     blocks: [
       { blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"],
         text: "the store is located foo near bar on main street",
@@ -505,7 +480,7 @@ test("quoted literal containing the word NEAR still matches the original text", 
     ],
   });
 
-  const entry = readyEntry(dataDir, docKey, "NEARLIT", "Near Study", "/tmp/near-literal.pdf", manifestPath);
+  const entry = readyEntry(docKey, "NEARLIT", "Near Study", "/tmp/near-literal.pdf");
   const client = await openKeywordIndex(createConfig(dataDir));
   try {
     await client.rebuildIndex([entry]);
@@ -527,12 +502,12 @@ test("isEmpty reports true for a fresh index and false once populated", async ()
   const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
   writeManifestFile(manifestPath, {
     docKey, itemKey: "EMPTY1", title: "Empty Check", authors: ["A"],
-    filePath: "/tmp/empty.pdf", normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+    filePath: "/tmp/empty.pdf",
     blocks: [{ blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"],
       text: "something", charStart: 0, charEnd: 9, lineStart: 1, lineEnd: 1, isReferenceLike: false }],
   });
 
-  const entry = readyEntry(dataDir, docKey, "EMPTY1", "Empty Check", "/tmp/empty.pdf", manifestPath);
+  const entry = readyEntry(docKey, "EMPTY1", "Empty Check", "/tmp/empty.pdf");
   const client = await openKeywordIndex(createConfig(dataDir));
   try {
     assert.equal(await client.isEmpty(), true);
@@ -556,20 +531,20 @@ test("search filters to a single docKey when docKeys is provided", async () => {
 
   writeManifestFile(manifestOne, {
     docKey: docOne, itemKey: "ITEM1", title: "Doc One", authors: ["A"],
-    filePath: "/tmp/one.pdf", normalizedPath: join(dataDir, "normalized", `${docOne}.md`),
+    filePath: "/tmp/one.pdf",
     blocks: [{ blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"],
       text: "Property rights and rural land tenure.", charStart: 0, charEnd: 38, lineStart: 1, lineEnd: 1, isReferenceLike: false }],
   });
   writeManifestFile(manifestTwo, {
     docKey: docTwo, itemKey: "ITEM2", title: "Doc Two", authors: ["B"],
-    filePath: "/tmp/two.pdf", normalizedPath: join(dataDir, "normalized", `${docTwo}.md`),
+    filePath: "/tmp/two.pdf",
     blocks: [{ blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"],
       text: "Property rights also feature here.", charStart: 0, charEnd: 33, lineStart: 1, lineEnd: 1, isReferenceLike: false }],
   });
 
   const entries = [
-    readyEntry(dataDir, docOne, "ITEM1", "Doc One", "/tmp/one.pdf", manifestOne),
-    readyEntry(dataDir, docTwo, "ITEM2", "Doc Two", "/tmp/two.pdf", manifestTwo),
+    readyEntry(docOne, "ITEM1", "Doc One", "/tmp/one.pdf"),
+    readyEntry(docTwo, "ITEM2", "Doc Two", "/tmp/two.pdf"),
   ];
   const client = await openKeywordIndex(createConfig(dataDir));
   try {
@@ -602,7 +577,7 @@ test("searchBlocks returns block-level hits filtered by docKeys", async () => {
 
   writeManifestFile(manifestOne, {
     docKey: docOne, itemKey: "ITEMA", title: "Doc A", authors: ["A"],
-    filePath: "/tmp/a.pdf", normalizedPath: join(dataDir, "normalized", `${docOne}.md`),
+    filePath: "/tmp/a.pdf",
     blocks: [
       { blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"],
         text: "Property rights and rural land tenure are central themes.",
@@ -614,7 +589,7 @@ test("searchBlocks returns block-level hits filtered by docKeys", async () => {
   });
   writeManifestFile(manifestTwo, {
     docKey: docTwo, itemKey: "ITEMB", title: "Doc B", authors: ["B"],
-    filePath: "/tmp/b.pdf", normalizedPath: join(dataDir, "normalized", `${docTwo}.md`),
+    filePath: "/tmp/b.pdf",
     blocks: [
       { blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"],
         text: "Property rights regimes vary across jurisdictions.",
@@ -623,8 +598,8 @@ test("searchBlocks returns block-level hits filtered by docKeys", async () => {
   });
 
   const entries = [
-    readyEntry(dataDir, docOne, "ITEMA", "Doc A", "/tmp/a.pdf", manifestOne),
-    readyEntry(dataDir, docTwo, "ITEMB", "Doc B", "/tmp/b.pdf", manifestTwo),
+    readyEntry(docOne, "ITEMA", "Doc A", "/tmp/a.pdf"),
+    readyEntry(docTwo, "ITEMB", "Doc B", "/tmp/b.pdf"),
   ];
   const client = await openKeywordIndex(createConfig(dataDir));
   try {
@@ -666,12 +641,12 @@ test("search handles malformed FTS5 queries gracefully", async () => {
   const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
   writeManifestFile(manifestPath, {
     docKey, itemKey: "ITEM1", title: "Test", authors: ["A"],
-    filePath: "/tmp/test.pdf", normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+    filePath: "/tmp/test.pdf",
     blocks: [{ blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"],
       text: "aging in China is a topic", charStart: 0, charEnd: 26, lineStart: 1, lineEnd: 1, isReferenceLike: false }],
   });
 
-  const entry = readyEntry(dataDir, docKey, "ITEM1", "Test", "/tmp/test.pdf", manifestPath);
+  const entry = readyEntry(docKey, "ITEM1", "Test", "/tmp/test.pdf");
   const client = await openKeywordIndex(createConfig(dataDir));
   try {
     await client.rebuildIndex([entry]);
@@ -683,11 +658,11 @@ test("search handles malformed FTS5 queries gracefully", async () => {
   }
 });
 
-function writeValidManifest(dataDir: string, manifestsDir: string, docKey: string, text: string): string {
+function writeValidManifest(manifestsDir: string, docKey: string, text: string): string {
   const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
   writeManifestFile(manifestPath, {
     docKey, itemKey: `ITEM-${docKey}`, title: "Test", authors: ["A"],
-    filePath: `/tmp/${docKey}.pdf`, normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
+    filePath: `/tmp/${docKey}.pdf`,
     blocks: [{ blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"],
       text, charStart: 0, charEnd: text.length, lineStart: 1, lineEnd: 1, isReferenceLike: false }],
   });
@@ -702,13 +677,13 @@ test("rebuildIndex skips entries with unreadable manifests and indexes the rest"
 
   const goodDocKey = "a".repeat(40);
   const corruptDocKey = "b".repeat(40);
-  const goodManifestPath = writeValidManifest(dataDir, manifestsDir, goodDocKey, "cadres manage resources");
+  writeValidManifest(manifestsDir, goodDocKey, "cadres manage resources");
   const corruptManifestPath = join(manifestsDir, `${corruptDocKey}${MANIFEST_EXT}`);
   // Non-gzip bytes (no 0x1f 0x8b magic) make readManifestFile throw.
   writeFileSync(corruptManifestPath, "this is not a gzip manifest");
 
-  const goodEntry = readyEntry(dataDir, goodDocKey, "GOOD", "Good", "/tmp/good.pdf", goodManifestPath);
-  const corruptEntry = readyEntry(dataDir, corruptDocKey, "BAD", "Bad", "/tmp/bad.pdf", corruptManifestPath);
+  const goodEntry = readyEntry(goodDocKey, "GOOD", "Good", "/tmp/good.pdf");
+  const corruptEntry = readyEntry(corruptDocKey, "BAD", "Bad", "/tmp/bad.pdf");
 
   const client = await openKeywordIndex(createConfig(dataDir));
   try {
@@ -728,8 +703,8 @@ test("updateIndex leaves existing rows when a manifest turns unreadable", async 
   mkdirSync(manifestsDir, { recursive: true });
 
   const docKey = "c".repeat(40);
-  const manifestPath = writeValidManifest(dataDir, manifestsDir, docKey, "dangwei shuji appointed");
-  const entry = readyEntry(dataDir, docKey, "ITEM", "Test", "/tmp/test.pdf", manifestPath);
+  const manifestPath = writeValidManifest(manifestsDir, docKey, "dangwei shuji appointed");
+  const entry = readyEntry(docKey, "ITEM", "Test", "/tmp/test.pdf");
 
   const client = await openKeywordIndex(createConfig(dataDir));
   try {
@@ -754,8 +729,8 @@ test("updateIndex still deletes rows when a manifest goes missing", async () => 
   mkdirSync(manifestsDir, { recursive: true });
 
   const docKey = "e".repeat(40);
-  const manifestPath = writeValidManifest(dataDir, manifestsDir, docKey, "resources allocated by cadres");
-  const entry = readyEntry(dataDir, docKey, "ITEM", "Test", "/tmp/test.pdf", manifestPath);
+  const manifestPath = writeValidManifest(manifestsDir, docKey, "resources allocated by cadres");
+  const entry = readyEntry(docKey, "ITEM", "Test", "/tmp/test.pdf");
 
   const client = await openKeywordIndex(createConfig(dataDir));
   try {

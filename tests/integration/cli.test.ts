@@ -44,13 +44,11 @@ function createConfig(bibliographyJsonPath: string, attachmentsRoot: string, dat
 }
 
 function readyEntry(
-  dataDir: string,
   docKey: string,
   itemKey: string,
   citationKey: string,
   title: string,
   filePath: string,
-  manifestPath: string,
 ): CatalogEntry {
   return {
     docKey,
@@ -67,8 +65,6 @@ function readyEntry(
     mtimeMs: 1,
     sourceHash: `${docKey}-hash`,
     lastIndexedAt: new Date().toISOString(),
-    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
-    manifestPath,
   };
 }
 
@@ -123,7 +119,6 @@ async function createIndexedFixture(): Promise<{
     title: "Exact match",
     authors: ["A"],
     filePath,
-    normalizedPath,
     blocks: [
       {
         blockIndex: 0,
@@ -186,7 +181,7 @@ async function createIndexedFixture(): Promise<{
   const catalog: CatalogFile = {
     version: 1,
     generatedAt: new Date().toISOString(),
-    entries: [readyEntry(dataDir, docKey, "ITEM9000", citationKey, "Exact match", filePath, manifestPath)],
+    entries: [readyEntry(docKey, "ITEM9000", citationKey, "Exact match", filePath)],
   };
   writeCatalogFile(join(indexDir, "catalog.json"), catalog);
 
@@ -231,7 +226,6 @@ async function createMultiIndexedFixture(): Promise<{
       title: `Multi ${index + 1}`,
       authors: ["A"],
       filePath: filePaths[index]!,
-      normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
       blocks: [
         {
           blockIndex: 0,
@@ -252,15 +246,7 @@ async function createMultiIndexedFixture(): Promise<{
     version: 1,
     generatedAt: new Date().toISOString(),
     entries: docKeys.map((docKey, index) =>
-      readyEntry(
-        dataDir,
-        docKey,
-        "ITEMM000",
-        citationKey,
-        `Multi ${index + 1}`,
-        filePaths[index]!,
-        join(manifestsDir, `${docKey}${MANIFEST_EXT}`),
-      ),
+      readyEntry(docKey, "ITEMM000", citationKey, `Multi ${index + 1}`, filePaths[index]!),
     ),
   });
 

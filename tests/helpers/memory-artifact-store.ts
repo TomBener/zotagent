@@ -210,7 +210,7 @@ export function openMemoryArtifactStore(testHooks: StoreTestHooks = {}): MemoryA
         const moved = records.get(to.docKey)!;
         records.set(to.docKey, {
           ...moved,
-          manifest: rewriteManifestIdentity(verdict.manifest, to, pathsFor(to.docKey).normalizedPath),
+          manifest: rewriteManifestIdentity(verdict.manifest, to),
         });
       } catch (error) {
         // Both halves moved; deliberately not rolled back (self-heal parity

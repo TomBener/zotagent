@@ -16,6 +16,7 @@ import {
   runSync,
   withJavaToolOptions,
 } from "../../src/sync.js";
+import type { ArtifactStore } from "../../src/artifact-store.js";
 import { readCatalogFile, writeCatalogFile } from "../../src/state.js";
 import type { CatalogFile, ManifestBlock } from "../../src/types.js";
 import { MANIFEST_EXT, readManifestFile, sha1, writeManifestFile } from "../../src/utils.js";
@@ -340,7 +341,6 @@ test("runSync skips unchanged ready pdfs and refreshes qmd contexts", async () =
       title: "Paper",
       authors: ["A"],
       filePath: pdfPath,
-      normalizedPath,
       blocks: [trivialBlock()],
     },
   );
@@ -379,8 +379,6 @@ test("runSync skips unchanged ready pdfs and refreshes qmd contexts", async () =
         mtimeMs: Math.trunc(currentStat.mtimeMs),
         sourceHash: "existinghash",
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath,
-        manifestPath,
       },
     ],
   };
@@ -476,7 +474,6 @@ test("runSync re-extracts vertical PDFs whose cached manifest predates verticalT
     title: "Paper",
     authors: ["A"],
     filePath: pdfPath,
-    normalizedPath,
     blocks: [trivialBlock()],
   });
 
@@ -517,8 +514,6 @@ test("runSync re-extracts vertical PDFs whose cached manifest predates verticalT
         mtimeMs: Math.trunc(currentStat.mtimeMs),
         sourceHash: "existinghash",
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath,
-        manifestPath,
       },
     ],
   };
@@ -551,21 +546,26 @@ test("runSync re-extracts vertical PDFs whose cached manifest predates verticalT
   });
 
   const extractCalls: string[] = [];
-  const extractBatchFn = async (batch: Array<{ docKey: string; filePath: string; itemKey: string }>) => {
+  const extractBatchFn = async (
+    batch: Array<{ docKey: string; filePath: string; itemKey: string }>,
+    _tempRoot: string,
+    store: ArtifactStore,
+  ) => {
     const attachment = batch[0]!;
     extractCalls.push(attachment.docKey);
-    writeFileSync(normalizedPath, "Re-extracted body", "utf-8");
-    writeManifestFile(manifestPath, {
-      docKey: attachment.docKey,
-      itemKey: attachment.itemKey,
-      title: "Paper",
-      authors: ["A Author"],
-      filePath: attachment.filePath,
-      normalizedPath,
-      verticalText: true,
-      blocks: [trivialBlock()],
+    store.publish({
+      markdown: "Re-extracted body",
+      manifest: {
+        docKey: attachment.docKey,
+        itemKey: attachment.itemKey,
+        title: "Paper",
+        authors: ["A Author"],
+        filePath: attachment.filePath,
+        verticalText: true,
+        blocks: [trivialBlock()],
+      },
     });
-    return new Map([[attachment.docKey, { manifestPath, normalizedPath }]]);
+    return new Set([attachment.docKey]);
   };
 
   const result = await runSync(
@@ -617,7 +617,6 @@ test("runSync re-extraction of a vertical PDF with unchanged sourceHash still up
     title: "Paper",
     authors: ["A"],
     filePath: pdfPath,
-    normalizedPath,
     blocks: [trivialBlock()],
   });
 
@@ -662,8 +661,6 @@ test("runSync re-extraction of a vertical PDF with unchanged sourceHash still up
         mtimeMs: Math.trunc(currentStat.mtimeMs),
         sourceHash: realSourceHash,
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath,
-        manifestPath,
       },
     ],
   };
@@ -709,20 +706,25 @@ test("runSync re-extraction of a vertical PDF with unchanged sourceHash still up
     close: async () => {},
   });
 
-  const extractBatchFn = async (batch: Array<{ docKey: string; filePath: string; itemKey: string }>) => {
+  const extractBatchFn = async (
+    batch: Array<{ docKey: string; filePath: string; itemKey: string }>,
+    _tempRoot: string,
+    store: ArtifactStore,
+  ) => {
     const attachment = batch[0]!;
-    writeFileSync(normalizedPath, "Re-extracted column-ordered body", "utf-8");
-    writeManifestFile(manifestPath, {
-      docKey: attachment.docKey,
-      itemKey: attachment.itemKey,
-      title: "Paper",
-      authors: ["A Author"],
-      filePath: attachment.filePath,
-      normalizedPath,
-      verticalText: true,
-      blocks: [trivialBlock()],
+    store.publish({
+      markdown: "Re-extracted column-ordered body",
+      manifest: {
+        docKey: attachment.docKey,
+        itemKey: attachment.itemKey,
+        title: "Paper",
+        authors: ["A Author"],
+        filePath: attachment.filePath,
+        verticalText: true,
+        blocks: [trivialBlock()],
+      },
     });
-    return new Map([[attachment.docKey, { manifestPath, normalizedPath }]]);
+    return new Set([attachment.docKey]);
   };
 
   const result = await runSync(
@@ -782,7 +784,6 @@ test("runSync preserves previous artifacts when a vertical-PDF re-extraction fai
     title: "Paper",
     authors: ["A"],
     filePath: pdfPath,
-    normalizedPath,
     blocks: [trivialBlock()],
   });
 
@@ -823,8 +824,6 @@ test("runSync preserves previous artifacts when a vertical-PDF re-extraction fai
         mtimeMs: Math.trunc(currentStat.mtimeMs),
         sourceHash: realSourceHash,
         lastIndexedAt: "2025-06-01T00:00:00.000Z",
-        normalizedPath,
-        manifestPath,
       },
     ],
   };
@@ -896,7 +895,6 @@ test("runSync preserves previous artifacts when a vertical-PDF re-extraction fai
 
   const persisted = readCatalogFile(join(indexDir, "catalog.json"));
   assert.equal(persisted.entries[0]?.extractStatus, "ready");
-  assert.equal(persisted.entries[0]?.normalizedPath, normalizedPath);
   // No keyword update for this entry: its manifest didn't actually change.
   for (const update of keywordCalls.updates) {
     assert.ok(
@@ -945,7 +943,6 @@ test("runSync errors a failed re-extraction when the previous normalized.md is m
     title: "Paper",
     authors: ["A"],
     filePath: pdfPath,
-    normalizedPath,
     blocks: [trivialBlock()],
   });
 
@@ -986,8 +983,6 @@ test("runSync errors a failed re-extraction when the previous normalized.md is m
         mtimeMs: Math.trunc(currentStat.mtimeMs),
         sourceHash: realSourceHash,
         lastIndexedAt: "2025-06-01T00:00:00.000Z",
-        normalizedPath,
-        manifestPath,
       },
     ],
   });
@@ -1067,10 +1062,6 @@ test("runSync re-extracts when the Zotero vertical-text tag is added between syn
     "utf-8",
   );
 
-  const docKey = sha1("papers/paper.pdf");
-  const normalizedPath = join(normalizedDir, `${docKey}.md`);
-  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
-
   const qmdFactory = async () => ({
     search: async () => [],
     searchLex: async () => [],
@@ -1092,25 +1083,25 @@ test("runSync re-extracts when the Zotero vertical-text tag is added between syn
   const extractBatchFn = async (
     batch: Array<{ docKey: string; filePath: string; itemKey: string }>,
     _tempRoot: string,
-    _manifestsDir: string,
-    _normalizedDir: string,
+    store: ArtifactStore,
     extractOptions?: { verticalItemKeys?: ReadonlySet<string> },
   ) => {
     const attachment = batch[0]!;
     const isVertical = extractOptions?.verticalItemKeys?.has(attachment.itemKey) ?? false;
     verticalSeenAtExtract.push(isVertical);
-    writeFileSync(normalizedPath, "Body", "utf-8");
-    writeManifestFile(manifestPath, {
-      docKey: attachment.docKey,
-      itemKey: attachment.itemKey,
-      title: "Paper",
-      authors: ["A"],
-      filePath: attachment.filePath,
-      normalizedPath,
-      ...(isVertical ? { verticalText: true } : {}),
-      blocks: [trivialBlock()],
+    store.publish({
+      markdown: "Body",
+      manifest: {
+        docKey: attachment.docKey,
+        itemKey: attachment.itemKey,
+        title: "Paper",
+        authors: ["A"],
+        filePath: attachment.filePath,
+        ...(isVertical ? { verticalText: true } : {}),
+        blocks: [trivialBlock()],
+      },
     });
-    return new Map([[attachment.docKey, { manifestPath, normalizedPath }]]);
+    return new Set([attachment.docKey]);
   };
 
   // First sync: item is not tagged, extracted as horizontal.
@@ -1177,7 +1168,6 @@ test("runSync marks the entry as error when a same-size/same-mtime replacement c
     title: "Paper",
     authors: ["A"],
     filePath: pdfPath,
-    normalizedPath,
     blocks: [trivialBlock()],
   });
 
@@ -1218,8 +1208,6 @@ test("runSync marks the entry as error when a same-size/same-mtime replacement c
         mtimeMs: Math.trunc(currentStat.mtimeMs),
         sourceHash: previousSourceHash,
         lastIndexedAt: "2025-06-01T00:00:00.000Z",
-        normalizedPath,
-        manifestPath,
       },
     ],
   });
@@ -1302,7 +1290,6 @@ test("runSync re-extracts a renamed vertical PDF whose old manifest predates ver
     title: "Paper",
     authors: ["A Author"],
     filePath: `${attachmentsRoot}/${oldRel}`,
-    normalizedPath: oldNormalizedPath,
     blocks: [trivialBlock()],
   });
 
@@ -1328,8 +1315,6 @@ test("runSync re-extracts a renamed vertical PDF whose old manifest predates ver
         mtimeMs: Math.trunc(stat.mtimeMs),
         sourceHash: "pre-fix-source-hash",
         lastIndexedAt: "2025-06-01T00:00:00.000Z",
-        normalizedPath: oldNormalizedPath,
-        manifestPath: oldManifestPath,
       },
     ],
   });
@@ -1367,23 +1352,27 @@ test("runSync re-extracts a renamed vertical PDF whose old manifest predates ver
   });
 
   const extractCalls: string[] = [];
-  const newNormalizedPath = join(normalizedDir, `${newDocKey}.md`);
   const newManifestPath = join(manifestsDir, `${newDocKey}${MANIFEST_EXT}`);
-  const extractBatchFn = async (batch: Array<{ docKey: string; filePath: string; itemKey: string }>) => {
+  const extractBatchFn = async (
+    batch: Array<{ docKey: string; filePath: string; itemKey: string }>,
+    _tempRoot: string,
+    store: ArtifactStore,
+  ) => {
     const attachment = batch[0]!;
     extractCalls.push(attachment.docKey);
-    writeFileSync(newNormalizedPath, "Fresh column-ordered body", "utf-8");
-    writeManifestFile(newManifestPath, {
-      docKey: attachment.docKey,
-      itemKey: attachment.itemKey,
-      title: "Paper",
-      authors: ["A Author"],
-      filePath: attachment.filePath,
-      normalizedPath: newNormalizedPath,
-      verticalText: true,
-      blocks: [trivialBlock()],
+    store.publish({
+      markdown: "Fresh column-ordered body",
+      manifest: {
+        docKey: attachment.docKey,
+        itemKey: attachment.itemKey,
+        title: "Paper",
+        authors: ["A Author"],
+        filePath: attachment.filePath,
+        verticalText: true,
+        blocks: [trivialBlock()],
+      },
     });
-    return new Map([[attachment.docKey, { manifestPath: newManifestPath, normalizedPath: newNormalizedPath }]]);
+    return new Set([attachment.docKey]);
   };
 
   await runSync(
@@ -1433,7 +1422,6 @@ test("runSync reuses unchanged horizontal PDFs without re-extraction", async () 
     title: "Paper",
     authors: ["A"],
     filePath: pdfPath,
-    normalizedPath,
     blocks: [trivialBlock()],
   });
 
@@ -1474,8 +1462,6 @@ test("runSync reuses unchanged horizontal PDFs without re-extraction", async () 
         mtimeMs: Math.trunc(currentStat.mtimeMs),
         sourceHash: "existinghash",
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath,
-        manifestPath,
       },
     ],
   };
@@ -1549,7 +1535,6 @@ test("runSync short-circuits both index rebuilds when the catalog is identical t
     title: "Paper",
     authors: ["Author One"],
     filePath: pdfPath,
-    normalizedPath,
     blocks: [trivialBlock()],
   });
 
@@ -1583,8 +1568,6 @@ test("runSync short-circuits both index rebuilds when the catalog is identical t
     mtimeMs: Math.trunc(pdfStat.mtimeMs),
     sourceHash: "existinghash",
     lastIndexedAt: new Date().toISOString(),
-    normalizedPath,
-    manifestPath,
   };
   writeCatalogFile(join(indexDir, "catalog.json"), {
     version: 1,
@@ -1695,7 +1678,6 @@ test("runSync incrementally updates the keyword index after a completed sync", a
     title: "Stable",
     authors: ["Stable Author"],
     filePath: stablePath,
-    normalizedPath: stableNormalizedPath,
     blocks: [trivialBlock()],
   });
   writeFileSync(changedNormalizedPath, "Stale changed body", "utf-8");
@@ -1705,7 +1687,6 @@ test("runSync incrementally updates the keyword index after a completed sync", a
     title: "Changed",
     authors: ["Changed Author"],
     filePath: changedPath,
-    normalizedPath: changedNormalizedPath,
     blocks: [trivialBlock()],
   });
 
@@ -1753,8 +1734,6 @@ test("runSync incrementally updates the keyword index after a completed sync", a
         mtimeMs: Math.trunc(stableStat.mtimeMs),
         sourceHash: "stable-existing-hash",
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath: stableNormalizedPath,
-        manifestPath: stableManifestPath,
       },
       {
         docKey: changedDocKey,
@@ -1771,8 +1750,6 @@ test("runSync incrementally updates the keyword index after a completed sync", a
         mtimeMs: Math.trunc(changedStat.mtimeMs) - 10_000,
         sourceHash: "stale-changed-hash",
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath: changedNormalizedPath,
-        manifestPath: changedManifestPath,
       },
     ],
   });
@@ -1817,19 +1794,24 @@ test("runSync incrementally updates the keyword index after a completed sync", a
     close: async () => {},
   });
 
-  const extractBatchFn = async (batch: Array<{ docKey: string; filePath: string; itemKey: string }>) => {
+  const extractBatchFn = async (
+    batch: Array<{ docKey: string; filePath: string; itemKey: string }>,
+    _tempRoot: string,
+    store: ArtifactStore,
+  ) => {
     const attachment = batch[0]!;
-    writeFileSync(changedNormalizedPath, "Fresh changed body", "utf-8");
-    writeManifestFile(changedManifestPath, {
-      docKey: attachment.docKey,
-      itemKey: attachment.itemKey,
-      title: "Changed",
-      authors: ["Changed Author"],
-      filePath: attachment.filePath,
-      normalizedPath: changedNormalizedPath,
-      blocks: [trivialBlock()],
+    store.publish({
+      markdown: "Fresh changed body",
+      manifest: {
+        docKey: attachment.docKey,
+        itemKey: attachment.itemKey,
+        title: "Changed",
+        authors: ["Changed Author"],
+        filePath: attachment.filePath,
+        blocks: [trivialBlock()],
+      },
     });
-    return new Map([[attachment.docKey, { manifestPath: changedManifestPath, normalizedPath: changedNormalizedPath }]]);
+    return new Set([attachment.docKey]);
   };
 
   const result = await runSync(
@@ -1880,7 +1862,6 @@ test("runSync rebuilds indexes when the qmd embedding model changes since last s
     title: "Paper",
     authors: ["Author One"],
     filePath: pdfPath,
-    normalizedPath,
     blocks: [trivialBlock()],
   });
 
@@ -1921,8 +1902,6 @@ test("runSync rebuilds indexes when the qmd embedding model changes since last s
         mtimeMs: Math.trunc(pdfStat.mtimeMs),
         sourceHash: "existinghash",
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath,
-        manifestPath,
       },
     ],
   });
@@ -2003,7 +1982,6 @@ test("runSync rebuilds indexes but preserves embeddings when only the indexer si
     title: "Paper",
     authors: ["Author One"],
     filePath: pdfPath,
-    normalizedPath,
     blocks: [trivialBlock()],
   });
 
@@ -2044,8 +2022,6 @@ test("runSync rebuilds indexes but preserves embeddings when only the indexer si
         mtimeMs: Math.trunc(pdfStat.mtimeMs),
         sourceHash: "existinghash",
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath,
-        manifestPath,
       },
     ],
   });
@@ -2146,7 +2122,6 @@ test("runSync keeps old indexer state in progress catalog until changed qmd embe
     title: "Paper",
     authors: ["Author One"],
     filePath: pdfPath,
-    normalizedPath,
     blocks: [trivialBlock()],
   });
 
@@ -2187,8 +2162,6 @@ test("runSync keeps old indexer state in progress catalog until changed qmd embe
         mtimeMs: Math.trunc(pdfStat.mtimeMs),
         sourceHash: "existinghash",
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath,
-        manifestPath,
       },
     ],
   });
@@ -2260,7 +2233,6 @@ test("runSync does not force re-embed when resuming an interrupted sync with mat
     title: "Paper",
     authors: ["Author One"],
     filePath: pdfPath,
-    normalizedPath,
     blocks: [trivialBlock()],
   });
 
@@ -2303,8 +2275,6 @@ test("runSync does not force re-embed when resuming an interrupted sync with mat
         mtimeMs: Math.trunc(pdfStat.mtimeMs),
         sourceHash: "existinghash",
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath,
-        manifestPath,
       },
     ],
   });
@@ -2391,7 +2361,6 @@ test("runSync migrates cached artifacts when an attachment is renamed inside att
     title: "Paper",
     authors: ["A Author"],
     filePath: `${attachmentsRoot}/${oldRel}`, // points at a path that no longer exists
-    normalizedPath: oldNormalizedPath,
     blocks: [trivialBlock()],
   });
 
@@ -2420,8 +2389,6 @@ test("runSync migrates cached artifacts when an attachment is renamed inside att
         mtimeMs: Math.trunc(stat.mtimeMs),
         sourceHash: "pre-existing-source-hash",
         lastIndexedAt: "2025-06-01T00:00:00.000Z",
-        normalizedPath: oldNormalizedPath,
-        manifestPath: oldManifestPath,
       },
     ],
   });
@@ -2464,7 +2431,7 @@ test("runSync migrates cached artifacts when an attachment is renamed inside att
   });
   const extractBatchFn = async (batch: unknown[]) => {
     extractCalls.push(batch);
-    return new Map();
+    return new Set<string>();
   };
 
   const result = await runSync(
@@ -2488,11 +2455,12 @@ test("runSync migrates cached artifacts when an attachment is renamed inside att
   assert.ok(existsSync(newNormalizedPath), "normalized artifact must be present under new docKey");
   assert.ok(existsSync(newManifestPath), "manifest artifact must be present under new docKey");
 
-  // Manifest stored docKey/filePath/normalizedPath must reflect the new identity.
+  // Manifest stored docKey/filePath must reflect the new identity; the
+  // retired normalizedPath field must not be written back.
   const migratedManifest = readManifestFile(newManifestPath);
   assert.equal(migratedManifest.docKey, newDocKey);
   assert.equal(migratedManifest.filePath, newPath);
-  assert.equal(migratedManifest.normalizedPath, newNormalizedPath);
+  assert.ok(!("normalizedPath" in migratedManifest), "manifest must not carry normalizedPath anymore");
 
   // Catalog gets exactly one ready entry under the new docKey, inherits
   // previous sourceHash/lastIndexedAt, and the old entry is gone.
@@ -2543,7 +2511,6 @@ test("runSync preserves verticalText when migrating a renamed vertical PDF", asy
     title: "Paper",
     authors: ["A Author"],
     filePath: `${attachmentsRoot}/${oldRel}`,
-    normalizedPath: oldNormalizedPath,
     verticalText: true,
     blocks: [trivialBlock()],
   });
@@ -2570,8 +2537,6 @@ test("runSync preserves verticalText when migrating a renamed vertical PDF", asy
         mtimeMs: Math.trunc(stat.mtimeMs),
         sourceHash: "pre-existing-source-hash",
         lastIndexedAt: "2025-06-01T00:00:00.000Z",
-        normalizedPath: oldNormalizedPath,
-        manifestPath: oldManifestPath,
       },
     ],
   });
@@ -2610,7 +2575,7 @@ test("runSync preserves verticalText when migrating a renamed vertical PDF", asy
   });
   const extractBatchFn = async (batch: unknown[]) => {
     extractCalls.push(batch);
-    return new Map();
+    return new Set<string>();
   };
 
   await runSync(
@@ -2663,7 +2628,6 @@ test("runSync re-extracts renamed attachments when cached artifacts are not reus
     title: "Paper",
     authors: ["A Author"],
     filePath: join(attachmentsRoot, oldRel),
-    normalizedPath: oldNormalizedPath,
     blocks: [],
   });
 
@@ -2689,8 +2653,6 @@ test("runSync re-extracts renamed attachments when cached artifacts are not reus
         mtimeMs: Math.trunc(stat.mtimeMs),
         sourceHash: "pre-existing-source-hash",
         lastIndexedAt: "2025-06-01T00:00:00.000Z",
-        normalizedPath: oldNormalizedPath,
-        manifestPath: oldManifestPath,
       },
     ],
   });
@@ -2727,22 +2689,25 @@ test("runSync re-extracts renamed attachments when cached artifacts are not reus
     close: async () => {},
   });
   const extractCalls: unknown[] = [];
-  const extractBatchFn = async (batch: Array<{ docKey: string; filePath: string; itemKey: string }>) => {
+  const extractBatchFn = async (
+    batch: Array<{ docKey: string; filePath: string; itemKey: string }>,
+    _tempRoot: string,
+    store: ArtifactStore,
+  ) => {
     extractCalls.push(batch);
     const attachment = batch[0]!;
-    const normalizedPath = join(normalizedDir, `${attachment.docKey}.md`);
-    const manifestPath = join(manifestsDir, `${attachment.docKey}${MANIFEST_EXT}`);
-    writeFileSync(normalizedPath, "Fresh extraction");
-    writeManifestFile(manifestPath, {
-      docKey: attachment.docKey,
-      itemKey: attachment.itemKey,
-      title: "Paper",
-      authors: ["A Author"],
-      filePath: attachment.filePath,
-      normalizedPath,
-      blocks: [trivialBlock()],
+    store.publish({
+      markdown: "Fresh extraction",
+      manifest: {
+        docKey: attachment.docKey,
+        itemKey: attachment.itemKey,
+        title: "Paper",
+        authors: ["A Author"],
+        filePath: attachment.filePath,
+        blocks: [trivialBlock()],
+      },
     });
-    return new Map([[attachment.docKey, { normalizedPath, manifestPath }]]);
+    return new Set([attachment.docKey]);
   };
 
   await runSync(
@@ -2791,7 +2756,6 @@ test("runSync re-extracts renamed attachments when rename candidates are ambiguo
       title: "Paper",
       authors: ["A Author"],
       filePath: join(attachmentsRoot, oldRel),
-      normalizedPath,
       blocks: [trivialBlock()],
     });
     return {
@@ -2809,8 +2773,6 @@ test("runSync re-extracts renamed attachments when rename candidates are ambiguo
       mtimeMs: Math.trunc(stat.mtimeMs),
       sourceHash: `pre-existing-source-hash-${i + 1}`,
       lastIndexedAt: "2025-06-01T00:00:00.000Z",
-      normalizedPath,
-      manifestPath,
     };
   });
 
@@ -2855,22 +2817,25 @@ test("runSync re-extracts renamed attachments when rename candidates are ambiguo
     close: async () => {},
   });
   const extractCalls: unknown[] = [];
-  const extractBatchFn = async (batch: Array<{ docKey: string; filePath: string; itemKey: string }>) => {
+  const extractBatchFn = async (
+    batch: Array<{ docKey: string; filePath: string; itemKey: string }>,
+    _tempRoot: string,
+    store: ArtifactStore,
+  ) => {
     extractCalls.push(batch);
     const attachment = batch[0]!;
-    const normalizedPath = join(normalizedDir, `${attachment.docKey}.md`);
-    const manifestPath = join(manifestsDir, `${attachment.docKey}${MANIFEST_EXT}`);
-    writeFileSync(normalizedPath, "Fresh extraction for ambiguous rename");
-    writeManifestFile(manifestPath, {
-      docKey: attachment.docKey,
-      itemKey: attachment.itemKey,
-      title: "Paper",
-      authors: ["A Author"],
-      filePath: attachment.filePath,
-      normalizedPath,
-      blocks: [trivialBlock()],
+    store.publish({
+      markdown: "Fresh extraction for ambiguous rename",
+      manifest: {
+        docKey: attachment.docKey,
+        itemKey: attachment.itemKey,
+        title: "Paper",
+        authors: ["A Author"],
+        filePath: attachment.filePath,
+        blocks: [trivialBlock()],
+      },
     });
-    return new Map([[attachment.docKey, { normalizedPath, manifestPath }]]);
+    return new Set([attachment.docKey]);
   };
 
   await runSync(
@@ -2882,8 +2847,8 @@ test("runSync re-extracts renamed attachments when rename candidates are ambiguo
   );
 
   assert.equal(extractCalls.length, 1);
-  assert.ok(!existsSync(previousEntries[0]!.normalizedPath));
-  assert.ok(!existsSync(previousEntries[1]!.normalizedPath));
+  assert.ok(!existsSync(join(normalizedDir, `${sha1(oldRels[0]!)}.md`)));
+  assert.ok(!existsSync(join(normalizedDir, `${sha1(oldRels[1]!)}.md`)));
   assert.equal(
     readFileSync(join(normalizedDir, `${newDocKey}.md`), "utf-8"),
     "Fresh extraction for ambiguous rename",
@@ -2945,21 +2910,24 @@ test("runSync asks qmd to clean orphaned residue on the happy path", async () =>
     close: async () => {},
   });
 
-  const fakeExtractBatch = async (batch: Array<{ docKey: string; filePath: string; itemKey: string }>) => {
+  const fakeExtractBatch = async (
+    batch: Array<{ docKey: string; filePath: string; itemKey: string }>,
+    _tempRoot: string,
+    store: ArtifactStore,
+  ) => {
     const attachment = batch[0]!;
-    const normalizedPath = join(normalizedDir, `${attachment.docKey}.md`);
-    const manifestPath = join(manifestsDir, `${attachment.docKey}${MANIFEST_EXT}`);
-    writeFileSync(normalizedPath, "Body", "utf-8");
-    writeManifestFile(manifestPath, {
-      docKey: attachment.docKey,
-      itemKey: attachment.itemKey,
-      title: "Paper",
-      authors: ["A Author"],
-      filePath: attachment.filePath,
-      normalizedPath,
-      blocks: [trivialBlock()],
+    store.publish({
+      markdown: "Body",
+      manifest: {
+        docKey: attachment.docKey,
+        itemKey: attachment.itemKey,
+        title: "Paper",
+        authors: ["A Author"],
+        filePath: attachment.filePath,
+        blocks: [trivialBlock()],
+      },
     });
-    return new Map([[attachment.docKey, { normalizedPath, manifestPath }]]);
+    return new Set([attachment.docKey]);
   };
 
   const result = await runSync(
@@ -3000,7 +2968,6 @@ test("runSync skips qmd context writes when existing contexts already match", as
     title: "Paper",
     authors: ["Author One"],
     filePath: pdfPath,
-    normalizedPath,
     blocks: [trivialBlock()],
   });
 
@@ -3034,8 +3001,6 @@ test("runSync skips qmd context writes when existing contexts already match", as
     mtimeMs: Math.trunc(pdfStat.mtimeMs),
     sourceHash: "existinghash",
     lastIndexedAt: new Date().toISOString(),
-    normalizedPath,
-    manifestPath,
   };
   writeCatalogFile(join(indexDir, "catalog.json"), {
     version: 1,
@@ -3105,7 +3070,6 @@ test("runSync resumes from existing normalized and manifest outputs when catalog
       title: "Paper",
       authors: ["A Author"],
       filePath: pdfPath,
-      normalizedPath,
       blocks: [trivialBlock()],
     },
   );
@@ -3150,7 +3114,7 @@ test("runSync resumes from existing normalized and manifest outputs when catalog
   });
   const fakeExtractBatch = async () => {
     extractCalls += 1;
-    return new Map();
+    return new Set<string>();
   };
 
   const result = await runSync(
@@ -3172,8 +3136,8 @@ test("runSync resumes from existing normalized and manifest outputs when catalog
 
   const nextCatalog = readCatalogFile(join(indexDir, "catalog.json"));
   assert.equal(nextCatalog.entries[0]?.extractStatus, "ready");
-  assert.equal(nextCatalog.entries[0]?.normalizedPath, normalizedPath);
-  assert.equal(nextCatalog.entries[0]?.manifestPath, manifestPath);
+  assert.ok(existsSync(normalizedPath), "resumed normalized artifact must survive at the derived path");
+  assert.ok(existsSync(manifestPath), "resumed manifest must survive at the derived path");
   assert.ok(nextCatalog.indexedQmdEmbedModel, "expected effective qmd embed model to be persisted");
   assert.equal(nextCatalog.indexerSignature, buildIndexerSignature(nextCatalog.indexedQmdEmbedModel));
 });
@@ -3204,7 +3168,6 @@ test("runSync re-extracts attachments when fallback normalized output is empty",
       title: "Paper",
       authors: ["A Author"],
       filePath: pdfPath,
-      normalizedPath,
       blocks: [],
     },
   );
@@ -3247,23 +3210,25 @@ test("runSync re-extracts attachments when fallback normalized output is empty",
     compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
-  const fakeExtractBatch = async (batch: Array<{ docKey: string; filePath: string; itemKey: string }>) => {
+  const fakeExtractBatch = async (
+    batch: Array<{ docKey: string; filePath: string; itemKey: string }>,
+    _tempRoot: string,
+    store: ArtifactStore,
+  ) => {
     extractCalls += 1;
     const attachment = batch[0]!;
-    writeFileSync(normalizedPath, "Recovered body", "utf-8");
-    writeManifestFile(
-      manifestPath,
-      {
+    store.publish({
+      markdown: "Recovered body",
+      manifest: {
         docKey: attachment.docKey,
         itemKey: attachment.itemKey,
         title: "Paper",
         authors: ["A Author"],
         filePath: attachment.filePath,
-        normalizedPath,
-        blocks: [],
+        blocks: [trivialBlock()],
       },
-    );
-    return new Map([[attachment.docKey, { manifestPath, normalizedPath }]]);
+    });
+    return new Set([attachment.docKey]);
   };
 
   const result = await runSync(
@@ -3317,7 +3282,6 @@ test("runSync re-extracts when the source file changed even if stale cache match
     title: "Paper",
     authors: ["A Author"],
     filePath: pdfPath,
-    normalizedPath,
     blocks: [trivialBlock()],
   });
 
@@ -3357,8 +3321,6 @@ test("runSync re-extracts when the source file changed even if stale cache match
         mtimeMs: Math.trunc(currentStat.mtimeMs) - 10_000,
         sourceHash: "stalehash",
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath,
-        manifestPath,
       },
     ],
   });
@@ -3380,20 +3342,25 @@ test("runSync re-extracts when the source file changed even if stale cache match
     compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
-  const fakeExtractBatch = async (batch: Array<{ docKey: string; filePath: string; itemKey: string }>) => {
+  const fakeExtractBatch = async (
+    batch: Array<{ docKey: string; filePath: string; itemKey: string }>,
+    _tempRoot: string,
+    store: ArtifactStore,
+  ) => {
     extractCalls += 1;
     const attachment = batch[0]!;
-    writeFileSync(normalizedPath, "Fresh body", "utf-8");
-    writeManifestFile(manifestPath, {
-      docKey: attachment.docKey,
-      itemKey: attachment.itemKey,
-      title: "Paper",
-      authors: ["A Author"],
-      filePath: attachment.filePath,
-      normalizedPath,
-      blocks: [trivialBlock()],
+    store.publish({
+      markdown: "Fresh body",
+      manifest: {
+        docKey: attachment.docKey,
+        itemKey: attachment.itemKey,
+        title: "Paper",
+        authors: ["A Author"],
+        filePath: attachment.filePath,
+        blocks: [trivialBlock()],
+      },
     });
-    return new Map([[attachment.docKey, { manifestPath, normalizedPath }]]);
+    return new Set([attachment.docKey]);
   };
 
   const result = await runSync(
@@ -3442,7 +3409,6 @@ test("runSync re-extracts ready entries whose cached manifest has zero blocks", 
       title: "Paper",
       authors: ["A Author"],
       filePath: pdfPath,
-      normalizedPath,
       blocks: [],
     },
   );
@@ -3483,8 +3449,6 @@ test("runSync re-extracts ready entries whose cached manifest has zero blocks", 
         mtimeMs: Math.trunc(currentStat.mtimeMs),
         sourceHash: "stalehash",
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath,
-        manifestPath,
       },
     ],
   });
@@ -3506,19 +3470,21 @@ test("runSync re-extracts ready entries whose cached manifest has zero blocks", 
     compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
-  const fakeExtractBatch = async (batch: Array<{ docKey: string; filePath: string; itemKey: string }>) => {
+  const fakeExtractBatch = async (
+    batch: Array<{ docKey: string; filePath: string; itemKey: string }>,
+    _tempRoot: string,
+    store: ArtifactStore,
+  ) => {
     extractCalls += 1;
     const attachment = batch[0]!;
-    writeFileSync(normalizedPath, "Recovered body", "utf-8");
-    writeManifestFile(
-      manifestPath,
-      {
+    store.publish({
+      markdown: "Recovered body",
+      manifest: {
         docKey: attachment.docKey,
         itemKey: attachment.itemKey,
         title: "Paper",
         authors: ["A Author"],
         filePath: attachment.filePath,
-        normalizedPath,
         blocks: [
           {
             blockIndex: 0,
@@ -3533,8 +3499,8 @@ test("runSync re-extracts ready entries whose cached manifest has zero blocks", 
           },
         ],
       },
-    );
-    return new Map([[attachment.docKey, { manifestPath, normalizedPath }]]);
+    });
+    return new Set([attachment.docKey]);
   };
 
   const result = await runSync(
@@ -3584,7 +3550,6 @@ test("runSync keeps embedding until qmd no longer reports pending documents", as
       title: "Paper",
       authors: ["A"],
       filePath: pdfPath,
-      normalizedPath,
       blocks: [trivialBlock()],
     },
   );
@@ -3623,8 +3588,6 @@ test("runSync keeps embedding until qmd no longer reports pending documents", as
         mtimeMs: Math.trunc(currentStat.mtimeMs),
         sourceHash: "existinghash",
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath,
-        manifestPath,
       },
     ],
   });
@@ -3719,7 +3682,7 @@ test("runSync marks empty txt extraction output as error", async () => {
     },
     fakeFactory,
     undefined,
-    () => Promise.resolve(new Map()),
+    () => Promise.resolve(new Set<string>()),
     () => {},
   );
 
@@ -3774,7 +3737,7 @@ test("runSync indexes txt attachments without Java extraction", async () => {
   });
   const fakeExtractBatch = async () => {
     extractBatchCalls += 1;
-    return new Map();
+    return new Set<string>();
   };
 
   const result = await runSync(
@@ -3797,12 +3760,11 @@ test("runSync indexes txt attachments without Java extraction", async () => {
   assert.equal(catalog.entries[0]?.fileExt, "txt");
   assert.equal(catalog.entries[0]?.extractStatus, "ready");
 
-  const normalizedPath = catalog.entries[0]?.normalizedPath;
-  const manifestPath = catalog.entries[0]?.manifestPath;
-  assert.equal(typeof normalizedPath, "string");
-  assert.equal(typeof manifestPath, "string");
-  assert.match(readFileSync(normalizedPath!, "utf-8"), /第一段/);
-  assert.match(JSON.stringify(readManifestFile(manifestPath!)), /第二段/);
+  const txtDocKey = catalog.entries[0]!.docKey;
+  const normalizedPath = join(dataDir, "normalized", `${txtDocKey}.md`);
+  const manifestPath = join(dataDir, "manifests", `${txtDocKey}${MANIFEST_EXT}`);
+  assert.match(readFileSync(normalizedPath, "utf-8"), /第一段/);
+  assert.match(JSON.stringify(readManifestFile(manifestPath)), /第二段/);
 });
 
 test("runSync reuses a ready index when bibliography paths come from another machine", async () => {
@@ -3834,7 +3796,6 @@ test("runSync reuses a ready index when bibliography paths come from another mac
       title: "Paper",
       authors: ["A"],
       filePath: foreignPath,
-      normalizedPath,
       blocks: [trivialBlock()],
     },
   );
@@ -3873,8 +3834,6 @@ test("runSync reuses a ready index when bibliography paths come from another mac
         mtimeMs: Math.trunc(currentStat.mtimeMs),
         sourceHash: "existinghash",
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath,
-        manifestPath,
       },
     ],
   };
@@ -3945,20 +3904,12 @@ test("catalog storage uses home-relative paths and reads them back as local path
   try {
     const dataDir = join(root, "Zotagent");
     const indexDir = join(dataDir, "index");
-    const normalizedDir = join(dataDir, "normalized");
-    const manifestsDir = join(dataDir, "manifests");
     mkdirSync(indexDir, { recursive: true });
-    mkdirSync(normalizedDir, { recursive: true });
-    mkdirSync(manifestsDir, { recursive: true });
 
     const docKey = "7".repeat(40);
     const pdfPath = join(root, "Zotero", "paper.pdf");
-    const normalizedPath = join(normalizedDir, `${docKey}.md`);
-    const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
     mkdirSync(join(root, "Zotero"), { recursive: true });
     writeFileSync(pdfPath, "pdf");
-    writeFileSync(normalizedPath, "Body");
-    writeFileSync(manifestPath, "{}");
 
     const catalogPath = join(indexDir, "catalog.json");
     const homeRelativeCatalogPath = catalogPath.replace(homedir(), "~");
@@ -3980,52 +3931,44 @@ test("catalog storage uses home-relative paths and reads them back as local path
           mtimeMs: 1,
           sourceHash: "hash",
           lastIndexedAt: new Date().toISOString(),
-          normalizedPath,
-          manifestPath,
         },
       ],
     });
 
     const raw = JSON.parse(readFileSync(catalogPath, "utf-8")) as CatalogFile;
     assert.match(raw.entries[0]!.filePath, /^~\//u);
-    assert.match(raw.entries[0]!.normalizedPath!, /^~\//u);
-    assert.match(raw.entries[0]!.manifestPath!, /^~\//u);
 
     const hydrated = readCatalogFile(homeRelativeCatalogPath);
     assert.equal(hydrated.entries[0]?.filePath, pdfPath);
-    assert.equal(hydrated.entries[0]?.normalizedPath, normalizedPath);
-    assert.equal(hydrated.entries[0]?.manifestPath, manifestPath);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("readCatalogFile relocates stale Mac home paths to the current iCloud dataDir artifacts", () => {
-  const root = mkdtempSync(join(homedir(), ".zotagent-catalog-relocate-"));
+test("readCatalogFile strips stored normalizedPath/manifestPath keys from old catalogs", () => {
+  // Older catalogs persisted per-entry artifact paths. The artifact store now
+  // derives both locations from the docKey, so hydration must drop the stored
+  // keys — whether they carry another machine's home prefix or point at an
+  // entirely different dataDir — while still relocating foreign-home
+  // filePaths that resolve to a real local file.
+  const root = mkdtempSync(join(homedir(), ".zotagent-catalog-strip-"));
   try {
-    const dataDir = join(root, "Library", "Mobile Documents", "com~apple~CloudDocs", "Zotagent");
-    const zoteroRoot = join(root, "Library", "Mobile Documents", "com~apple~CloudDocs", "Zotero");
+    const dataDir = join(root, "Zotagent");
     const indexDir = join(dataDir, "index");
-    const normalizedDir = join(dataDir, "normalized");
-    const manifestsDir = join(dataDir, "manifests");
     mkdirSync(indexDir, { recursive: true });
-    mkdirSync(normalizedDir, { recursive: true });
-    mkdirSync(manifestsDir, { recursive: true });
-    mkdirSync(zoteroRoot, { recursive: true });
 
-    const docKey = "8".repeat(40);
-    const pdfPath = join(zoteroRoot, "paper.pdf");
-    const normalizedPath = join(normalizedDir, `${docKey}.md`);
-    const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
+    const docKeyA = "8".repeat(40);
+    const docKeyB = "9".repeat(40);
+    const pdfPath = join(root, "Zotero", "paper.pdf");
+    mkdirSync(join(root, "Zotero"), { recursive: true });
     writeFileSync(pdfPath, "pdf");
-    writeFileSync(normalizedPath, "Body");
-    writeFileSync(manifestPath, "{}");
 
-    const staleHomePrefix = "/Users/miniagent";
-    const localHomePrefix = homedir();
-    const stalePdfPath = pdfPath.replace(localHomePrefix, staleHomePrefix);
-    const staleNormalizedPath = normalizedPath.replace(localHomePrefix, staleHomePrefix);
-    const staleManifestPath = manifestPath.replace(localHomePrefix, staleHomePrefix);
+    // Entry A: everything under another Mac user's home.
+    const foreignHome = "/Users/zotagent-foreign-user";
+    const foreignPdfPath = pdfPath.replace(homedir(), foreignHome);
+    assert.notEqual(foreignPdfPath, pdfPath);
+    // Entry B: artifact paths point outside the current dataDir (old backup).
+    const outsideDataDir = join(root, "old-data");
 
     writeFileSync(
       join(indexDir, "catalog.json"),
@@ -4035,11 +3978,11 @@ test("readCatalogFile relocates stale Mac home paths to the current iCloud dataD
           generatedAt: new Date().toISOString(),
           entries: [
             {
-              docKey,
+              docKey: docKeyA,
               itemKey: "ITEM1",
               title: "Paper",
               authors: [],
-              filePath: stalePdfPath,
+              filePath: foreignPdfPath,
               fileExt: "pdf",
               exists: true,
               supported: true,
@@ -4048,74 +3991,13 @@ test("readCatalogFile relocates stale Mac home paths to the current iCloud dataD
               mtimeMs: 1,
               sourceHash: "hash",
               lastIndexedAt: new Date().toISOString(),
-              normalizedPath: staleNormalizedPath,
-              manifestPath: staleManifestPath,
+              normalizedPath: join(foreignHome, "Zotagent", "normalized", `${docKeyA}.md`),
+              manifestPath: join(foreignHome, "Zotagent", "manifests", `${docKeyA}${MANIFEST_EXT}`),
             },
-          ],
-        },
-        null,
-        2,
-      ),
-      "utf-8",
-    );
-
-    const hydrated = readCatalogFile(join(indexDir, "catalog.json"));
-    assert.equal(hydrated.entries[0]?.filePath, pdfPath);
-    assert.equal(hydrated.entries[0]?.normalizedPath, normalizedPath);
-    assert.equal(hydrated.entries[0]?.manifestPath, manifestPath);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("readCatalogFile redirects cache paths outside the current dataDir to the fallback path", () => {
-  // Regression: when a catalog is cloned from a backup (or carries paths from
-  // an earlier dataDir location), its `manifestPath` / `normalizedPath` may
-  // still point into the old dataDir. If those files still exist there,
-  // hydration used to keep the foreign path, and sync would silently reuse
-  // cache from outside the current dataDir. That couples two installations
-  // and causes confusing staleness. Hydration must redirect to the current
-  // dataDir's canonical path; sync will then decide reusability against that
-  // path alone.
-  const root = mkdtempSync(join(tmpdir(), "zotagent-catalog-foreign-dir-"));
-  try {
-    const foreignDataDir = join(root, "foreign-data");
-    const currentDataDir = join(root, "current-data");
-    const foreignIndex = join(foreignDataDir, "index");
-    const currentIndex = join(currentDataDir, "index");
-    const foreignNormalized = join(foreignDataDir, "normalized");
-    const foreignManifests = join(foreignDataDir, "manifests");
-    const currentNormalized = join(currentDataDir, "normalized");
-    const currentManifests = join(currentDataDir, "manifests");
-    mkdirSync(foreignIndex, { recursive: true });
-    mkdirSync(foreignNormalized, { recursive: true });
-    mkdirSync(foreignManifests, { recursive: true });
-    mkdirSync(currentIndex, { recursive: true });
-    mkdirSync(currentNormalized, { recursive: true });
-    mkdirSync(currentManifests, { recursive: true });
-
-    const docKey = "9".repeat(40);
-    // Populate the foreign dataDir with cache files (simulating an old backup
-    // the user happens to still have lying around).
-    writeFileSync(join(foreignNormalized, `${docKey}.md`), "Foreign body");
-    writeFileSync(join(foreignManifests, `${docKey}${MANIFEST_EXT}`), "{}");
-
-    const foreignNormalizedPath = join(foreignNormalized, `${docKey}.md`);
-    const foreignManifestPath = join(foreignManifests, `${docKey}${MANIFEST_EXT}`);
-    const expectedFallbackNormalizedPath = join(currentNormalized, `${docKey}.md`);
-    const expectedFallbackManifestPath = join(currentManifests, `${docKey}${MANIFEST_EXT}`);
-
-    writeFileSync(
-      join(currentIndex, "catalog.json"),
-      JSON.stringify(
-        {
-          version: 1,
-          generatedAt: new Date().toISOString(),
-          entries: [
             {
-              docKey,
-              itemKey: "ITEM1",
-              title: "Paper",
+              docKey: docKeyB,
+              itemKey: "ITEM2",
+              title: "Backup",
               authors: [],
               filePath: "/irrelevant.pdf",
               fileExt: "pdf",
@@ -4126,8 +4008,8 @@ test("readCatalogFile redirects cache paths outside the current dataDir to the f
               mtimeMs: 1,
               sourceHash: "hash",
               lastIndexedAt: new Date().toISOString(),
-              normalizedPath: foreignNormalizedPath,
-              manifestPath: foreignManifestPath,
+              normalizedPath: join(outsideDataDir, "normalized", `${docKeyB}.md`),
+              manifestPath: join(outsideDataDir, "manifests", `${docKeyB}${MANIFEST_EXT}`),
             },
           ],
         },
@@ -4137,11 +4019,15 @@ test("readCatalogFile redirects cache paths outside the current dataDir to the f
       "utf-8",
     );
 
-    const hydrated = readCatalogFile(join(currentIndex, "catalog.json"));
-    // Even though the foreign paths exist on disk, hydration must point the
-    // entry at the current dataDir's path.
-    assert.equal(hydrated.entries[0]?.normalizedPath, expectedFallbackNormalizedPath);
-    assert.equal(hydrated.entries[0]?.manifestPath, expectedFallbackManifestPath);
+    const hydrated = readCatalogFile(join(indexDir, "catalog.json"));
+    assert.equal(hydrated.entries.length, 2);
+    for (const entry of hydrated.entries) {
+      assert.ok(!("normalizedPath" in entry), "stored normalizedPath key must be stripped on read");
+      assert.ok(!("manifestPath" in entry), "stored manifestPath key must be stripped on read");
+    }
+    // Foreign-home replacement on filePath still applies.
+    assert.equal(hydrated.entries[0]?.filePath, pdfPath);
+    assert.equal(hydrated.entries[1]?.filePath, "/irrelevant.pdf");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -4184,8 +4070,6 @@ test("runSync prunes cached outputs when attachment disappears from the current 
         mtimeMs: 1,
         sourceHash: "hash",
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath,
-        manifestPath,
       },
     ],
   });
@@ -4264,7 +4148,6 @@ test("runSync reuses cached outputs after an attachment temporarily disappears",
       title: "Paper",
       authors: ["A Author"],
       filePath: pdfPath,
-      normalizedPath,
       blocks: [trivialBlock()],
     },
   );
@@ -4287,8 +4170,6 @@ test("runSync reuses cached outputs after an attachment temporarily disappears",
         mtimeMs: Math.trunc(initialStat.mtimeMs),
         sourceHash: "existinghash",
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath,
-        manifestPath,
       },
     ],
   });
@@ -4319,7 +4200,7 @@ test("runSync reuses cached outputs after an attachment temporarily disappears",
     },
     fakeFactory,
     undefined,
-    async () => new Map(),
+    async () => new Set<string>(),
     () => {},
   );
 
@@ -4339,7 +4220,7 @@ test("runSync reuses cached outputs after an attachment temporarily disappears",
     undefined,
     async () => {
       extractCalls += 1;
-      return new Map();
+      return new Set<string>();
     },
     () => {},
   );
@@ -4430,7 +4311,7 @@ test("runSync skips unchanged previous extraction errors by default", async () =
     undefined,
     async () => {
       extractCalls += 1;
-      return new Map();
+      return new Set<string>();
     },
     () => {
       javaChecks += 1;
@@ -4455,8 +4336,6 @@ test("runSync retries unchanged previous errors when requested and passes custom
   const attachmentsRoot = join(root, "attachments");
   const dataDir = join(root, "data");
   const indexDir = join(dataDir, "index");
-  const manifestsDir = join(dataDir, "manifests");
-  const normalizedDir = join(dataDir, "normalized");
   mkdirSync(attachmentsRoot, { recursive: true });
   mkdirSync(indexDir, { recursive: true });
 
@@ -4524,31 +4403,24 @@ test("runSync retries unchanged previous errors when requested and passes custom
   const fakeExtractBatch = async (
     batch: Array<{ docKey: string; filePath: string; itemKey: string }>,
     _tempRoot: string,
-    manifestsRoot: string,
-    normalizedRoot: string,
+    store: ArtifactStore,
     options?: { timeoutMs?: number },
   ) => {
     extractCalls += 1;
     seenTimeoutMs = options?.timeoutMs;
     const attachment = batch[0]!;
-    const normalizedPath = join(normalizedRoot, `${attachment.docKey}.md`);
-    const manifestPath = join(manifestsRoot, `${attachment.docKey}${MANIFEST_EXT}`);
-    mkdirSync(normalizedRoot, { recursive: true });
-    mkdirSync(manifestsRoot, { recursive: true });
-    writeFileSync(normalizedPath, "# Large Book", "utf-8");
-    writeManifestFile(
-      manifestPath,
-      {
+    store.publish({
+      markdown: "# Large Book",
+      manifest: {
         docKey: attachment.docKey,
         itemKey: attachment.itemKey,
         title: "Large Book",
         authors: ["Book Author"],
         filePath: attachment.filePath,
-        normalizedPath,
-        blocks: [],
+        blocks: [trivialBlock()],
       },
-    );
-    return new Map([[attachment.docKey, { normalizedPath, manifestPath }]]);
+    });
+    return new Set([attachment.docKey]);
   };
 
   const result = await runSync(
@@ -4575,8 +4447,6 @@ test("runSync extracts book attachments in single-file batches by default", asyn
   const root = mkdtempSync(join(tmpdir(), "zotagent-sync-book-batches-"));
   const attachmentsRoot = join(root, "attachments");
   const dataDir = join(root, "data");
-  const manifestsDir = join(dataDir, "manifests");
-  const normalizedDir = join(dataDir, "normalized");
   mkdirSync(join(attachmentsRoot, "Book"), { recursive: true });
   mkdirSync(join(attachmentsRoot, "papers"), { recursive: true });
 
@@ -4633,32 +4503,30 @@ test("runSync extracts book attachments in single-file batches by default", asyn
     close: async () => {},
   });
   const batches: string[][] = [];
-  const fakeExtractBatch = async (batch: Array<{ docKey: string; filePath: string; itemKey: string }>) => {
+  const fakeExtractBatch = async (
+    batch: Array<{ docKey: string; filePath: string; itemKey: string }>,
+    _tempRoot: string,
+    store: ArtifactStore,
+  ) => {
     batches.push(batch.map((attachment) => attachment.itemKey));
-    const out = new Map<string, { manifestPath: string; normalizedPath: string }>();
+    const published = new Set<string>();
 
     for (const attachment of batch) {
-      const normalizedPath = join(normalizedDir, `${attachment.docKey}.md`);
-      const manifestPath = join(manifestsDir, `${attachment.docKey}${MANIFEST_EXT}`);
-      mkdirSync(normalizedDir, { recursive: true });
-      mkdirSync(manifestsDir, { recursive: true });
-      writeFileSync(normalizedPath, `# ${attachment.itemKey}`, "utf-8");
-      writeManifestFile(
-        manifestPath,
-        {
+      store.publish({
+        markdown: `# ${attachment.itemKey}`,
+        manifest: {
           docKey: attachment.docKey,
           itemKey: attachment.itemKey,
           title: attachment.itemKey,
           authors: [],
           filePath: attachment.filePath,
-          normalizedPath,
-          blocks: [],
+          blocks: [trivialBlock()],
         },
-      );
-      out.set(attachment.docKey, { normalizedPath, manifestPath });
+      });
+      published.add(attachment.docKey);
     }
 
-    return out;
+    return published;
   };
 
   const result = await runSync(
@@ -4683,8 +4551,6 @@ test("runSync honors explicit PDF batch size", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-sync-batch-size-"));
   const attachmentsRoot = join(root, "attachments");
   const dataDir = join(root, "data");
-  const manifestsDir = join(dataDir, "manifests");
-  const normalizedDir = join(dataDir, "normalized");
   mkdirSync(attachmentsRoot, { recursive: true });
 
   const onePath = join(attachmentsRoot, "one.pdf");
@@ -4731,32 +4597,30 @@ test("runSync honors explicit PDF batch size", async () => {
     close: async () => {},
   });
   const batchSizes: number[] = [];
-  const fakeExtractBatch = async (batch: Array<{ docKey: string; filePath: string; itemKey: string }>) => {
+  const fakeExtractBatch = async (
+    batch: Array<{ docKey: string; filePath: string; itemKey: string }>,
+    _tempRoot: string,
+    store: ArtifactStore,
+  ) => {
     batchSizes.push(batch.length);
-    const out = new Map<string, { manifestPath: string; normalizedPath: string }>();
+    const published = new Set<string>();
 
     for (const attachment of batch) {
-      const normalizedPath = join(normalizedDir, `${attachment.docKey}.md`);
-      const manifestPath = join(manifestsDir, `${attachment.docKey}${MANIFEST_EXT}`);
-      mkdirSync(normalizedDir, { recursive: true });
-      mkdirSync(manifestsDir, { recursive: true });
-      writeFileSync(normalizedPath, `# ${attachment.itemKey}`, "utf-8");
-      writeManifestFile(
-        manifestPath,
-        {
+      store.publish({
+        markdown: `# ${attachment.itemKey}`,
+        manifest: {
           docKey: attachment.docKey,
           itemKey: attachment.itemKey,
           title: attachment.itemKey,
           authors: [],
           filePath: attachment.filePath,
-          normalizedPath,
-          blocks: [],
+          blocks: [trivialBlock()],
         },
-      );
-      out.set(attachment.docKey, { normalizedPath, manifestPath });
+      });
+      published.add(attachment.docKey);
     }
 
-    return out;
+    return published;
   };
 
   const result = await runSync(
@@ -4780,8 +4644,6 @@ test("runSync records extraction failures per attachment and continues indexing 
   const root = mkdtempSync(join(tmpdir(), "zotagent-sync-error-"));
   const attachmentsRoot = join(root, "attachments");
   const dataDir = join(root, "data");
-  const manifestsDir = join(dataDir, "manifests");
-  const normalizedDir = join(dataDir, "normalized");
   mkdirSync(attachmentsRoot, { recursive: true });
 
   const goodPdfPath = join(attachmentsRoot, "good.pdf");
@@ -4828,8 +4690,12 @@ test("runSync records extraction failures per attachment and continues indexing 
     close: async () => {},
   });
 
-  const fakeExtractBatch = async (batch: Array<{ docKey: string; filePath: string; itemKey: string }>) => {
-    const out = new Map<string, { manifestPath: string; normalizedPath: string }>();
+  const fakeExtractBatch = async (
+    batch: Array<{ docKey: string; filePath: string; itemKey: string }>,
+    _tempRoot: string,
+    store: ArtifactStore,
+  ) => {
+    const published = new Set<string>();
     for (const attachment of batch) {
       if (attachment.itemKey === "BAD") {
         throw new Error([
@@ -4839,26 +4705,20 @@ test("runSync records extraction failures per attachment and continues indexing 
         ].join("\n"));
       }
 
-      const normalizedPath = join(normalizedDir, `${attachment.docKey}.md`);
-      const manifestPath = join(manifestsDir, `${attachment.docKey}${MANIFEST_EXT}`);
-      mkdirSync(normalizedDir, { recursive: true });
-      mkdirSync(manifestsDir, { recursive: true });
-      writeFileSync(normalizedPath, "# Good Paper", "utf-8");
-      writeManifestFile(
-        manifestPath,
-        {
+      store.publish({
+        markdown: "# Good Paper",
+        manifest: {
           docKey: attachment.docKey,
           itemKey: attachment.itemKey,
           title: "Good Paper",
           authors: ["Good Author"],
           filePath: attachment.filePath,
-          normalizedPath,
-          blocks: [],
+          blocks: [trivialBlock()],
         },
-      );
-      out.set(attachment.docKey, { normalizedPath, manifestPath });
+      });
+      published.add(attachment.docKey);
     }
-    return out;
+    return published;
   };
 
   const result = await runSync(
@@ -4903,8 +4763,6 @@ test("runSync retries a timed out batch one file at a time", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-sync-timeout-"));
   const attachmentsRoot = join(root, "attachments");
   const dataDir = join(root, "data");
-  const manifestsDir = join(dataDir, "manifests");
-  const normalizedDir = join(dataDir, "normalized");
   mkdirSync(attachmentsRoot, { recursive: true });
 
   const goodPdfPath = join(attachmentsRoot, "good.pdf");
@@ -4952,7 +4810,11 @@ test("runSync retries a timed out batch one file at a time", async () => {
   });
 
   let batchCalls = 0;
-  const fakeExtractBatch = async (batch: Array<{ docKey: string; filePath: string; itemKey: string }>) => {
+  const fakeExtractBatch = async (
+    batch: Array<{ docKey: string; filePath: string; itemKey: string }>,
+    _tempRoot: string,
+    store: ArtifactStore,
+  ) => {
     batchCalls += 1;
     if (batch.length > 1) {
       throw new Error("OpenDataLoader PDF extraction timed out after 180000ms.");
@@ -4963,25 +4825,19 @@ test("runSync retries a timed out batch one file at a time", async () => {
       throw new Error("OpenDataLoader PDF extraction timed out after 180000ms.");
     }
 
-    const normalizedPath = join(normalizedDir, `${attachment.docKey}.md`);
-    const manifestPath = join(manifestsDir, `${attachment.docKey}${MANIFEST_EXT}`);
-    mkdirSync(normalizedDir, { recursive: true });
-    mkdirSync(manifestsDir, { recursive: true });
-    writeFileSync(normalizedPath, "# Good Paper", "utf-8");
-    writeManifestFile(
-      manifestPath,
-      {
+    store.publish({
+      markdown: "# Good Paper",
+      manifest: {
         docKey: attachment.docKey,
         itemKey: attachment.itemKey,
         title: "Good Paper",
         authors: ["Good Author"],
         filePath: attachment.filePath,
-        normalizedPath,
-        blocks: [],
+        blocks: [trivialBlock()],
       },
-    );
+    });
 
-    return new Map([[attachment.docKey, { normalizedPath, manifestPath }]]);
+    return new Set([attachment.docKey]);
   };
 
   const result = await runSync(

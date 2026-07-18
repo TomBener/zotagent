@@ -4,10 +4,8 @@ import {
   copyFileSync,
   mkdtempSync,
   readFileSync,
-  renameSync,
   rmSync,
   statSync,
-  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { createReadStream } from "node:fs";
@@ -16,6 +14,12 @@ import { join, resolve, dirname } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 
+import {
+  EmptyArtifactError,
+  openFsArtifactStore,
+  type ArtifactStore,
+  type ArtifactStoreFactory,
+} from "./artifact-store.js";
 import { loadCatalog } from "./catalog.js";
 import { getDataPaths, resolveConfig, type ConfigOverrides } from "./config.js";
 import { applyExcludes } from "./excludes.js";
@@ -30,14 +34,10 @@ import { OPENCC_PACKAGE_VERSION } from "./zh-convert.js";
 import { mapEntriesByDocKey, readCatalogFile, summarizeCatalog, writeCatalogFile } from "./state.js";
 import type { AttachmentCatalogEntry, AttachmentManifest, CatalogEntry, CatalogFile, SyncStats } from "./types.js";
 import {
-  MANIFEST_EXT,
   compactHomePath,
   ensureDir,
-  ensureParentDir,
   exists,
   stemForFile,
-  tryReadManifestFile,
-  writeManifestFile,
 } from "./utils.js";
 
 const HIDE_JAVA_DOCK_ICON_FLAG = "-Dapple.awt.UIElement=true";
@@ -60,6 +60,7 @@ function isOdlStructuralBug(error: unknown): boolean {
 }
 
 function isOdlEmptyOutput(error: unknown): boolean {
+  if (error instanceof EmptyArtifactError) return true;
   const message = error instanceof Error ? error.message : String(error);
   return ODL_EMPTY_OUTPUT_PATTERN.test(message);
 }
@@ -522,8 +523,6 @@ export function isEntryContentUnchanged(prev: CatalogEntry, next: CatalogEntry):
     prev.size === next.size &&
     prev.mtimeMs === next.mtimeMs &&
     prev.sourceHash === next.sourceHash &&
-    prev.normalizedPath === next.normalizedPath &&
-    prev.manifestPath === next.manifestPath &&
     areAuthorsEqual(prev.authors, next.authors)
   );
 }
@@ -550,121 +549,8 @@ function toCatalogEntry(
     sourceHash: partial.sourceHash ?? null,
     lastIndexedAt: partial.lastIndexedAt ?? null,
     extractStatus: partial.extractStatus,
-    ...(partial.normalizedPath ? { normalizedPath: partial.normalizedPath } : {}),
-    ...(partial.manifestPath ? { manifestPath: partial.manifestPath } : {}),
     ...(partial.error ? { error: partial.error } : {}),
   };
-}
-
-function deleteIfExists(path: string | undefined): void {
-  if (path && exists(path)) {
-    unlinkSync(path);
-  }
-}
-
-function hasReusableNormalizedOutput(path: string): boolean {
-  const stats = statSync(path, { throwIfNoEntry: false });
-  return Boolean(stats && stats.size > 0);
-}
-
-function hasReusableCatalogArtifacts(
-  normalizedPath: string | undefined,
-  manifestPath: string | undefined,
-): normalizedPath is string {
-  return Boolean(
-    normalizedPath &&
-    manifestPath &&
-    exists(manifestPath) &&
-    hasReusableNormalizedOutput(normalizedPath),
-  );
-}
-
-function assertNonEmptyExtractedOutput(
-  filePath: string,
-  built: { markdown: string; manifest: AttachmentManifest },
-): void {
-  if (built.markdown.trim().length > 0 && built.manifest.blocks.length > 0) {
-    return;
-  }
-  throw new Error(`Extracted output was empty for ${filePath}`);
-}
-
-// Write the normalized markdown and manifest as an atomic pair. Both files are
-// staged to sibling `.new-*` paths first, then renamed into place; if any step
-// fails the final paths are not touched (or the first rename is rolled back),
-// so a mid-write extraction failure can never publish a partial normalized
-// file alongside a stale manifest.
-function writeArtifactsAtomically(
-  normalizedPath: string,
-  manifestPath: string,
-  markdown: string,
-  manifest: AttachmentManifest,
-): void {
-  const stamp = `${process.pid}-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
-  const tempNormalized = `${normalizedPath}.new-${stamp}`;
-  const tempManifest = `${manifestPath}.new-${stamp}`;
-  let normalizedRenamed = false;
-  try {
-    writeFileSync(tempNormalized, markdown, "utf-8");
-    writeManifestFile(tempManifest, manifest);
-    renameSync(tempNormalized, normalizedPath);
-    normalizedRenamed = true;
-    renameSync(tempManifest, manifestPath);
-  } catch (err) {
-    if (normalizedRenamed) {
-      try {
-        renameSync(normalizedPath, tempNormalized);
-      } catch {
-        // best effort — sync will re-extract on next run regardless
-      }
-    }
-    throw err;
-  } finally {
-    if (exists(tempNormalized)) {
-      try { unlinkSync(tempNormalized); } catch { /* ignore */ }
-    }
-    if (exists(tempManifest)) {
-      try { unlinkSync(tempManifest); } catch { /* ignore */ }
-    }
-  }
-}
-
-function readReusableArtifactManifest(
-  identity: Pick<AttachmentCatalogEntry, "docKey" | "itemKey">,
-  normalizedPath: string | undefined,
-  manifestPath: string | undefined,
-): AttachmentManifest | undefined {
-  if (!normalizedPath || !manifestPath) return undefined;
-  if (!exists(normalizedPath) || !exists(manifestPath)) return undefined;
-  if (!hasReusableNormalizedOutput(normalizedPath)) return undefined;
-
-  const manifest = tryReadManifestFile(manifestPath);
-  if (!manifest) return undefined;
-  if (manifest.blocks.length === 0) return undefined;
-
-  return manifest.docKey === identity.docKey && manifest.itemKey === identity.itemKey
-    ? manifest
-    : undefined;
-}
-
-function hasReusableArtifacts(
-  attachment: AttachmentCatalogEntry,
-  normalizedPath: string | undefined,
-  manifestPath: string | undefined,
-  isVertical: boolean,
-): normalizedPath is string {
-  const manifest = readReusableArtifactManifest(attachment, normalizedPath, manifestPath);
-  if (!manifest) return false;
-  if (attachment.fileExt === "pdf") {
-    const manifestIsVertical = manifest.verticalText === true;
-    // Re-extract whenever the manifest's recorded vertical-text status no
-    // longer matches the user's current Zotero tag. Catches both directions:
-    // a previously-horizontal extraction that should now use
-    // --reading-order=off, and a previously-vertical extraction whose tag
-    // was removed in Zotero.
-    if (manifestIsVertical !== isVertical) return false;
-  }
-  return true;
 }
 
 function isLikelyBookAttachment(attachment: AttachmentCatalogEntry): boolean {
@@ -763,18 +649,20 @@ export async function runOdlConvert(
   });
 }
 
-type ExtractedPaths = { manifestPath: string; normalizedPath: string };
 type ExtractBatchOptions = {
   timeoutMs?: number;
   verticalItemKeys?: ReadonlySet<string>;
 };
+// Extractors publish each member through the store as it is built and report
+// which docKeys they published. The Set (rather than probing the store) lets
+// processBatch catch an extractor that silently skipped a batch member — a
+// stale artifact from a previous run must not mask that bug.
 type ExtractBatchFn = (
   batch: AttachmentCatalogEntry[],
   tempRoot: string,
-  manifestsDir: string,
-  normalizedDir: string,
+  store: ArtifactStore,
   options?: ExtractBatchOptions,
-) => Promise<Map<string, ExtractedPaths>>;
+) => Promise<Set<string>>;
 
 export type SyncRunOptions = {
   retryErrors?: boolean;
@@ -790,6 +678,10 @@ export type SyncRunOptions = {
   // Test injection for the fetch implementation used to query Zotero for
   // tagged item keys. Defaults to globalThis.fetch.
   fetchImpl?: FetchLike;
+  // Artifact store seam. Production leaves this unset and gets the real
+  // filesystem adapter; tests may inject the in-memory adapter or a hooked
+  // fs adapter for fault injection.
+  storeFactory?: ArtifactStoreFactory;
 };
 
 // Look up all top-level Zotero items carrying the given tag. Returns an empty
@@ -878,12 +770,11 @@ function attachmentIsVertical(
 async function extractBatchPdftotext(
   batch: AttachmentCatalogEntry[],
   tempRoot: string,
-  manifestsDir: string,
-  normalizedDir: string,
+  store: ArtifactStore,
   options: ExtractBatchOptions = {},
-): Promise<Map<string, ExtractedPaths>> {
+): Promise<Set<string>> {
   const tempDir = mkdtempSync(join(tempRoot, "pdftotext-"));
-  const byDocKey = new Map<string, ExtractedPaths>();
+  const published = new Set<string>();
 
   try {
     for (const attachment of batch) {
@@ -899,40 +790,31 @@ async function extractBatchPdftotext(
         throw new Error(`pdftotext output not found for ${attachment.filePath}`);
       }
 
-      const normalizedPath = resolve(normalizedDir, `${attachment.docKey}.md`);
-      const manifestPath = resolve(manifestsDir, `${attachment.docKey}${MANIFEST_EXT}`);
-      ensureParentDir(normalizedPath);
-      ensureParentDir(manifestPath);
-
       const built = buildMarkdownManifest(
         attachment,
         readFileSync(textPath, "utf-8"),
-        normalizedPath,
         attachmentIsVertical(attachment, options.verticalItemKeys ?? new Set())
           ? { verticalText: true }
           : {},
       );
-      assertNonEmptyExtractedOutput(attachment.filePath, built);
-
-      writeArtifactsAtomically(normalizedPath, manifestPath, built.markdown, built.manifest);
-      byDocKey.set(attachment.docKey, { manifestPath, normalizedPath });
+      store.publish(built);
+      published.add(attachment.docKey);
     }
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
 
-  return byDocKey;
+  return published;
 }
 
 async function extractBatchTextOnly(
   batch: AttachmentCatalogEntry[],
   tempRoot: string,
-  manifestsDir: string,
-  normalizedDir: string,
+  store: ArtifactStore,
   options: ExtractBatchOptions = {},
-): Promise<Map<string, ExtractedPaths>> {
+): Promise<Set<string>> {
   const tempDir = mkdtempSync(join(tempRoot, "odl-text-"));
-  const byDocKey = new Map<string, ExtractedPaths>();
+  const published = new Set<string>();
 
   const verticalText = batchUsesVerticalText(batch, options.verticalItemKeys ?? new Set());
 
@@ -956,43 +838,34 @@ async function extractBatchTextOnly(
         throw new Error(`OpenDataLoader text output not found for ${attachment.filePath}`);
       }
 
-      const normalizedPath = resolve(normalizedDir, `${attachment.docKey}.md`);
-      const manifestPath = resolve(manifestsDir, `${attachment.docKey}${MANIFEST_EXT}`);
-      ensureParentDir(normalizedPath);
-      ensureParentDir(manifestPath);
-
       const built = buildMarkdownManifest(
         attachment,
         readFileSync(textPath, "utf-8"),
-        normalizedPath,
         verticalText ? { verticalText: true } : {},
       );
-      assertNonEmptyExtractedOutput(attachment.filePath, built);
-
-      writeArtifactsAtomically(normalizedPath, manifestPath, built.markdown, built.manifest);
-      byDocKey.set(attachment.docKey, { manifestPath, normalizedPath });
+      store.publish(built);
+      published.add(attachment.docKey);
     }
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
 
-  return byDocKey;
+  return published;
 }
 
 async function extractBatch(
   batch: AttachmentCatalogEntry[],
   tempRoot: string,
-  manifestsDir: string,
-  normalizedDir: string,
+  store: ArtifactStore,
   options: ExtractBatchOptions = {},
-): Promise<Map<string, ExtractedPaths>> {
+): Promise<Set<string>> {
   if (batch.length !== 1) {
-    return await extractBatchStructured(batch, tempRoot, manifestsDir, normalizedDir, options);
+    return await extractBatchStructured(batch, tempRoot, store, options);
   }
 
   let primaryError: unknown;
   try {
-    return await extractBatchStructured(batch, tempRoot, manifestsDir, normalizedDir, options);
+    return await extractBatchStructured(batch, tempRoot, store, options);
   } catch (err) {
     primaryError = err;
   }
@@ -1001,7 +874,7 @@ async function extractBatch(
 
   if (isOdlStructuralBug(primaryError)) {
     try {
-      return await extractBatchTextOnly(batch, tempRoot, manifestsDir, normalizedDir, options);
+      return await extractBatchTextOnly(batch, tempRoot, store, options);
     } catch (err) {
       fallbackFailures.push({ tier: "odl-text", error: err });
     }
@@ -1013,7 +886,7 @@ async function extractBatch(
     isOdlTimeout(primaryError)
   ) {
     try {
-      return await extractBatchPdftotext(batch, tempRoot, manifestsDir, normalizedDir, options);
+      return await extractBatchPdftotext(batch, tempRoot, store, options);
     } catch (err) {
       fallbackFailures.push({ tier: "pdftotext", error: err });
     }
@@ -1040,12 +913,11 @@ export function annotateWithFallbackFailures(
 async function extractBatchStructured(
   batch: AttachmentCatalogEntry[],
   tempRoot: string,
-  manifestsDir: string,
-  normalizedDir: string,
+  store: ArtifactStore,
   options: ExtractBatchOptions = {},
-): Promise<Map<string, ExtractedPaths>> {
+): Promise<Set<string>> {
   const tempDir = mkdtempSync(join(tempRoot, "odl-"));
-  const byDocKey = new Map<string, ExtractedPaths>();
+  const published = new Set<string>();
 
   const verticalText = batchUsesVerticalText(batch, options.verticalItemKeys ?? new Set());
 
@@ -1070,28 +942,20 @@ async function extractBatchStructured(
         throw new Error(`OpenDataLoader output not found for ${attachment.filePath}`);
       }
 
-      const normalizedPath = resolve(normalizedDir, `${attachment.docKey}.md`);
-      const manifestPath = resolve(manifestsDir, `${attachment.docKey}${MANIFEST_EXT}`);
-      ensureParentDir(normalizedPath);
-      ensureParentDir(manifestPath);
-
       const built = buildPdfManifest(
         attachment,
         readFileSync(markdownPath, "utf-8"),
         readFileSync(jsonPath, "utf-8"),
-        normalizedPath,
         verticalText ? { verticalText: true } : {},
       );
-      assertNonEmptyExtractedOutput(attachment.filePath, built);
-
-      writeArtifactsAtomically(normalizedPath, manifestPath, built.markdown, built.manifest);
-      byDocKey.set(attachment.docKey, { manifestPath, normalizedPath });
+      store.publish(built);
+      published.add(attachment.docKey);
     }
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
 
-  return byDocKey;
+  return published;
 }
 
 function summarizeSyncError(error: unknown): string {
@@ -1122,9 +986,8 @@ function toExtractErrorMessage(filePath: string, error: unknown): string {
 
 async function extractNonPdfAttachment(
   attachment: AttachmentCatalogEntry,
-  manifestsDir: string,
-  normalizedDir: string,
-): Promise<ExtractedPaths> {
+  store: ArtifactStore,
+): Promise<void> {
   let markdown: string;
 
   if (attachment.fileExt === "epub") {
@@ -1137,16 +1000,7 @@ async function extractNonPdfAttachment(
     throw new Error(`Unsupported file type for extraction: ${attachment.fileExt}`);
   }
 
-  const normalizedPath = resolve(normalizedDir, `${attachment.docKey}.md`);
-  const manifestPath = resolve(manifestsDir, `${attachment.docKey}${MANIFEST_EXT}`);
-  ensureParentDir(normalizedPath);
-  ensureParentDir(manifestPath);
-
-  const built = buildMarkdownManifest(attachment, markdown, normalizedPath);
-  assertNonEmptyExtractedOutput(attachment.filePath, built);
-  writeArtifactsAtomically(normalizedPath, manifestPath, built.markdown, built.manifest);
-
-  return { manifestPath, normalizedPath };
+  store.publish(buildMarkdownManifest(attachment, markdown));
 }
 
 export function buildContext(entry: CatalogEntry): string {
@@ -1342,11 +1196,14 @@ export async function runSync(
   }
 
   try {
-    ensureDir(paths.normalizedDir);
-    ensureDir(paths.manifestsDir);
     ensureDir(paths.indexDir);
     ensureDir(paths.tempDir);
     ensureDir(paths.logsDir);
+    // Creates normalized/ + manifests/ and enforces the legacy-manifest guard.
+    const store = (options.storeFactory ?? openFsArtifactStore)({
+      normalizedDir: paths.normalizedDir,
+      manifestsDir: paths.manifestsDir,
+    });
     logger.info("Prepared data directories.");
 
     // Tag-driven vertical detection and exclusion: ask Zotero once which
@@ -1440,7 +1297,10 @@ export async function runSync(
     // fail and be rolled back to the previous ready state — in that case the
     // manifest is unchanged and must not be forced into the keyword update.
     const recentlyExtractedDocKeys = new Set<string>();
-    const staleDocKeys = new Set(previousCatalog.entries.map((entry) => entry.docKey));
+    // The session owns staleness: docKeys from the previous catalog that are
+    // never touched (triage loop, publish, adopt) get their artifacts swept
+    // at finish(), along with staging residue from crashed runs.
+    const session = store.beginSession(previousCatalog.entries.map((entry) => entry.docKey));
     const fileOutcomes: SyncFileOutcome[] = [];
     activeFileOutcomes = fileOutcomes;
 
@@ -1471,7 +1331,7 @@ export async function runSync(
     });
 
     for (const attachment of catalogData.attachments) {
-      staleDocKeys.delete(attachment.docKey);
+      session.touch(attachment.docKey);
       if (attachment.supported) stats.supportedAttachments += 1;
 
       if (!attachment.supported) {
@@ -1506,45 +1366,39 @@ export async function runSync(
       }
 
       const previous = previousByDocKey.get(attachment.docKey);
-      const fallbackNormalizedPath = resolve(paths.normalizedDir, `${attachment.docKey}.md`);
-      const fallbackManifestPath = resolve(paths.manifestsDir, `${attachment.docKey}${MANIFEST_EXT}`);
       const currentMtimeMs = Math.trunc(current.mtimeMs);
       const previousIsUnchanged =
         previous !== undefined &&
         previous.size === current.size &&
         previous.mtimeMs === currentMtimeMs;
       // Vertical-text status comes entirely from the Zotero tag we fetched
-      // at sync start. For non-PDFs the value is irrelevant (manifests don't
-      // carry the flag), but using false uniformly keeps the reuse logic
-      // simple.
+      // at sync start. For non-PDFs no expectation is passed, so the store
+      // never consults the manifest's verticalText marker for them.
       const isVertical = attachment.fileExt === "pdf" && verticalItemKeys.has(attachment.itemKey);
+      // One artifact-side verdict serves what used to be two checks (previous
+      // entry paths vs derived fallback paths): the store derives the same
+      // paths for both, so they were always the same files.
+      const artifactsReusable = store.reuseVerdict(
+        attachment,
+        attachment.fileExt === "pdf" ? { vertical: isVertical } : undefined,
+      ).reusable;
       // For PDFs we always validate the manifest's recorded extraction mode
       // against the current tag verdict — that's the source of truth for
       // "does this cached artifact match what the user wants now?". Non-PDF
-      // entries can use the cheap existence check.
+      // entries can use the cheap existence probe once a catalog completed.
       const canUseCatalogFastPath = previousCatalogCompleted && attachment.fileExt !== "pdf";
+      const artifactProbe = canUseCatalogFastPath ? store.probe(attachment.docKey) : undefined;
       const previousIsReadyAndUnchanged =
         previous?.extractStatus === "ready" &&
         previousIsUnchanged &&
-        (canUseCatalogFastPath
-          ? hasReusableCatalogArtifacts(previous.normalizedPath, previous.manifestPath)
-          : hasReusableArtifacts(
-              attachment,
-              previous.normalizedPath,
-              previous.manifestPath,
-              isVertical,
-            ));
+        (artifactProbe !== undefined
+          ? artifactProbe.hasNormalized && artifactProbe.hasManifest
+          : artifactsReusable);
       const previousIsErrorAndUnchanged =
         previous?.extractStatus === "error" &&
         previousIsUnchanged;
-      const fallbackArtifactsReusable = hasReusableArtifacts(
-        attachment,
-        fallbackNormalizedPath,
-        fallbackManifestPath,
-        isVertical,
-      );
 
-      if (previousIsErrorAndUnchanged && !fallbackArtifactsReusable && !options.retryErrors) {
+      if (previousIsErrorAndUnchanged && !artifactsReusable && !options.retryErrors) {
         nextEntries.push(
           toCatalogEntry(attachment, {
             extractStatus: "error",
@@ -1566,67 +1420,22 @@ export async function runSync(
       }
 
       // Rename fast path: an attachment we have never seen under this docKey,
-      // with no fallback artifacts locally, may be the same PDF renamed or
+      // with no reusable artifacts locally, may be the same PDF renamed or
       // moved inside attachmentsRoot. If (itemKey,size,mtimeMs) matches a
       // previous ready entry whose filePath has dropped out of the
-      // bibliography, migrate the cached normalized+manifest from the old
-      // docKey to the new one instead of re-extracting and re-embedding.
-      if (previous === undefined && !fallbackArtifactsReusable) {
+      // bibliography, adopt the cached artifact under the new docKey instead
+      // of re-extracting and re-embedding. The store validates the source
+      // pair, refuses a vertical mismatch before moving (stale reading-order
+      // output must not be carried over), rewrites the manifest identity
+      // preserving verticalText + blocks, and touches both docKeys so the
+      // old side is not reported removed.
+      if (previous === undefined && !artifactsReusable) {
         const renameKey = `${attachment.itemKey}\u0000${current.size}\u0000${currentMtimeMs}`;
         const renameFromPrev = renameCandidateIndex.get(renameKey);
-        const renameFromNormalizedPath =
-          renameFromPrev !== undefined && renameFromPrev !== null
-            ? renameFromPrev.normalizedPath
-            : undefined;
-        const renameFromManifestPath =
-          renameFromPrev !== undefined && renameFromPrev !== null
-            ? renameFromPrev.manifestPath
-            : undefined;
-        const oldManifest =
-          renameFromPrev === undefined || renameFromPrev === null
-            ? undefined
-            : readReusableArtifactManifest(
-                renameFromPrev,
-                renameFromNormalizedPath,
-                renameFromManifestPath,
-              );
-        // Don't migrate stale extraction output: if the current tag-based
-        // verdict disagrees with the old manifest's verticalText (either
-        // direction), the cached blocks were produced under the wrong
-        // reading-order mode and must be re-extracted under the new docKey
-        // rather than carried over.
-        const oldManifestIsVertical = oldManifest?.verticalText === true;
-        const wouldMigrateStaleVertical =
-          oldManifest !== undefined && attachment.fileExt === "pdf" && oldManifestIsVertical !== isVertical;
-        if (
-          renameFromPrev !== undefined &&
-          renameFromPrev !== null &&
-          oldManifest &&
-          renameFromNormalizedPath &&
-          renameFromManifestPath &&
-          !wouldMigrateStaleVertical
-        ) {
-          try {
-            renameSync(renameFromNormalizedPath, fallbackNormalizedPath);
-            try {
-              renameSync(renameFromManifestPath, fallbackManifestPath);
-            } catch (manifestErr) {
-              // Roll back the normalized rename so we never end up with a
-              // half-migrated pair on disk.
-              try {
-                renameSync(fallbackNormalizedPath, renameFromNormalizedPath);
-              } catch {
-                // best effort — original callsite will still throw
-              }
-              throw manifestErr;
-            }
-            // Rewrite manifest so its stored docKey/filePath/normalizedPath
-            // match the new identity. hasReusableArtifacts checks docKey on
-            // the next run and would otherwise force a re-extract. Preserve
-            // the old manifest's verticalText marker so a renamed vertical PDF
-            // is not re-extracted on the next sync just because the migrated
-            // manifest forgot it was already produced with reading-order=off.
-            writeManifestFile(fallbackManifestPath, {
+        if (renameFromPrev !== undefined && renameFromPrev !== null) {
+          const outcome = store.adopt(
+            { docKey: renameFromPrev.docKey, itemKey: renameFromPrev.itemKey },
+            {
               docKey: attachment.docKey,
               itemKey: attachment.itemKey,
               ...(attachment.citationKey ? { citationKey: attachment.citationKey } : {}),
@@ -1635,10 +1444,10 @@ export async function runSync(
               ...(attachment.year ? { year: attachment.year } : {}),
               ...(attachment.abstract ? { abstract: attachment.abstract } : {}),
               filePath: attachment.filePath,
-              normalizedPath: fallbackNormalizedPath,
-              ...(oldManifest.verticalText ? { verticalText: true } : {}),
-              blocks: oldManifest.blocks,
-            });
+            },
+            attachment.fileExt === "pdf" ? { vertical: isVertical } : undefined,
+          );
+          if (outcome.adopted) {
             nextEntries.push(
               toCatalogEntry(attachment, {
                 extractStatus: "ready",
@@ -1646,8 +1455,6 @@ export async function runSync(
                 mtimeMs: currentMtimeMs,
                 sourceHash: renameFromPrev.sourceHash ?? null,
                 lastIndexedAt: renameFromPrev.lastIndexedAt ?? null,
-                normalizedPath: fallbackNormalizedPath,
-                manifestPath: fallbackManifestPath,
               }),
             );
             fileOutcomes.push({
@@ -1657,14 +1464,16 @@ export async function runSync(
             });
             stats.readyAttachments += 1;
             stats.skippedAttachments += 1;
-            staleDocKeys.delete(renameFromPrev.docKey);
             renameCandidateIndex.delete(renameKey);
             continue;
-          } catch (err) {
+          }
+          if (outcome.reason === "adoption-failed") {
             logger.warn(
-              `Rename migration failed for ${compactHomePath(attachment.filePath)}; falling back to re-extract: ${err instanceof Error ? err.message : String(err)}`,
+              `Rename migration failed for ${compactHomePath(attachment.filePath)}; falling back to re-extract: ${outcome.error instanceof Error ? outcome.error.message : String(outcome.error)}`,
             );
           }
+          // source-not-reusable / vertical-mismatch: no usable candidate —
+          // fall through to re-extraction, as before.
         }
       }
 
@@ -1672,13 +1481,13 @@ export async function runSync(
       // file's size/mtime has changed since, on-disk artifacts matching the
       // docKey are stale — they were produced before the change. Reusing them
       // would keep indexing the pre-change content (seen in practice after a
-      // user re-OCR's a scanned PDF in place). The `fallbackArtifactsReusable`
-      // path is only valid as a recovery hint when we have no reliable prior
+      // user re-OCR's a scanned PDF in place). The `artifactsReusable` path is
+      // only valid as a recovery hint when we have no reliable prior
       // size/mtime to compare against (catalog lost, or previous status was
       // missing/error with null metadata).
       const previousWasReadyButChanged =
         previous?.extractStatus === "ready" && !previousIsUnchanged;
-      if (!previousIsReadyAndUnchanged && (previousWasReadyButChanged || !fallbackArtifactsReusable)) {
+      if (!previousIsReadyAndUnchanged && (previousWasReadyButChanged || !artifactsReusable)) {
         changedAttachments.push(attachment);
         continue;
       }
@@ -1689,8 +1498,6 @@ export async function runSync(
         mtimeMs: currentMtimeMs,
         sourceHash: previousIsReadyAndUnchanged ? previous.sourceHash ?? null : null,
         lastIndexedAt: previousIsReadyAndUnchanged ? previous.lastIndexedAt ?? null : null,
-        normalizedPath: previousIsReadyAndUnchanged ? previous.normalizedPath : fallbackNormalizedPath,
-        manifestPath: previousIsReadyAndUnchanged ? previous.manifestPath : fallbackManifestPath,
       });
       nextEntries.push(nextEntry);
       fileOutcomes.push({
@@ -1720,8 +1527,8 @@ export async function runSync(
         logger.info(`Extracting ${attachment.fileExt}: ${compactHomePath(attachment.filePath)}.`, {
           console: true,
         });
-        const written = await extractNonPdfAttachment(attachment, paths.manifestsDir, paths.normalizedDir);
-        await recordReadyAttachment(attachment, written);
+        await extractNonPdfAttachment(attachment, store);
+        await recordReadyAttachment(attachment);
       } catch (error) {
         await recordErroredAttachment(attachment, error);
       }
@@ -1732,7 +1539,6 @@ export async function runSync(
 
     async function recordReadyAttachment(
       attachment: AttachmentCatalogEntry,
-      written: ExtractedPaths,
     ): Promise<void> {
       const current = statSync(attachment.filePath);
       const sourceHash = await sha1File(attachment.filePath);
@@ -1743,8 +1549,6 @@ export async function runSync(
         mtimeMs: Math.trunc(current.mtimeMs),
         sourceHash,
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath: written.normalizedPath,
-        manifestPath: written.manifestPath,
       });
       nextEntries.push(nextEntry);
       recentlyExtractedDocKeys.add(attachment.docKey);
@@ -1768,14 +1572,16 @@ export async function runSync(
 
       // Roll back to the previous ready state if the source is byte-identical
       // to the last successful sync AND the previously indexed artifacts are
-      // still a valid pair on disk. Since extraction now writes through
-      // writeArtifactsAtomically, a failed extraction leaves the final paths
-      // untouched, so passing this check means the prior normalized + manifest
-      // are exactly what was indexed last time. Size+mtime alone is not a
-      // strong-enough identity proof (someone could replace the file in place
-      // while preserving stat), so verify with sha1; readReusableArtifactManifest
-      // also catches a previously broken state (e.g. normalized.md missing or
-      // manifest unparseable) by failing the rollback.
+      // still a valid pair on disk. store.publish restores the previous pair
+      // on a thrown failure, so passing this check means the prior
+      // normalized + manifest are exactly what was indexed last time.
+      // Size+mtime alone is not a strong-enough identity proof (someone could
+      // replace the file in place while preserving stat), so verify with
+      // sha1. The reuse verdict is deliberately called without a vertical
+      // expectation: keeping a horizontal extraction is better than deleting
+      // it when a vertical re-extract fails. It still catches a previously
+      // broken state (normalized missing, manifest unparseable, identity
+      // mismatch) by failing the rollback.
       const sizeMtimeMatch =
         previous?.extractStatus === "ready" &&
         previous.size !== null &&
@@ -1785,7 +1591,7 @@ export async function runSync(
         previous.mtimeMs === Math.trunc(current.mtimeMs);
       const previousArtifactsValid =
         previous !== undefined &&
-        readReusableArtifactManifest(previous, previous.normalizedPath, previous.manifestPath) !== undefined;
+        store.reuseVerdict({ docKey: previous.docKey, itemKey: previous.itemKey }).reusable;
       const previousArtifactsReusable =
         sizeMtimeMatch &&
         previousArtifactsValid &&
@@ -1809,8 +1615,6 @@ export async function runSync(
             mtimeMs: previous.mtimeMs,
             sourceHash: previous.sourceHash ?? null,
             lastIndexedAt: previous.lastIndexedAt ?? null,
-            normalizedPath: previous.normalizedPath,
-            manifestPath: previous.manifestPath,
           }),
         );
         stats.readyAttachments += 1;
@@ -1820,8 +1624,7 @@ export async function runSync(
 
       // Source actually changed (or no reusable previous artifacts): old
       // outputs are stale, remove them and mark the attachment as error.
-      deleteIfExists(previous?.normalizedPath);
-      deleteIfExists(previous?.manifestPath);
+      store.discard(attachment.docKey);
       fileOutcomes.push({
         kind: "error",
         filePath: attachment.filePath,
@@ -1876,22 +1679,20 @@ export async function runSync(
         logger.info(`  - ${compactHomePath(attachment.filePath)}`, { console: true });
       }
       try {
-        const extracted = await extractBatchFn(
+        const published = await extractBatchFn(
           batch,
           paths.tempDir,
-          paths.manifestsDir,
-          paths.normalizedDir,
+          store,
           {
             verticalItemKeys,
             ...(options.pdfTimeoutMs !== undefined ? { timeoutMs: options.pdfTimeoutMs } : {}),
           },
         );
         for (const attachment of batch) {
-          const written = extracted.get(attachment.docKey);
-          if (!written) {
+          if (!published.has(attachment.docKey)) {
             throw new Error(`Missing extracted output for ${attachment.filePath}`);
           }
-          await recordReadyAttachment(attachment, written);
+          await recordReadyAttachment(attachment);
         }
       } catch (batchError) {
         if (batch.length > 1) {
@@ -1922,21 +1723,19 @@ export async function runSync(
               logger.info(`Retrying ${compactHomePath(attachment.filePath)} individually.`, {
                 console: true,
               });
-              const extracted = await extractBatchFn(
+              const published = await extractBatchFn(
                 [attachment],
                 paths.tempDir,
-                paths.manifestsDir,
-                paths.normalizedDir,
+                store,
                 {
                   verticalItemKeys,
                   ...(options.pdfTimeoutMs !== undefined ? { timeoutMs: options.pdfTimeoutMs } : {}),
                 },
               );
-              const written = extracted.get(attachment.docKey);
-              if (!written) {
+              if (!published.has(attachment.docKey)) {
                 throw new Error(`Missing extracted output for ${attachment.filePath}`);
               }
-              await recordReadyAttachment(attachment, written);
+              await recordReadyAttachment(attachment);
             } catch (singleError) {
               await recordErroredAttachment(attachment, singleError);
               writeProgress({
@@ -2029,28 +1828,18 @@ export async function runSync(
     );
     await Promise.all(workers);
 
-    if (staleDocKeys.size > 0) {
-      logger.info(`Removing ${staleDocKeys.size} attachment(s) no longer in the catalog:`, {
+    // Sweep artifacts for docKeys no longer in the catalog, plus staging
+    // residue from crashed runs.
+    const sweep = session.finish();
+    if (sweep.staleDocKeys.length > 0) {
+      logger.info(`Removing ${sweep.staleDocKeys.length} attachment(s) no longer in the catalog:`, {
         console: true,
       });
-      for (const docKey of staleDocKeys) {
+      for (const docKey of sweep.staleDocKeys) {
         const previous = previousByDocKey.get(docKey);
         if (previous) logger.info(`  - ${compactHomePath(previous.filePath)}`, { console: true });
       }
-    }
-    for (const docKey of staleDocKeys) {
-      stats.removedAttachments += 1;
-      const manifestPath = resolve(paths.manifestsDir, `${docKey}${MANIFEST_EXT}`);
-      const normalizedPath = resolve(paths.normalizedDir, `${docKey}.md`);
-      for (const p of [manifestPath, normalizedPath]) {
-        if (exists(p)) {
-          try {
-            unlinkSync(p);
-          } catch {
-            // tolerate races / permission issues
-          }
-        }
-      }
+      stats.removedAttachments += sweep.staleDocKeys.length;
     }
 
     nextEntries.sort((a, b) => a.filePath.localeCompare(b.filePath));
@@ -2090,7 +1879,7 @@ export async function runSync(
       !qmdEmbedModelChanged &&
       !indexerSignatureChanged &&
       changedAttachments.length === 0 &&
-      staleDocKeys.size === 0 &&
+      sweep.staleDocKeys.length === 0 &&
       nextEntries.every((entry) => {
         const prev = previousByDocKey.get(entry.docKey);
         return prev !== undefined && isEntryContentUnchanged(prev, entry);

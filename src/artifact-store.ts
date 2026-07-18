@@ -220,12 +220,10 @@ export function manifestRefusal(
 
 /** The identity rewrite adoption performs, shared by all adapters.
  *  Preserves the old manifest's verticalText and blocks; everything else
- *  comes from the adoption target. (`normalizedPath` is rewritten for parity
- *  with the current on-disk format; the field is slated for removal.) */
+ *  comes from the adoption target. */
 export function rewriteManifestIdentity(
   old: AttachmentManifest,
   to: AdoptionTarget,
-  normalizedPath: string,
 ): AttachmentManifest {
   return {
     docKey: to.docKey,
@@ -236,7 +234,6 @@ export function rewriteManifestIdentity(
     ...(to.year ? { year: to.year } : {}),
     ...(to.abstract ? { abstract: to.abstract } : {}),
     filePath: to.filePath,
-    normalizedPath,
     ...(old.verticalText ? { verticalText: true } : {}),
     blocks: old.blocks,
   };
@@ -494,10 +491,7 @@ export function openFsArtifactStore(dirs: StoreDirs, testHooks: StoreTestHooks =
       }
       try {
         step("adopt:identity-rewrite", to.docKey);
-        writeManifestFile(
-          toPaths.manifestPath,
-          rewriteManifestIdentity(verdict.manifest, to, toPaths.normalizedPath),
-        );
+        writeManifestFile(toPaths.manifestPath, rewriteManifestIdentity(verdict.manifest, to));
       } catch (error) {
         // Both halves moved; deliberately not rolled back. The pair now fails
         // the reuse verdict at the new identity, so the caller re-extracts.

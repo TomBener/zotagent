@@ -100,7 +100,6 @@ function makeManifest(
     title: "Merged paper",
     authors: ["A"],
     filePath,
-    normalizedPath: `/tmp/${docKey}.md`,
     blocks,
   };
 }
@@ -137,11 +136,10 @@ test("mergeManifestsForItem concatenates blocks with a separator and monotonic i
     );
   }
 
-  // itemKey is preserved, filePath/normalizedPath are cleared in the virtual merge.
+  // itemKey is preserved, filePath is cleared in the virtual merge.
   assert.equal(merged.itemKey, "ITEM1");
   assert.equal(merged.docKey, "item:ITEM1");
   assert.equal(merged.filePath, "");
-  assert.equal(merged.normalizedPath, "");
 
   // Blocks from B still carry their original text.
   assert.equal(merged.blocks[3]!.text, "First B.");

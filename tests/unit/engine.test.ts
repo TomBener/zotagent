@@ -32,7 +32,6 @@ test("searchLiterature keyword mode uses the keyword index and skips qmd", async
     title: "Dangwei Shuji and Governance",
     authors: ["A"],
     filePath: "/tmp/keyword.pdf",
-    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
     blocks: [
       {
         blockIndex: 0,
@@ -66,8 +65,6 @@ test("searchLiterature keyword mode uses the keyword index and skips qmd", async
         mtimeMs: 1,
         sourceHash: "hash9",
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
-        manifestPath,
       },
     ],
   });
@@ -131,7 +128,6 @@ test("searchLiterature reflows PDF line breaks in result passages", async () => 
     title: "Reflow fixture",
     authors: ["A"],
     filePath: "/tmp/reflow.pdf",
-    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
     blocks: [
       {
         blockIndex: 0,
@@ -165,8 +161,6 @@ test("searchLiterature reflows PDF line breaks in result passages", async () => 
         mtimeMs: 1,
         sourceHash: "hash-reflow",
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
-        manifestPath,
       },
     ],
   });
@@ -215,7 +209,6 @@ test("searchLiterature reflow joins CJK across line breaks without inserting spa
     title: "CJK reflow fixture",
     authors: ["A"],
     filePath: "/tmp/reflow-cjk.pdf",
-    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
     blocks: [
       {
         blockIndex: 0,
@@ -252,8 +245,6 @@ test("searchLiterature reflow joins CJK across line breaks without inserting spa
         mtimeMs: 1,
         sourceHash: "hash-reflow-cjk",
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
-        manifestPath,
       },
     ],
   });
@@ -303,7 +294,6 @@ test("searchLiterature keyword mode restricts searches to filtered item keys", a
     title: "Tagged thesis",
     authors: ["A"],
     filePath: "/tmp/tagged.pdf",
-    normalizedPath: join(dataDir, "normalized", `${taggedDocKey}.md`),
     blocks: [
       {
         blockIndex: 0,
@@ -324,7 +314,6 @@ test("searchLiterature keyword mode restricts searches to filtered item keys", a
     title: "Other article",
     authors: ["B"],
     filePath: "/tmp/other.pdf",
-    normalizedPath: join(dataDir, "normalized", `${otherDocKey}.md`),
     blocks: [
       {
         blockIndex: 0,
@@ -358,8 +347,6 @@ test("searchLiterature keyword mode restricts searches to filtered item keys", a
         mtimeMs: 1,
         sourceHash: "hash-tagged",
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath: join(dataDir, "normalized", `${taggedDocKey}.md`),
-        manifestPath: taggedManifestPath,
       },
       {
         docKey: otherDocKey,
@@ -375,8 +362,6 @@ test("searchLiterature keyword mode restricts searches to filtered item keys", a
         mtimeMs: 1,
         sourceHash: "hash-other",
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath: join(dataDir, "normalized", `${otherDocKey}.md`),
-        manifestPath: otherManifestPath,
       },
     ],
   });
@@ -428,7 +413,6 @@ test("searchLiterature returns empty results and warns when matched items are no
     title: "Indexed item",
     authors: ["A"],
     filePath: "/tmp/indexed.pdf",
-    normalizedPath: join(dataDir, "normalized", `${indexedDocKey}.md`),
     blocks: [
       {
         blockIndex: 0,
@@ -462,8 +446,6 @@ test("searchLiterature returns empty results and warns when matched items are no
         mtimeMs: 1,
         sourceHash: "hash-indexed",
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath: join(dataDir, "normalized", `${indexedDocKey}.md`),
-        manifestPath: indexedManifestPath,
       },
     ],
   });
@@ -526,7 +508,6 @@ test("searchLiterature keyword mode anchors long-block passages on the matched q
     title: "Long keyword block",
     authors: ["A"],
     filePath: "/tmp/long-keyword.pdf",
-    normalizedPath: join(dataDir, "normalized", docKey + ".md"),
     blocks: [
       {
         blockIndex: 0,
@@ -560,8 +541,6 @@ test("searchLiterature keyword mode anchors long-block passages on the matched q
         mtimeMs: 1,
         sourceHash: "hash-long-keyword",
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath: join(dataDir, "normalized", docKey + ".md"),
-        manifestPath,
       },
     ],
   });
@@ -610,7 +589,6 @@ test("searchLiterature semantic mode anchors long-block passages on the best chu
     title: "Long semantic block",
     authors: ["A"],
     filePath: "/tmp/long-semantic.pdf",
-    normalizedPath: join(dataDir, "normalized", docKey + ".md"),
     blocks: [
       {
         blockIndex: 0,
@@ -644,8 +622,6 @@ test("searchLiterature semantic mode anchors long-block passages on the best chu
         mtimeMs: 1,
         sourceHash: "hash-long-semantic",
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath: join(dataDir, "normalized", docKey + ".md"),
-        manifestPath,
       },
     ],
   });
@@ -700,7 +676,6 @@ test("searchLiterature keyword mode bootstraps a missing keyword index from exis
     title: "Ageing in China",
     authors: ["A"],
     filePath: "/tmp/bootstrap.pdf",
-    normalizedPath: join(dataDir, "normalized", docKey + ".md"),
     blocks: [
       {
         blockIndex: 0,
@@ -734,8 +709,6 @@ test("searchLiterature keyword mode bootstraps a missing keyword index from exis
         mtimeMs: 1,
         sourceHash: "hash-bootstrap",
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath: join(dataDir, "normalized", docKey + ".md"),
-        manifestPath,
       },
     ],
   });
@@ -768,7 +741,6 @@ test("searchLiterature keyword mode maps stemmed hits to the matching block", as
     title: "Governance Study",
     authors: ["A"],
     filePath: "/tmp/stemmed.pdf",
-    normalizedPath: join(dataDir, "normalized", docKey + ".md"),
     blocks: [
       {
         blockIndex: 0,
@@ -813,8 +785,6 @@ test("searchLiterature keyword mode maps stemmed hits to the matching block", as
         mtimeMs: 1,
         sourceHash: "hash-stemmed",
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath: join(dataDir, "normalized", docKey + ".md"),
-        manifestPath,
       },
     ],
   });
@@ -847,7 +817,6 @@ test("searchLiterature keyword mode matches spaced CJK content via NEAR rewritin
     title: "干部岗位研究",
     authors: ["A"],
     filePath: "/tmp/cjk-spacing.pdf",
-    normalizedPath: join(dataDir, "normalized", docKey + ".md"),
     blocks: [
       {
         blockIndex: 0,
@@ -881,8 +850,6 @@ test("searchLiterature keyword mode matches spaced CJK content via NEAR rewritin
         mtimeMs: 1,
         sourceHash: "hash-cjk-spacing",
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath: join(dataDir, "normalized", docKey + ".md"),
-        manifestPath,
       },
     ],
   });
@@ -931,7 +898,6 @@ test("searchLiterature keyword mode verifies a traditional query against a simpl
     title: "开发新疆研究",
     authors: ["A"],
     filePath: "/tmp/cjk-trad-simp.pdf",
-    normalizedPath: join(dataDir, "normalized", docKey + ".md"),
     blocks: [
       {
         blockIndex: 0,
@@ -965,8 +931,6 @@ test("searchLiterature keyword mode verifies a traditional query against a simpl
         mtimeMs: 1,
         sourceHash: "hash-cjk-trad-simp",
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath: join(dataDir, "normalized", docKey + ".md"),
-        manifestPath,
       },
     ],
   });
@@ -1015,7 +979,6 @@ test("searchLiterature NEAR/N picks the CJK co-occurrence block, not a distance 
     title: "抗戰時期新疆建設",
     authors: ["A"],
     filePath: "/tmp/near-decoy.pdf",
-    normalizedPath: join(dataDir, "normalized", docKey + ".md"),
     blocks: [
       {
         blockIndex: 0,
@@ -1060,8 +1023,6 @@ test("searchLiterature NEAR/N picks the CJK co-occurrence block, not a distance 
         mtimeMs: 1,
         sourceHash: "hash-near",
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath: join(dataDir, "normalized", docKey + ".md"),
-        manifestPath,
       },
     ],
   });
@@ -1116,7 +1077,6 @@ test("searchLiterature keeps AND/NEAR inside a quoted literal phrase for passage
     title: "Contrast Study",
     authors: ["A"],
     filePath: "/tmp/quoted-and.pdf",
-    normalizedPath: join(dataDir, "normalized", docKey + ".md"),
     blocks: [
       {
         blockIndex: 0,
@@ -1161,8 +1121,6 @@ test("searchLiterature keeps AND/NEAR inside a quoted literal phrase for passage
         mtimeMs: 1,
         sourceHash: "hash-quoted-and",
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath: join(dataDir, "normalized", docKey + ".md"),
-        manifestPath,
       },
     ],
   });
@@ -1207,7 +1165,6 @@ test("searchLiterature does not rebuild the keyword index when empty results com
     title: "Populated",
     authors: ["A"],
     filePath: "/tmp/no-rebuild.pdf",
-    normalizedPath: join(dataDir, "normalized", docKey + ".md"),
     blocks: [
       {
         blockIndex: 0,
@@ -1241,8 +1198,6 @@ test("searchLiterature does not rebuild the keyword index when empty results com
         mtimeMs: 1,
         sourceHash: "hash-no-rebuild",
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath: join(dataDir, "normalized", docKey + ".md"),
-        manifestPath,
       },
     ],
   });
@@ -1289,7 +1244,6 @@ test("searchWithinDocuments returns passages from the selected attachment", asyn
     title: "Search In",
     authors: ["A"],
     filePath: "/tmp/search-in.pdf",
-    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
     blocks: [
       {
         blockIndex: 0,
@@ -1346,8 +1300,6 @@ test("searchWithinDocuments returns passages from the selected attachment", asyn
         mtimeMs: 1,
         sourceHash: "hash-search-in",
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
-        manifestPath,
       },
     ],
   });
@@ -1399,7 +1351,6 @@ test("searchWithinDocuments searches across multiple attachments for the same ke
     title: "Doc One",
     authors: ["A"],
     filePath: "/tmp/search-one.pdf",
-    normalizedPath: join(dataDir, "normalized", `${docOne}.md`),
     blocks: [
       {
         blockIndex: 0,
@@ -1421,7 +1372,6 @@ test("searchWithinDocuments searches across multiple attachments for the same ke
     title: "Doc Two",
     authors: ["B"],
     filePath: "/tmp/search-two.pdf",
-    normalizedPath: join(dataDir, "normalized", `${docTwo}.md`),
     blocks: [
       {
         blockIndex: 0,
@@ -1456,8 +1406,6 @@ test("searchWithinDocuments searches across multiple attachments for the same ke
         mtimeMs: 1,
         sourceHash: "hash-search-one",
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath: join(dataDir, "normalized", `${docOne}.md`),
-        manifestPath: manifestOnePath,
       },
       {
         docKey: docTwo,
@@ -1474,8 +1422,6 @@ test("searchWithinDocuments searches across multiple attachments for the same ke
         mtimeMs: 1,
         sourceHash: "hash-search-two",
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath: join(dataDir, "normalized", `${docTwo}.md`),
-        manifestPath: manifestTwoPath,
       },
     ],
   });
@@ -1529,7 +1475,6 @@ test("searchWithinDocuments honors NEAR/AND/OR operators via FTS", async () => {
     title: "NEAR Test Doc",
     authors: ["A"],
     filePath: "/tmp/near.pdf",
-    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
     blocks: [
       {
         blockIndex: 0,
@@ -1556,8 +1501,6 @@ test("searchWithinDocuments honors NEAR/AND/OR operators via FTS", async () => {
       filePath: "/tmp/near.pdf", fileExt: "pdf", exists: true, supported: true,
       extractStatus: "ready", size: 1, mtimeMs: 1, sourceHash: "hash-near",
       lastIndexedAt: new Date().toISOString(),
-      normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
-      manifestPath,
     }],
   });
 
@@ -1607,7 +1550,6 @@ test("searchWithinDocuments AND requires every term in each ranked block", async
     title: "AND test",
     authors: ["A"],
     filePath: "/tmp/and.pdf",
-    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
     blocks: [
       {
         blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"],
@@ -1630,8 +1572,6 @@ test("searchWithinDocuments AND requires every term in each ranked block", async
       filePath: "/tmp/and.pdf", fileExt: "pdf", exists: true, supported: true,
       extractStatus: "ready", size: 1, mtimeMs: 1, sourceHash: "hash-and",
       lastIndexedAt: new Date().toISOString(),
-      normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
-      manifestPath,
     }],
   });
 
@@ -1663,7 +1603,6 @@ test("searchWithinDocuments AND with quoted phrases requires every phrase token 
     title: "Quoted AND",
     authors: ["A"],
     filePath: "/tmp/qand.pdf",
-    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
     blocks: [
       {
         blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"],
@@ -1686,8 +1625,6 @@ test("searchWithinDocuments AND with quoted phrases requires every phrase token 
       filePath: "/tmp/qand.pdf", fileExt: "pdf", exists: true, supported: true,
       extractStatus: "ready", size: 1, mtimeMs: 1, sourceHash: "hash-qand",
       lastIndexedAt: new Date().toISOString(),
-      normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
-      manifestPath,
     }],
   });
 
@@ -1722,7 +1659,6 @@ test("searchWithinDocuments NOT does not gate on attachment title", async () => 
     title: "Beta in the title only",
     authors: ["A"],
     filePath: "/tmp/not.pdf",
-    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
     blocks: [
       {
         blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"],
@@ -1740,8 +1676,6 @@ test("searchWithinDocuments NOT does not gate on attachment title", async () => 
       filePath: "/tmp/not.pdf", fileExt: "pdf", exists: true, supported: true,
       extractStatus: "ready", size: 1, mtimeMs: 1, sourceHash: "hash-not",
       lastIndexedAt: new Date().toISOString(),
-      normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
-      manifestPath,
     }],
   });
 
@@ -1776,7 +1710,6 @@ test("searchWithinDocuments NOT phrase keeps blocks that contain only one of the
     title: "NOT phrase",
     authors: ["A"],
     filePath: "/tmp/notphrase.pdf",
-    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
     blocks: [
       {
         blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"],
@@ -1794,8 +1727,6 @@ test("searchWithinDocuments NOT phrase keeps blocks that contain only one of the
       filePath: "/tmp/notphrase.pdf", fileExt: "pdf", exists: true, supported: true,
       extractStatus: "ready", size: 1, mtimeMs: 1, sourceHash: "hash-notphrase",
       lastIndexedAt: new Date().toISOString(),
-      normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
-      manifestPath,
     }],
   });
 
@@ -1827,7 +1758,6 @@ test("searchWithinDocuments positive phrase requires the literal phrase, not its
     title: "Positive phrase",
     authors: ["A"],
     filePath: "/tmp/posphrase.pdf",
-    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
     blocks: [
       {
         // Contains alpha and beta separated by other words — must NOT match
@@ -1853,8 +1783,6 @@ test("searchWithinDocuments positive phrase requires the literal phrase, not its
       filePath: "/tmp/posphrase.pdf", fileExt: "pdf", exists: true, supported: true,
       extractStatus: "ready", size: 1, mtimeMs: 1, sourceHash: "hash-posphrase",
       lastIndexedAt: new Date().toISOString(),
-      normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
-      manifestPath,
     }],
   });
 
@@ -1901,7 +1829,6 @@ test("searchWithinDocuments finds quoted CJK phrases across block boundaries", a
     title: "CJK cross-block phrase",
     authors: ["A"],
     filePath: "/tmp/cjk-cross.pdf",
-    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
     blocks: [
       {
         blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"],
@@ -1924,8 +1851,6 @@ test("searchWithinDocuments finds quoted CJK phrases across block boundaries", a
       filePath: "/tmp/cjk-cross.pdf", fileExt: "pdf", exists: true, supported: true,
       extractStatus: "ready", size: 1, mtimeMs: 1, sourceHash: "hash-cjk-cross",
       lastIndexedAt: new Date().toISOString(),
-      normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
-      manifestPath,
     }],
   });
 
@@ -1959,7 +1884,6 @@ test("searchWithinDocuments NOT does not resurface blocks via cross-block phrase
   writeManifest(manifestPath, {
     docKey, itemKey: "ITEMZ000", title: "NOT cross", authors: ["A"],
     filePath: "/tmp/notcross.pdf",
-    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
     blocks: [
       {
         // Contains literal "alpha beta" — must be excluded by NOT beta.
@@ -1978,8 +1902,6 @@ test("searchWithinDocuments NOT does not resurface blocks via cross-block phrase
       filePath: "/tmp/notcross.pdf", fileExt: "pdf", exists: true, supported: true,
       extractStatus: "ready", size: 1, mtimeMs: 1, sourceHash: "hash-notcross",
       lastIndexedAt: new Date().toISOString(),
-      normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
-      manifestPath,
     }],
   });
 
@@ -2012,7 +1934,6 @@ test("searchWithinDocuments cross-block phrase scan only runs for a single quote
   writeManifest(manifestPath, {
     docKey, itemKey: "ITEMW000", title: "Multi phrase", authors: ["A"],
     filePath: "/tmp/multi.pdf",
-    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
     blocks: [
       {
         blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"],
@@ -2030,8 +1951,6 @@ test("searchWithinDocuments cross-block phrase scan only runs for a single quote
       filePath: "/tmp/multi.pdf", fileExt: "pdf", exists: true, supported: true,
       extractStatus: "ready", size: 1, mtimeMs: 1, sourceHash: "hash-multi",
       lastIndexedAt: new Date().toISOString(),
-      normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
-      manifestPath,
     }],
   });
 
@@ -2065,7 +1984,6 @@ test("searchWithinDocuments NEAR returns empty when terms straddle block boundar
     title: "Cross-block",
     authors: ["A"],
     filePath: "/tmp/cross.pdf",
-    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
     blocks: [
       {
         blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"],
@@ -2088,8 +2006,6 @@ test("searchWithinDocuments NEAR returns empty when terms straddle block boundar
       filePath: "/tmp/cross.pdf", fileExt: "pdf", exists: true, supported: true,
       extractStatus: "ready", size: 1, mtimeMs: 1, sourceHash: "hash-cross",
       lastIndexedAt: new Date().toISOString(),
-      normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
-      manifestPath,
     }],
   });
 
@@ -2119,7 +2035,6 @@ test("searchWithinDocuments OR with phrase requires each branch to actually matc
     title: "OR phrase",
     authors: ["A"],
     filePath: "/tmp/orphrase.pdf",
-    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
     blocks: [
       {
         // Has alpha and beta scattered, no contiguous phrase, no gamma — must
@@ -2152,8 +2067,6 @@ test("searchWithinDocuments OR with phrase requires each branch to actually matc
       filePath: "/tmp/orphrase.pdf", fileExt: "pdf", exists: true, supported: true,
       extractStatus: "ready", size: 1, mtimeMs: 1, sourceHash: "hash-orphrase",
       lastIndexedAt: new Date().toISOString(),
-      normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
-      manifestPath,
     }],
   });
 
@@ -2193,7 +2106,6 @@ test("searchWithinDocuments OR+NOT enforces NOT inside each branch", async () =>
     title: "OR NOT",
     authors: ["A"],
     filePath: "/tmp/ornot.pdf",
-    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
     blocks: [
       {
         blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"],
@@ -2226,8 +2138,6 @@ test("searchWithinDocuments OR+NOT enforces NOT inside each branch", async () =>
       filePath: "/tmp/ornot.pdf", fileExt: "pdf", exists: true, supported: true,
       extractStatus: "ready", size: 1, mtimeMs: 1, sourceHash: "hash-ornot",
       lastIndexedAt: new Date().toISOString(),
-      normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
-      manifestPath,
     }],
   });
 
@@ -2264,7 +2174,6 @@ test("getDocumentBlocks merges multi-attachment itemKey and expandDocument uses 
     title: "Doc One",
     authors: ["A"],
     filePath: "/tmp/doc-one.pdf",
-    normalizedPath: join(dataDir, "normalized", `${docOne}.md`),
     blocks: [
       {
         blockIndex: 0,
@@ -2308,7 +2217,6 @@ test("getDocumentBlocks merges multi-attachment itemKey and expandDocument uses 
     title: "Doc Two",
     authors: ["A"],
     filePath: "/tmp/doc-two.pdf",
-    normalizedPath: join(dataDir, "normalized", `${docTwo}.md`),
     blocks: [],
   });
 
@@ -2331,8 +2239,6 @@ test("getDocumentBlocks merges multi-attachment itemKey and expandDocument uses 
         mtimeMs: 1,
         sourceHash: "hash3",
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath: join(dataDir, "normalized", `${docOne}.md`),
-        manifestPath: manifestOnePath,
       },
       {
         docKey: docTwo,
@@ -2349,8 +2255,6 @@ test("getDocumentBlocks merges multi-attachment itemKey and expandDocument uses 
         mtimeMs: 1,
         sourceHash: "hash4",
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath: join(dataDir, "normalized", `${docTwo}.md`),
-        manifestPath: manifestTwoPath,
       },
     ],
   });
@@ -2414,7 +2318,6 @@ test("expandDocument resolves a unique attachment by itemKey", () => {
     title: "Doc Five",
     authors: ["A"],
     filePath: "/tmp/doc-five.pdf",
-    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
     blocks: [
       {
         blockIndex: 0,
@@ -2460,8 +2363,6 @@ test("expandDocument resolves a unique attachment by itemKey", () => {
         mtimeMs: 1,
         sourceHash: "hash5",
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
-        manifestPath,
       },
     ],
   });
@@ -2526,7 +2427,6 @@ test("fullTextDocument keeps boilerplate and references by default", () => {
     title: "Agent Readable Doc",
     authors: ["C"],
     filePath: "/tmp/agent.pdf",
-    normalizedPath,
     blocks: [
       {
         blockIndex: 0,
@@ -2616,8 +2516,6 @@ test("fullTextDocument keeps boilerplate and references by default", () => {
         mtimeMs: 1,
         sourceHash: "hash-agent",
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath,
-        manifestPath,
       },
     ],
   });
@@ -2665,7 +2563,6 @@ test("fullTextDocument strips boilerplate when clean is enabled", () => {
     title: "Clean Doc",
     authors: ["C"],
     filePath: "/tmp/clean.pdf",
-    normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
     blocks: [
       {
         blockIndex: 0,
@@ -2711,8 +2608,6 @@ test("fullTextDocument strips boilerplate when clean is enabled", () => {
         mtimeMs: 1,
         sourceHash: "hash-clean",
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath: join(dataDir, "normalized", `${docKey}.md`),
-        manifestPath,
       },
     ],
   });
@@ -2755,7 +2650,6 @@ test("fullTextDocument merges multiple attachments for one itemKey", () => {
     title: "Doc One",
     authors: ["A"],
     filePath: "/tmp/multi-one.pdf",
-    normalizedPath: join(dataDir, "normalized", `${docOne}.md`),
     blocks: [
       {
         blockIndex: 0,
@@ -2777,7 +2671,6 @@ test("fullTextDocument merges multiple attachments for one itemKey", () => {
     title: "Doc Two",
     authors: ["B"],
     filePath: "/tmp/multi-two.pdf",
-    normalizedPath: join(dataDir, "normalized", `${docTwo}.md`),
     blocks: [
       {
         blockIndex: 0,
@@ -2812,8 +2705,6 @@ test("fullTextDocument merges multiple attachments for one itemKey", () => {
         mtimeMs: 1,
         sourceHash: "hash-multi-one",
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath: join(dataDir, "normalized", `${docOne}.md`),
-        manifestPath: manifestOnePath,
       },
       {
         docKey: docTwo,
@@ -2830,8 +2721,6 @@ test("fullTextDocument merges multiple attachments for one itemKey", () => {
         mtimeMs: 1,
         sourceHash: "hash-multi-two",
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath: join(dataDir, "normalized", `${docTwo}.md`),
-        manifestPath: manifestTwoPath,
       },
     ],
   });
@@ -2886,7 +2775,6 @@ test("resolveReadyEntries rejects citationKey collisions across different itemKe
     title: "Doc X",
     authors: ["A"],
     filePath: "/tmp/dup-x.pdf",
-    normalizedPath: join(dataDir, "normalized", `${docOne}.md`),
     blocks: [],
   });
   writeManifest(manifestTwoPath, {
@@ -2896,7 +2784,6 @@ test("resolveReadyEntries rejects citationKey collisions across different itemKe
     title: "Doc Y",
     authors: ["B"],
     filePath: "/tmp/dup-y.pdf",
-    normalizedPath: join(dataDir, "normalized", `${docTwo}.md`),
     blocks: [],
   });
 
@@ -2919,8 +2806,6 @@ test("resolveReadyEntries rejects citationKey collisions across different itemKe
         mtimeMs: 1,
         sourceHash: "hash-dup-x",
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath: join(dataDir, "normalized", `${docOne}.md`),
-        manifestPath: manifestOnePath,
       },
       {
         docKey: docTwo,
@@ -2937,8 +2822,6 @@ test("resolveReadyEntries rejects citationKey collisions across different itemKe
         mtimeMs: 1,
         sourceHash: "hash-dup-y",
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath: join(dataDir, "normalized", `${docTwo}.md`),
-        manifestPath: manifestTwoPath,
       },
     ],
   });
@@ -2979,7 +2862,6 @@ test("citationKey lookup resolves to itemKey first, then fetches every attachmen
     title: "Partial",
     authors: ["A"],
     filePath: "/tmp/partial-one.pdf",
-    normalizedPath: join(dataDir, "normalized", `${docPdf}.md`),
     blocks: [
       {
         blockIndex: 0,
@@ -3001,7 +2883,6 @@ test("citationKey lookup resolves to itemKey first, then fetches every attachmen
     title: "Partial",
     authors: ["A"],
     filePath: "/tmp/partial-two.epub",
-    normalizedPath: join(dataDir, "normalized", `${docEpub}.md`),
     blocks: [
       {
         blockIndex: 0,
@@ -3035,8 +2916,6 @@ test("citationKey lookup resolves to itemKey first, then fetches every attachmen
         mtimeMs: 1,
         sourceHash: "hash-partial-pdf",
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath: join(dataDir, "normalized", `${docPdf}.md`),
-        manifestPath: manifestPdfPath,
       },
       {
         docKey: docEpub,
@@ -3053,8 +2932,6 @@ test("citationKey lookup resolves to itemKey first, then fetches every attachmen
         mtimeMs: 1,
         sourceHash: "hash-partial-epub",
         lastIndexedAt: new Date().toISOString(),
-        normalizedPath: join(dataDir, "normalized", `${docEpub}.md`),
-        manifestPath: manifestEpubPath,
       },
     ],
   });

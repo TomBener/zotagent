@@ -1,8 +1,8 @@
-import { readFileSync } from "node:fs";
 import { basename as pathBasename } from "node:path";
 
 import { getEncoding, type Tiktoken } from "js-tiktoken";
 
+import { openFsArtifactStore, type ArtifactReader } from "./artifact-store.js";
 import { getDataPaths, resolveConfig, type ConfigOverrides } from "./config.js";
 import { findExactPhraseBlockRange, normalizeExactText } from "./exact.js";
 import { isBoilerplateLikeText, isTableOfContentsLikeText } from "./heuristics.js";
@@ -11,7 +11,7 @@ import { mergeManifestsForItem } from "./manifest.js";
 import { openQmdClient, type QmdFactory } from "./qmd.js";
 import { getReadyEntries, readCatalogFile, summarizeCatalog } from "./state.js";
 import type { AttachmentManifest, CatalogEntry, ManifestBlock, SearchResultRow } from "./types.js";
-import { cleanText, compactHomePath, exists, overlap, readManifestFile } from "./utils.js";
+import { cleanText, compactHomePath, exists, overlap } from "./utils.js";
 import { toSimplified } from "./zh-convert.js";
 
 interface SearchBehaviorOptions {
@@ -72,21 +72,37 @@ function groupReadyEntriesByItemKey(entries: CatalogEntry[]): Map<string, Catalo
   return groups;
 }
 
+// Every read command constructs one reader per invocation; the store's
+// factory also enforces the legacy-manifest guard for the whole command.
+function openArtifactReader(dataDir: string): ArtifactReader {
+  const paths = getDataPaths(dataDir);
+  return openFsArtifactStore({
+    normalizedDir: paths.normalizedDir,
+    manifestsDir: paths.manifestsDir,
+  });
+}
+
 function readManifestCached(
+  reader: ArtifactReader,
   entry: CatalogEntry,
   cache: Map<string, AttachmentManifest>,
 ): AttachmentManifest {
   const cached = cache.get(entry.docKey);
   if (cached) return cached;
-  if (!entry.manifestPath || !exists(entry.manifestPath)) {
+  const result = reader.readManifest(entry.docKey);
+  if (result.status === "missing") {
     throw new Error(`Indexed manifest not found for file: ${entry.filePath}`);
   }
-  const manifest = readManifestFile(entry.manifestPath);
-  cache.set(entry.docKey, manifest);
-  return manifest;
+  if (result.status === "unreadable") {
+    // Preserves LegacyManifestFormatError's migration hint verbatim.
+    throw result.error;
+  }
+  cache.set(entry.docKey, result.manifest);
+  return result.manifest;
 }
 
 function attachmentGlobalOffset(
+  reader: ArtifactReader,
   entry: CatalogEntry,
   itemGroup: CatalogEntry[],
   cache: Map<string, AttachmentManifest>,
@@ -97,20 +113,21 @@ function attachmentGlobalOffset(
   let offset = 0;
   for (let i = 0; i < idx; i += 1) {
     const sibling = itemGroup[i]!;
-    const manifest = readManifestCached(sibling, cache);
+    const manifest = readManifestCached(reader, sibling, cache);
     offset += manifest.blocks.length + 1;
   }
   return offset;
 }
 
 function loadMergedManifestForGroup(
+  reader: ArtifactReader,
   itemGroup: CatalogEntry[],
   cache: Map<string, AttachmentManifest>,
 ): AttachmentManifest {
   if (itemGroup.length === 1) {
-    return readManifestCached(itemGroup[0]!, cache);
+    return readManifestCached(reader, itemGroup[0]!, cache);
   }
-  const manifests = itemGroup.map((entry) => readManifestCached(entry, cache));
+  const manifests = itemGroup.map((entry) => readManifestCached(reader, entry, cache));
   return mergeManifestsForItem(manifests);
 }
 
@@ -407,6 +424,7 @@ function findQueryAnchorOffset(
 }
 
 function buildSearchRow(
+  reader: ArtifactReader,
   entry: CatalogEntry,
   itemGroup: CatalogEntry[],
   manifestCache: Map<string, AttachmentManifest>,
@@ -419,9 +437,9 @@ function buildSearchRow(
   // the merged manifest once per item and slice its rendered markdown around
   // the hit so passages read as continuous prose, not as paragraph fragments
   // joined with `\n\n`.
-  const merged = loadMergedManifestForGroup(itemGroup, manifestCache);
-  const source = readManifestCached(entry, manifestCache);
-  const blockOffset = attachmentGlobalOffset(entry, itemGroup, manifestCache);
+  const merged = loadMergedManifestForGroup(reader, itemGroup, manifestCache);
+  const source = readManifestCached(reader, entry, manifestCache);
+  const blockOffset = attachmentGlobalOffset(reader, entry, itemGroup, manifestCache);
   const mergedStart = hitRange.blockStart + blockOffset;
   const mergedEnd = hitRange.blockEnd + blockOffset;
   const sourceStartBlock = source.blocks[hitRange.blockStart];
@@ -496,6 +514,7 @@ function isMultiTokenExactPhrase(phrase: string): boolean {
 }
 
 function buildKeywordSearchRow(
+  reader: ArtifactReader,
   entry: CatalogEntry,
   itemGroup: CatalogEntry[],
   manifestCache: Map<string, AttachmentManifest>,
@@ -510,22 +529,23 @@ function buildKeywordSearchRow(
   // level cross-block scan), since scanning all manifests for every `search`
   // call would be prohibitive on large libraries.
   const range = { blockStart: blockIndex, blockEnd: blockIndex };
-  return buildSearchRow(entry, itemGroup, manifestCache, markdownCache, range, score, query);
+  return buildSearchRow(reader, entry, itemGroup, manifestCache, markdownCache, range, score, query);
 }
 
 function buildHybridSearchRow(
+  reader: ArtifactReader,
   entry: CatalogEntry,
   itemGroup: CatalogEntry[],
   manifestCache: Map<string, AttachmentManifest>,
   markdownCache: Map<string, string>,
   result: { bestChunkPos: number; bestChunk: string; score: number },
 ): SearchResultRow {
-  const manifest = readManifestCached(entry, manifestCache);
+  const manifest = readManifestCached(reader, entry, manifestCache);
   const range = {
     ...mapChunkToBlockRange(manifest, result.bestChunkPos, result.bestChunk),
     anchorOffset: Math.max(0, result.bestChunkPos + Math.floor(result.bestChunk.length / 2)),
   };
-  return buildSearchRow(entry, itemGroup, manifestCache, markdownCache, range, result.score);
+  return buildSearchRow(reader, entry, itemGroup, manifestCache, markdownCache, range, result.score);
 }
 
 function docKeyFromSearchResultPath(resultPath: string): string | undefined {
@@ -590,6 +610,7 @@ export async function searchLiterature(
 }> {
   const config = resolveConfig(overrides);
   const paths = getDataPaths(config.dataDir);
+  const reader = openArtifactReader(config.dataDir);
   const catalog = readCatalogFile(paths.catalogPath);
   const allReadyEntries = getReadyEntries(catalog);
   const itemKeyFilter = behavior.itemKeys !== undefined ? new Set(behavior.itemKeys) : undefined;
@@ -651,7 +672,7 @@ export async function searchLiterature(
           const entry = entryByDocKey.get(docKey);
           if (!entry) return null;
           const itemGroup = itemGroups.get(entry.itemKey) ?? [entry];
-          return buildHybridSearchRow(entry, itemGroup, manifestCache, markdownCache, result);
+          return buildHybridSearchRow(reader, entry, itemGroup, manifestCache, markdownCache, result);
         })
         .filter((value): value is ReturnType<typeof buildHybridSearchRow> => value !== null)
         .sort((a, b) => b.score - a.score);
@@ -677,7 +698,7 @@ export async function searchLiterature(
           const entry = entryByDocKey.get(result.docKey);
           if (!entry) return null;
           const itemGroup = itemGroups.get(entry.itemKey) ?? [entry];
-          return buildKeywordSearchRow(entry, itemGroup, manifestCache, markdownCache, result.blockIndex, result.score, query);
+          return buildKeywordSearchRow(reader, entry, itemGroup, manifestCache, markdownCache, result.blockIndex, result.score, query);
         })
         .filter((value): value is SearchResultRow => value !== null)
         .sort((a, b) => b.score - a.score);
@@ -706,6 +727,7 @@ export async function searchWithinDocuments(
 
   const config = resolveConfig(overrides);
   const paths = getDataPaths(config.dataDir);
+  const reader = openArtifactReader(config.dataDir);
   const catalog = readCatalogFile(paths.catalogPath);
   const readyEntries = getReadyEntries(catalog);
   const entries = resolveReadyEntries(input.key, readyEntries);
@@ -739,11 +761,11 @@ export async function searchWithinDocuments(
       const normalizedPhrase = normalizeExactText(singlePhrase);
       if (normalizedPhrase) {
         for (const entry of entries) {
-          const manifest = readManifestCached(entry, manifestCache);
+          const manifest = readManifestCached(reader, entry, manifestCache);
           const exactRange = findExactPhraseBlockRange(manifest, normalizedPhrase, { tokenBoundaries: true });
           if (exactRange) {
             mapped.push(buildSearchRow(
-              entry, entries, manifestCache, markdownCache, exactRange,
+              reader, entry, entries, manifestCache, markdownCache, exactRange,
               100 - (exactRange.blockEnd - exactRange.blockStart),
               query,
             ));
@@ -756,7 +778,7 @@ export async function searchWithinDocuments(
       const entry = entryByDocKey.get(result.docKey);
       if (!entry) continue;
       const range = { blockStart: result.blockIndex, blockEnd: result.blockIndex };
-      mapped.push(buildSearchRow(entry, entries, manifestCache, markdownCache, range, result.score, query));
+      mapped.push(buildSearchRow(reader, entry, entries, manifestCache, markdownCache, range, result.score, query));
     }
   } finally {
     await keywordIndex.close();
@@ -802,10 +824,11 @@ export function getDocumentBlocks(
   warnings: string[];
 } {
   const config = resolveConfig(overrides);
+  const reader = openArtifactReader(config.dataDir);
   const catalog = readCatalogFile(getDataPaths(config.dataDir).catalogPath);
   const entries = resolveReadyEntries(input.key, getReadyEntries(catalog));
   const manifestCache = new Map<string, AttachmentManifest>();
-  const manifest = loadMergedManifestForGroup(entries, manifestCache);
+  const manifest = loadMergedManifestForGroup(reader, entries, manifestCache);
   const primary = entries[0]!;
   const blocks = manifest.blocks.slice(input.offsetBlock, input.offsetBlock + input.limitBlocks);
   return {
@@ -828,27 +851,29 @@ export function getDocumentBlocks(
 }
 
 function buildFullTextRow(
+  reader: ArtifactReader,
   entries: CatalogEntry[],
   manifestCache: Map<string, AttachmentManifest>,
   options: { clean?: boolean } = {},
 ): FullTextRow {
   const primary = entries[0]!;
-  const manifest = loadMergedManifestForGroup(entries, manifestCache);
+  const manifest = loadMergedManifestForGroup(reader, entries, manifestCache);
 
   if (!options.clean) {
     let content = "";
     let source: "manifest" | "normalized" = "manifest";
 
-    const allHaveNormalized = entries.every(
-      (entry) => entry.normalizedPath && exists(entry.normalizedPath),
-    );
+    // readNormalized returns undefined for a missing OR empty file; either
+    // way the manifest render below is the better source.
+    const bodies = entries.map((entry) => reader.readNormalized(entry.docKey));
+    const allHaveNormalized = bodies.every((body): body is string => body !== undefined);
 
     if (entries.length === 1 && allHaveNormalized) {
-      content = cleanText(readFileSync(primary.normalizedPath!, "utf-8"));
+      content = cleanText(bodies[0]!);
       source = "normalized";
     } else if (allHaveNormalized) {
       const parts = entries.map((entry, i) => {
-        const body = cleanText(readFileSync(entry.normalizedPath!, "utf-8"));
+        const body = cleanText(bodies[i]!);
         if (i === 0) return body;
         const basename = pathBasename(entry.filePath) || "attachment";
         return `# Attachment: ${basename}\n\n${body}`;
@@ -937,10 +962,11 @@ export function fullTextDocument(
   overrides: ConfigOverrides = {},
 ): FullTextRow & { warnings: string[] } {
   const config = resolveConfig(overrides);
+  const reader = openArtifactReader(config.dataDir);
   const catalog = readCatalogFile(getDataPaths(config.dataDir).catalogPath);
   const entries = resolveReadyEntries(input.key, getReadyEntries(catalog));
   const manifestCache = new Map<string, AttachmentManifest>();
-  const row = buildFullTextRow(entries, manifestCache, { clean: input.clean });
+  const row = buildFullTextRow(reader, entries, manifestCache, { clean: input.clean });
   return { ...row, warnings: config.warnings };
 }
 
@@ -964,10 +990,11 @@ export function expandDocument(
   warnings: string[];
 } {
   const config = resolveConfig(overrides);
+  const reader = openArtifactReader(config.dataDir);
   const catalog = readCatalogFile(getDataPaths(config.dataDir).catalogPath);
   const entries = resolveReadyEntries(input.key, getReadyEntries(catalog));
   const manifestCache = new Map<string, AttachmentManifest>();
-  const manifest = loadMergedManifestForGroup(entries, manifestCache);
+  const manifest = loadMergedManifestForGroup(reader, entries, manifestCache);
   const markdown = renderManifestMarkdown(manifest);
   const primary = entries[0]!;
 

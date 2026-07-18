@@ -22,8 +22,8 @@ tests, commits, and reviews — one name per concept.
   mapping, staged pair publishes (publish-or-restore), the reuse verdict,
   rename adoption, tolerant discard, and the per-sync stale sweep. It speaks
   only in docKeys, identities, and verdicts — it never touches source files
-  and never knows Zotero exists. (Named in the 2026-07-17 architecture
-  review; interface designed, extraction from `sync.ts` pending.)
+  and never knows Zotero exists. Lives in `src/artifact-store.ts`; sync,
+  engine, diagnose, and the keyword index all go through it.
 - **Reuse verdict** — the store's answer to "may this cached artifact stand
   in for re-extraction?": pair complete, normalized non-empty, manifest
   readable with blocks, identity (docKey + itemKey) matches, and — for PDFs —

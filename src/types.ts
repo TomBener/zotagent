@@ -101,7 +101,6 @@ export interface AttachmentManifest {
   year?: string;
   abstract?: string;
   filePath: string;
-  normalizedPath: string;
   verticalText?: boolean;
   blocks: ManifestBlock[];
 }
@@ -124,8 +123,6 @@ export interface CatalogEntry {
   mtimeMs: number | null;
   sourceHash: string | null;
   lastIndexedAt: string | null;
-  normalizedPath?: string;
-  manifestPath?: string;
   error?: string;
 }
 

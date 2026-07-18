@@ -36,7 +36,6 @@ function sampleManifest(docKey: string, over: Partial<AttachmentManifest> = {}):
     title: `Title ${docKey}`,
     authors: ["A"],
     filePath: `/tmp/${docKey}.pdf`,
-    normalizedPath: "",
     blocks: [sampleBlock()],
     ...over,
   };
@@ -220,7 +219,6 @@ for (const harness of harnesses) {
     assert.equal(verdict.manifest.filePath, "/tmp/renamed.pdf");
     assert.equal(verdict.manifest.verticalText, true);
     assert.deepEqual(verdict.manifest.blocks, blocks);
-    assert.equal(verdict.manifest.normalizedPath, store.pathsFor("NEW").normalizedPath);
     assert.equal(store.readNormalized("NEW"), "原文");
   });
 

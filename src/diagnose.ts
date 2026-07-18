@@ -1,7 +1,8 @@
+import { openFsArtifactStore, type ArtifactReader } from "./artifact-store.js";
 import { getDataPaths, resolveConfig, type ConfigOverrides } from "./config.js";
 import { getReadyEntries, readCatalogFile } from "./state.js";
 import type { CatalogEntry } from "./types.js";
-import { compactHomePath, exists, readManifestFile } from "./utils.js";
+import { compactHomePath } from "./utils.js";
 
 export interface DiagnoseRow {
   itemKey: string;
@@ -79,6 +80,7 @@ function classify(
 }
 
 function buildRow(
+  reader: ArtifactReader,
   entry: CatalogEntry,
   textLengths: number[],
   thresholdAvg: number,
@@ -90,7 +92,7 @@ function buildRow(
   const sorted = [...textLengths].sort((a, b) => a - b);
   const med = median(sorted);
   const { status, note } = classify(avg, med, thresholdAvg, thresholdMedian);
-  const normalizedExists = entry.normalizedPath !== undefined && exists(entry.normalizedPath);
+  const hasNormalized = reader.probe(entry.docKey).hasNormalized;
   return {
     itemKey: entry.itemKey,
     title: entry.title,
@@ -98,7 +100,9 @@ function buildRow(
     authors: entry.authors,
     ...(entry.year ? { year: entry.year } : {}),
     filePath: compactHomePath(entry.filePath),
-    ...(normalizedExists ? { normalizedPath: compactHomePath(entry.normalizedPath!) } : {}),
+    ...(hasNormalized
+      ? { normalizedPath: compactHomePath(reader.pathsFor(entry.docKey).normalizedPath) }
+      : {}),
     blocks,
     avgChars: Math.round(avg * 10) / 10,
     medianChars: Math.round(med * 10) / 10,
@@ -118,6 +122,10 @@ export async function diagnoseExtraction(
 
   const config = resolveConfig(overrides);
   const paths = getDataPaths(config.dataDir);
+  const reader: ArtifactReader = openFsArtifactStore({
+    normalizedDir: paths.normalizedDir,
+    manifestsDir: paths.manifestsDir,
+  });
   const catalog = readCatalogFile(paths.catalogPath);
   const readyEntries = getReadyEntries(catalog);
 
@@ -132,24 +140,19 @@ export async function diagnoseExtraction(
   };
 
   for (const entry of readyEntries) {
-    if (!entry.manifestPath || !exists(entry.manifestPath)) {
+    const result = reader.readManifest(entry.docKey);
+    if (result.status !== "ok") {
+      // missing and unreadable are both skipped, as before
       skipped += 1;
       continue;
     }
-    let manifest;
-    try {
-      manifest = readManifestFile(entry.manifestPath);
-    } catch {
-      skipped += 1;
-      continue;
-    }
-    const textLengths = manifest.blocks.map((b) => b.text.length).filter((n) => n > 0);
+    const textLengths = result.manifest.blocks.map((b) => b.text.length).filter((n) => n > 0);
     if (textLengths.length === 0) {
       skipped += 1;
       continue;
     }
     summary.totalDocsScanned += 1;
-    const row = buildRow(entry, textLengths, thresholdAvg, thresholdMedian);
+    const row = buildRow(reader, entry, textLengths, thresholdAvg, thresholdMedian);
     summary[row.status] += 1;
     rows.push(row);
   }

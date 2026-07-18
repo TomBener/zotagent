@@ -1,13 +1,8 @@
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, resolve } from "node:path";
 
 import type { CatalogCounts, CatalogEntry, CatalogFile } from "./types.js";
-import { MANIFEST_EXT, assertManifestsCurrent, compactHomePath, ensureParentDir, exists, normalizePathForLookup, resolveManifestPath } from "./utils.js";
-
-function dataDirFromCatalogPath(path: string): string {
-  return dirname(dirname(normalizePathForLookup(path)));
-}
+import { compactHomePath, ensureParentDir, exists, normalizePathForLookup } from "./utils.js";
 
 function replaceForeignHome(path: string): string {
   const normalized = normalizePathForLookup(path);
@@ -18,43 +13,17 @@ function replaceForeignHome(path: string): string {
   return replaced !== normalized && exists(replaced) ? replaced : normalized;
 }
 
-function isInsideDir(candidate: string, root: string): boolean {
-  const normalizedCandidate = normalizePathForLookup(candidate);
-  const normalizedRoot = normalizePathForLookup(root);
-  return normalizedCandidate.startsWith(`${normalizedRoot}/`);
-}
-
-function hydrateCatalogEntry(entry: CatalogEntry, dataDir: string): CatalogEntry {
-  const normalizedPath = entry.normalizedPath
-    ? replaceForeignHome(entry.normalizedPath)
-    : resolve(dataDir, "normalized", `${entry.docKey}.md`);
-  const manifestPath = entry.manifestPath
-    ? resolveManifestPath(replaceForeignHome(entry.manifestPath))
-    : resolve(dataDir, "manifests", `${entry.docKey}${MANIFEST_EXT}`);
-
-  const fallbackNormalizedPath = resolve(dataDir, "normalized", `${entry.docKey}.md`);
-  const fallbackManifestPath = resolve(dataDir, "manifests", `${entry.docKey}${MANIFEST_EXT}`);
-
-  // Cached artifacts that live outside the current dataDir must never be
-  // reused: they belong to a different dataDir (e.g. a catalog migrated from
-  // another machine or cloned from a backup) and reading from them silently
-  // couples two installations. Fall back to the current-dataDir path; the
-  // downstream reusability check will decide whether to reuse it or re-extract.
-  const normalizedInside = isInsideDir(normalizedPath, dataDir);
-  const manifestInside = isInsideDir(manifestPath, dataDir);
-
-  const resolvedNormalizedPath = normalizedInside && exists(normalizedPath)
-    ? normalizedPath
-    : fallbackNormalizedPath;
-  const resolvedManifestPath = manifestInside && exists(manifestPath)
-    ? manifestPath
-    : fallbackManifestPath;
-
+// Older catalogs stored normalizedPath/manifestPath per entry. The artifact
+// store derives both from docKey, so the fields carry no information — strip
+// them on read (the next write simply omits them).
+function hydrateCatalogEntry(entry: CatalogEntry): CatalogEntry {
+  const { normalizedPath: _n, manifestPath: _m, ...rest } = entry as CatalogEntry & {
+    normalizedPath?: string;
+    manifestPath?: string;
+  };
   return {
-    ...entry,
+    ...rest,
     filePath: replaceForeignHome(entry.filePath),
-    ...(entry.normalizedPath ? { normalizedPath: resolvedNormalizedPath } : {}),
-    ...(entry.manifestPath ? { manifestPath: resolvedManifestPath } : {}),
   };
 }
 
@@ -62,8 +31,6 @@ function compactCatalogEntry(entry: CatalogEntry): CatalogEntry {
   return {
     ...entry,
     filePath: compactHomePath(entry.filePath),
-    ...(entry.normalizedPath ? { normalizedPath: compactHomePath(entry.normalizedPath) } : {}),
-    ...(entry.manifestPath ? { manifestPath: compactHomePath(entry.manifestPath) } : {}),
   };
 }
 
@@ -95,11 +62,9 @@ export function readCatalogFile(path: string): CatalogFile {
       entries: [],
     };
   }
-  const dataDir = dataDirFromCatalogPath(catalogPath);
-  assertManifestsCurrent(resolve(dataDir, "manifests"));
   return {
     ...catalog,
-    entries: catalog.entries.map((entry) => hydrateCatalogEntry(entry, dataDir)),
+    entries: catalog.entries.map(hydrateCatalogEntry),
   };
 }
 

@@ -1,8 +1,9 @@
 import Database from "better-sqlite3";
 
+import { openFsArtifactStore, type ArtifactReader } from "./artifact-store.js";
 import { getDataPaths } from "./config.js";
 import type { AppConfig, CatalogEntry } from "./types.js";
-import { ensureDir, exists, tryReadManifestFile } from "./utils.js";
+import { ensureDir } from "./utils.js";
 import { toSimplified } from "./zh-convert.js";
 
 export interface KeywordSearchResult {
@@ -135,11 +136,14 @@ function resetFtsTable(db: Database.Database): void {
 // exists but cannot be read (corrupt/truncated gzip). `null` means "skip this
 // doc but leave its existing rows alone"; `[]` means "no content to index"
 // (missing file or empty after segmentation) and is safe to delete on.
-function indexedBlocksForEntry(entry: CatalogEntry): Array<{ blockIndex: number; indexed: string }> | null {
-  if (!entry.manifestPath || !exists(entry.manifestPath)) return [];
-  const manifest = tryReadManifestFile(entry.manifestPath);
-  if (!manifest) return null;
-  return manifest.blocks
+function indexedBlocksForEntry(
+  reader: ArtifactReader,
+  entry: CatalogEntry,
+): Array<{ blockIndex: number; indexed: string }> | null {
+  const result = reader.readManifest(entry.docKey);
+  if (result.status === "missing") return [];
+  if (result.status === "unreadable") return null;
+  return result.manifest.blocks
     .map((block) => ({ blockIndex: block.blockIndex, indexed: segmentCjk(toSimplified(block.text)) }))
     .filter((b) => b.indexed.length > 0);
 }
@@ -176,8 +180,8 @@ function allocateDocId(db: Database.Database): number {
 
 // Returns the docKey when the entry was skipped because its manifest is
 // unreadable (existing rows are left in place), otherwise null.
-function upsertEntry(db: Database.Database, entry: CatalogEntry): string | null {
-  const indexedBlocks = indexedBlocksForEntry(entry);
+function upsertEntry(db: Database.Database, reader: ArtifactReader, entry: CatalogEntry): string | null {
+  const indexedBlocks = indexedBlocksForEntry(reader, entry);
   if (indexedBlocks === null) {
     // Unreadable manifest: keep any existing rows (stale-but-searchable beats
     // silently vanished) and report the skip.
@@ -208,7 +212,11 @@ function upsertEntry(db: Database.Database, entry: CatalogEntry): string | null 
 }
 
 // Returns the docKeys skipped because their manifests were unreadable.
-function rebuildTable(db: Database.Database, readyEntries: CatalogEntry[]): string[] {
+function rebuildTable(
+  db: Database.Database,
+  reader: ArtifactReader,
+  readyEntries: CatalogEntry[],
+): string[] {
   resetFtsTable(db);
   db.exec("DELETE FROM keyword_doc_lookup");
 
@@ -218,7 +226,7 @@ function rebuildTable(db: Database.Database, readyEntries: CatalogEntry[]): stri
   const skippedDocKeys: string[] = [];
   let nextDocId = 1;
   for (const entry of readyEntries) {
-    const indexedBlocks = indexedBlocksForEntry(entry);
+    const indexedBlocks = indexedBlocksForEntry(reader, entry);
     if (indexedBlocks === null) {
       skippedDocKeys.push(entry.docKey);
       continue;
@@ -239,6 +247,7 @@ function rebuildTable(db: Database.Database, readyEntries: CatalogEntry[]): stri
 // Returns the docKeys skipped because their manifests were unreadable.
 function updateTable(
   db: Database.Database,
+  reader: ArtifactReader,
   changedEntries: CatalogEntry[],
   removedDocKeys: string[],
 ): string[] {
@@ -250,7 +259,7 @@ function updateTable(
   }
   const skippedDocKeys: string[] = [];
   for (const entry of changedEntries) {
-    const skipped = upsertEntry(db, entry);
+    const skipped = upsertEntry(db, reader, entry);
     if (skipped !== null) skippedDocKeys.push(skipped);
   }
   return skippedDocKeys;
@@ -388,6 +397,10 @@ function resolveDocIds(db: Database.Database, docKeys: string[] | undefined): nu
 export async function openKeywordIndex(config: AppConfig): Promise<KeywordIndexClient> {
   const paths = getDataPaths(config.dataDir);
   ensureDir(paths.indexDir);
+  const reader: ArtifactReader = openFsArtifactStore({
+    normalizedDir: paths.normalizedDir,
+    manifestsDir: paths.manifestsDir,
+  });
   const db = new Database(paths.keywordDbPath);
   db.pragma("journal_mode = WAL");
   ensureSchema(db);
@@ -396,7 +409,7 @@ export async function openKeywordIndex(config: AppConfig): Promise<KeywordIndexC
     rebuildIndex: async (readyEntries) => {
       let skippedDocKeys: string[] = [];
       const tx = db.transaction(() => {
-        skippedDocKeys = rebuildTable(db, readyEntries);
+        skippedDocKeys = rebuildTable(db, reader, readyEntries);
       });
       tx();
       return { skippedDocKeys };
@@ -405,7 +418,7 @@ export async function openKeywordIndex(config: AppConfig): Promise<KeywordIndexC
     updateIndex: async (changedEntries, removedDocKeys) => {
       let skippedDocKeys: string[] = [];
       const tx = db.transaction(() => {
-        skippedDocKeys = updateTable(db, changedEntries, removedDocKeys);
+        skippedDocKeys = updateTable(db, reader, changedEntries, removedDocKeys);
       });
       tx();
       return { skippedDocKeys };
