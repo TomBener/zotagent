@@ -60,6 +60,12 @@ tests, commits, and reviews — one name per concept.
 - **Indexer signature** — a stable hash of the indexer implementations
   (keyword schema, qmd package, opencc version, embed model sentinel); any
   mismatch with the catalog's recorded signature invalidates the indexes.
+  What a mismatch *means* (rebuild vs re-embed vs short-circuit) is the pure
+  policy in `src/index-policy.ts`.
+- **Extraction pipeline** — `src/extract.ts`: tier fallback (ODL structured →
+  ODL text-only → pdftotext), batch grouping, and the vertical-text rule,
+  which the dispatcher resolves exactly once per batch — tiers receive a
+  plain verdict, never the tag set.
 
 ## Add
 

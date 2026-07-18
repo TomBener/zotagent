@@ -9,12 +9,14 @@ import { fileURLToPath } from "node:url";
 
 import {
   annotateWithFallbackFailures,
-  buildContext,
-  buildIndexerSignature,
   buildJavaToolOptions,
   runProcessWithTimeout,
-  runSync,
   withJavaToolOptions,
+} from "../../src/extract.js";
+import {
+  buildContext,
+  buildIndexerSignature,
+  runSync,
 } from "../../src/sync.js";
 import { openFsArtifactStore, type ArtifactStore } from "../../src/artifact-store.js";
 import { readCatalogFile, writeCatalogFile } from "../../src/state.js";
