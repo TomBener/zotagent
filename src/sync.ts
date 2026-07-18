@@ -27,6 +27,7 @@ import { buildMarkdownManifest, buildPdfManifest } from "./manifest.js";
 import { extractEpub } from "./epub.js";
 import { extractHtml } from "./html-extract.js";
 import { type FetchLike } from "./http.js";
+import { compareIndexerState, decideIndexUpdate, type IndexerState } from "./index-policy.js";
 import { fetchTopLevelItemKeysByTags, getReadConfig } from "./zotero-http.js";
 import { KEYWORD_INDEX_SCHEMA_VERSION, openKeywordIndex, type KeywordIndexFactory } from "./keyword-db.js";
 import { QMD_PACKAGE_VERSION, openQmdClient, resolveQmdEmbedModel, type QmdFactory } from "./qmd.js";
@@ -1014,11 +1015,6 @@ export function buildContext(entry: CatalogEntry): string {
   return parts.join("\n");
 }
 
-type IndexerState = {
-  indexedQmdEmbedModel: string;
-  indexerSignature: string;
-};
-
 function writeProgressCatalog(
   path: string,
   entries: CatalogEntry[],
@@ -1260,37 +1256,20 @@ export async function runSync(
       }
     }
     const currentQmdEmbedModel = resolveQmdEmbedModel(config);
-    const currentIndexerSignature = buildIndexerSignature(currentQmdEmbedModel);
-    const currentIndexerState: IndexerState = {
-      indexedQmdEmbedModel: currentQmdEmbedModel,
-      indexerSignature: currentIndexerSignature,
-    };
-    const previousIndexerState: IndexerState | undefined =
-      previousCatalog.indexedQmdEmbedModel && previousCatalog.indexerSignature
-        ? {
-            indexedQmdEmbedModel: previousCatalog.indexedQmdEmbedModel,
-            indexerSignature: previousCatalog.indexerSignature,
-          }
-        : undefined;
-    const qmdEmbedModelChanged = previousCatalog.indexedQmdEmbedModel !== currentQmdEmbedModel;
-    const indexerSignatureChanged = previousCatalog.indexerSignature !== currentIndexerSignature;
-    // Clearing all qmd embeddings is an expensive, destructive operation: it
-    // wipes every stored vector and forces the entire library to be re-embedded
-    // from scratch. Only trigger it when the embedding model itself changes,
-    // which is the one situation where existing vectors become semantically
-    // incompatible. Other signature changes (keyword schema bumps, qmd package
-    // upgrades) still break the short-circuit below so indexes are refreshed,
-    // but stored embeddings are preserved.
-    const qmdIndexerStateChanged = qmdEmbedModelChanged;
-    const previousHadReadyEntries = previousCatalog.entries.some(
-      (entry) => entry.extractStatus === "ready",
+    // What changed since the last completed sync, and what that means for
+    // stored embeddings — the policy itself lives in index-policy.ts.
+    const indexerComparison = compareIndexerState(
+      {
+        indexedQmdEmbedModel: currentQmdEmbedModel,
+        indexerSignature: buildIndexerSignature(currentQmdEmbedModel),
+      },
+      {
+        indexedQmdEmbedModel: previousCatalog.indexedQmdEmbedModel,
+        indexerSignature: previousCatalog.indexerSignature,
+        hadReadyEntries: previousCatalog.entries.some((entry) => entry.extractStatus === "ready"),
+      },
     );
-    const qmdMayContainExistingEmbeddings =
-      previousHadReadyEntries || previousIndexerState !== undefined;
-    let progressIndexerState: IndexerState | undefined =
-      qmdIndexerStateChanged && qmdMayContainExistingEmbeddings
-        ? previousIndexerState
-        : currentIndexerState;
+    let progressIndexerState: IndexerState | undefined = indexerComparison.progressIndexerState;
     const nextEntries: CatalogEntry[] = [];
     const changedAttachments: AttachmentCatalogEntry[] = [];
     // Populated only by recordReadyAttachment on successful extraction. We
@@ -1852,7 +1831,6 @@ export async function runSync(
     writeProgressCatalog(paths.catalogPath, nextEntries, progressIndexerState);
 
     const readyEntries = nextEntries.filter((entry) => entry.extractStatus === "ready");
-    const qmdResetNeeded = qmdIndexerStateChanged && qmdMayContainExistingEmbeddings;
     const previousReadyDocKeys = readyDocKeys(previousCatalog.entries);
     const nextReadyDocKeys = readyDocKeys(nextEntries);
     const removedReadyDocKeys = [...previousReadyDocKeys].filter((docKey) => !nextReadyDocKeys.has(docKey));
@@ -1866,30 +1844,18 @@ export async function runSync(
       const prev = previousByDocKey.get(entry.docKey);
       return prev === undefined || prev.extractStatus !== "ready" || !isEntryContentUnchanged(prev, entry);
     });
-    const keywordRebuildNeeded = !previousCatalogCompleted || indexerSignatureChanged;
-
-    // Short-circuit: when nothing has changed since the last *completed* sync,
-    // both index rebuild passes are provably no-ops. `indexesCompletedAt` is
-    // only present if the previous run reached the end of the qmd block, so a
-    // crash between the progress-catalog write and qmd completion does not
-    // incorrectly trigger this path. Also require indexer state to match:
-    // changing the qmd model, qmd package, keyword schema, or SYNC_INDEXER_VERSION
-    // invalidates stored index data.
-    const allEntriesUnchanged =
-      previousCatalog.indexesCompletedAt !== undefined &&
-      !qmdEmbedModelChanged &&
-      !indexerSignatureChanged &&
-      changedAttachments.length === 0 &&
-      sweep.staleDocKeys.length === 0 &&
-      // Orphans were part of qmd's normalized-dir corpus until this sweep;
-      // run the index update once so their stale vectors get reaped.
-      sweep.orphanDocKeys.length === 0 &&
-      nextEntries.every((entry) => {
+    const indexUpdate = decideIndexUpdate(indexerComparison, {
+      previousCompleted: previousCatalogCompleted,
+      changedAttachments: changedAttachments.length,
+      staleDocKeys: sweep.staleDocKeys.length,
+      orphanDocKeys: sweep.orphanDocKeys.length,
+      allEntriesMatchPrevious: nextEntries.every((entry) => {
         const prev = previousByDocKey.get(entry.docKey);
         return prev !== undefined && isEntryContentUnchanged(prev, entry);
-      });
+      }),
+    });
 
-    if (allEntriesUnchanged) {
+    if (indexUpdate.shortCircuit) {
       logger.info(
         "No catalog changes since last completed sync; keyword and semantic indexes are up to date.",
         { console: true },
@@ -1897,7 +1863,7 @@ export async function runSync(
     } else {
       const keywordIndex = await keywordFactory(config);
       try {
-        if (keywordRebuildNeeded) {
+        if (indexUpdate.keywordRebuild) {
           logger.info("Rebuilding keyword search index...", { console: true });
           const { skippedDocKeys } = await keywordIndex.rebuildIndex(readyEntries);
           warnSkippedManifests(logger, skippedDocKeys);
@@ -1956,12 +1922,12 @@ export async function runSync(
             { console: true },
           );
         }
-        if (qmdResetNeeded) {
+        if (indexerComparison.qmdResetNeeded) {
           logger.info("Clearing existing qmd embeddings after indexer state change.", {
             console: true,
           });
           await qmd.clearEmbeddings();
-          progressIndexerState = currentIndexerState;
+          progressIndexerState = indexerComparison.current;
           writeProgressCatalog(paths.catalogPath, nextEntries, progressIndexerState);
         }
         if (readyEntries.length > 0) {
@@ -2004,8 +1970,8 @@ export async function runSync(
       ...nextCatalog,
       generatedAt: completionTimestamp,
       indexesCompletedAt: completionTimestamp,
-      indexedQmdEmbedModel: currentQmdEmbedModel,
-      indexerSignature: currentIndexerSignature,
+      indexedQmdEmbedModel: indexerComparison.current.indexedQmdEmbedModel,
+      indexerSignature: indexerComparison.current.indexerSignature,
     });
 
     const finalCounts = summarizeCatalog(nextCatalog);
