@@ -32,6 +32,7 @@ import { KEYWORD_INDEX_SCHEMA_VERSION, openKeywordIndex, type KeywordIndexFactor
 import { QMD_PACKAGE_VERSION, openQmdClient, resolveQmdEmbedModel, type QmdFactory } from "./qmd.js";
 import { OPENCC_PACKAGE_VERSION } from "./zh-convert.js";
 import { mapEntriesByDocKey, readCatalogFile, summarizeCatalog, writeCatalogFile } from "./state.js";
+import { decideTriage } from "./triage.js";
 import type { AttachmentCatalogEntry, AttachmentManifest, CatalogEntry, CatalogFile, SyncStats } from "./types.js";
 import {
   compactHomePath,
@@ -1334,43 +1335,14 @@ export async function runSync(
       session.touch(attachment.docKey);
       if (attachment.supported) stats.supportedAttachments += 1;
 
-      if (!attachment.supported) {
-        fileOutcomes.push({
-          kind: "unsupported",
-          filePath: attachment.filePath,
-          detail: `unsupported file type: ${attachment.fileExt}`,
-        });
-        nextEntries.push(
-          toCatalogEntry(attachment, {
-            extractStatus: "unsupported",
-          }),
-        );
-        stats.unsupportedAttachments += 1;
-        continue;
-      }
-
-      const current = statSync(attachment.filePath, { throwIfNoEntry: false });
-      if (!current || !attachment.exists) {
-        fileOutcomes.push({
-          kind: "missing",
-          filePath: attachment.filePath,
-          detail: "file missing at sync time",
-        });
-        nextEntries.push(
-          toCatalogEntry(attachment, {
-            extractStatus: "missing",
-          }),
-        );
-        stats.missingAttachments += 1;
-        continue;
-      }
-
+      // Gather the facts, then let the pure decision table in triage.ts pick
+      // the lifecycle transition; this loop only performs the effects.
+      const current = attachment.supported
+        ? statSync(attachment.filePath, { throwIfNoEntry: false })
+        : undefined;
+      const fileExists = current !== undefined && attachment.exists;
       const previous = previousByDocKey.get(attachment.docKey);
-      const currentMtimeMs = Math.trunc(current.mtimeMs);
-      const previousIsUnchanged =
-        previous !== undefined &&
-        previous.size === current.size &&
-        previous.mtimeMs === currentMtimeMs;
+      const currentMtimeMs = current ? Math.trunc(current.mtimeMs) : null;
       // Vertical-text status comes entirely from the Zotero tag we fetched
       // at sync start. For non-PDFs no expectation is passed, so the store
       // never consults the manifest's verticalText marker for them.
@@ -1378,63 +1350,88 @@ export async function runSync(
       // One artifact-side verdict serves what used to be two checks (previous
       // entry paths vs derived fallback paths): the store derives the same
       // paths for both, so they were always the same files.
-      const artifactsReusable = store.reuseVerdict(
-        attachment,
-        attachment.fileExt === "pdf" ? { vertical: isVertical } : undefined,
-      ).reusable;
-      // For PDFs we always validate the manifest's recorded extraction mode
-      // against the current tag verdict — that's the source of truth for
-      // "does this cached artifact match what the user wants now?". Non-PDF
-      // entries can use the cheap existence probe once a catalog completed.
-      const canUseCatalogFastPath = previousCatalogCompleted && attachment.fileExt !== "pdf";
-      const artifactProbe = canUseCatalogFastPath ? store.probe(attachment.docKey) : undefined;
-      const previousIsReadyAndUnchanged =
-        previous?.extractStatus === "ready" &&
-        previousIsUnchanged &&
-        (artifactProbe !== undefined
-          ? artifactProbe.hasNormalized && artifactProbe.hasManifest
-          : artifactsReusable);
-      const previousIsErrorAndUnchanged =
-        previous?.extractStatus === "error" &&
-        previousIsUnchanged;
+      const artifactsReusable = fileExists
+        ? store.reuseVerdict(
+            attachment,
+            attachment.fileExt === "pdf" ? { vertical: isVertical } : undefined,
+          ).reusable
+        : false;
+      const artifactProbe = fileExists ? store.probe(attachment.docKey) : undefined;
+      const renameKey = current
+        ? `${attachment.itemKey}\u0000${current.size}\u0000${currentMtimeMs}`
+        : undefined;
+      const renameFromPrev = renameKey !== undefined ? renameCandidateIndex.get(renameKey) : undefined;
 
-      if (previousIsErrorAndUnchanged && !artifactsReusable && !options.retryErrors) {
-        nextEntries.push(
-          toCatalogEntry(attachment, {
-            extractStatus: "error",
-            size: current.size,
-            mtimeMs: currentMtimeMs,
-            sourceHash: previous.sourceHash ?? null,
-            lastIndexedAt: previous.lastIndexedAt ?? null,
-            error: previous.error ?? "Previous extraction error; file unchanged.",
-          }),
-        );
-        fileOutcomes.push({
-          kind: "skipped",
-          filePath: attachment.filePath,
-          detail: "skipped unchanged previous extraction error",
-        });
-        stats.errorAttachments += 1;
-        stats.skippedAttachments += 1;
-        continue;
-      }
+      const decision = decideTriage({
+        supported: attachment.supported,
+        fileExists,
+        isPdf: attachment.fileExt === "pdf",
+        previousStatus: previous?.extractStatus,
+        sizeMtimeUnchanged:
+          previous !== undefined &&
+          current !== undefined &&
+          previous.size === current.size &&
+          previous.mtimeMs === currentMtimeMs,
+        artifactsReusable,
+        artifactPairPresent: Boolean(artifactProbe?.hasNormalized && artifactProbe?.hasManifest),
+        previousCatalogCompleted,
+        retryErrors: options.retryErrors === true,
+        hasRenameCandidate: renameFromPrev !== undefined && renameFromPrev !== null,
+      });
 
-      // Rename fast path: an attachment we have never seen under this docKey,
-      // with no reusable artifacts locally, may be the same PDF renamed or
-      // moved inside attachmentsRoot. If (itemKey,size,mtimeMs) matches a
-      // previous ready entry whose filePath has dropped out of the
-      // bibliography, adopt the cached artifact under the new docKey instead
-      // of re-extracting and re-embedding. The store validates the source
-      // pair, refuses a vertical mismatch before moving (stale reading-order
-      // output must not be carried over), rewrites the manifest identity
-      // preserving verticalText + blocks, and touches both docKeys so the
-      // old side is not reported removed.
-      if (previous === undefined && !artifactsReusable) {
-        const renameKey = `${attachment.itemKey}\u0000${current.size}\u0000${currentMtimeMs}`;
-        const renameFromPrev = renameCandidateIndex.get(renameKey);
-        if (renameFromPrev !== undefined && renameFromPrev !== null) {
+      switch (decision.action) {
+        case "record-unsupported": {
+          fileOutcomes.push({
+            kind: "unsupported",
+            filePath: attachment.filePath,
+            detail: `unsupported file type: ${attachment.fileExt}`,
+          });
+          nextEntries.push(toCatalogEntry(attachment, { extractStatus: "unsupported" }));
+          stats.unsupportedAttachments += 1;
+          break;
+        }
+
+        case "record-missing": {
+          fileOutcomes.push({
+            kind: "missing",
+            filePath: attachment.filePath,
+            detail: "file missing at sync time",
+          });
+          nextEntries.push(toCatalogEntry(attachment, { extractStatus: "missing" }));
+          stats.missingAttachments += 1;
+          break;
+        }
+
+        case "skip-unchanged-error": {
+          nextEntries.push(
+            toCatalogEntry(attachment, {
+              extractStatus: "error",
+              size: current!.size,
+              mtimeMs: currentMtimeMs,
+              sourceHash: previous!.sourceHash ?? null,
+              lastIndexedAt: previous!.lastIndexedAt ?? null,
+              error: previous!.error ?? "Previous extraction error; file unchanged.",
+            }),
+          );
+          fileOutcomes.push({
+            kind: "skipped",
+            filePath: attachment.filePath,
+            detail: "skipped unchanged previous extraction error",
+          });
+          stats.errorAttachments += 1;
+          stats.skippedAttachments += 1;
+          break;
+        }
+
+        case "adopt-then-extract": {
+          // The store validates the source pair, refuses a vertical mismatch
+          // before moving (stale reading-order output must not be carried
+          // over), rewrites the manifest identity preserving verticalText +
+          // blocks, and touches both docKeys so the old side is not reported
+          // removed.
+          const candidate = renameFromPrev!;
           const outcome = store.adopt(
-            { docKey: renameFromPrev.docKey, itemKey: renameFromPrev.itemKey },
+            { docKey: candidate.docKey, itemKey: candidate.itemKey },
             {
               docKey: attachment.docKey,
               itemKey: attachment.itemKey,
@@ -1451,62 +1448,58 @@ export async function runSync(
             nextEntries.push(
               toCatalogEntry(attachment, {
                 extractStatus: "ready",
-                size: current.size,
+                size: current!.size,
                 mtimeMs: currentMtimeMs,
-                sourceHash: renameFromPrev.sourceHash ?? null,
-                lastIndexedAt: renameFromPrev.lastIndexedAt ?? null,
+                sourceHash: candidate.sourceHash ?? null,
+                lastIndexedAt: candidate.lastIndexedAt ?? null,
               }),
             );
             fileOutcomes.push({
               kind: "skipped",
               filePath: attachment.filePath,
-              detail: `migrated artifacts from renamed attachment (was ${compactHomePath(renameFromPrev.filePath)})`,
+              detail: `migrated artifacts from renamed attachment (was ${compactHomePath(candidate.filePath)})`,
             });
             stats.readyAttachments += 1;
             stats.skippedAttachments += 1;
-            renameCandidateIndex.delete(renameKey);
-            continue;
+            renameCandidateIndex.delete(renameKey!);
+            break;
           }
           if (outcome.reason === "adoption-failed") {
             logger.warn(
               `Rename migration failed for ${compactHomePath(attachment.filePath)}; falling back to re-extract: ${outcome.error instanceof Error ? outcome.error.message : String(outcome.error)}`,
             );
           }
-          // source-not-reusable / vertical-mismatch: no usable candidate —
-          // fall through to re-extraction, as before.
+          // source-not-reusable / vertical-mismatch / adoption-failed: no
+          // usable candidate — extract cleanly, as before.
+          changedAttachments.push(attachment);
+          break;
+        }
+
+        case "extract": {
+          changedAttachments.push(attachment);
+          break;
+        }
+
+        case "reuse": {
+          nextEntries.push(
+            toCatalogEntry(attachment, {
+              extractStatus: "ready",
+              size: current!.size,
+              mtimeMs: currentMtimeMs,
+              sourceHash: decision.carryPreviousIndexState ? previous!.sourceHash ?? null : null,
+              lastIndexedAt: decision.carryPreviousIndexState ? previous!.lastIndexedAt ?? null : null,
+            }),
+          );
+          fileOutcomes.push({
+            kind: "skipped",
+            filePath: attachment.filePath,
+            detail: "reused existing indexed output",
+          });
+          stats.readyAttachments += 1;
+          stats.skippedAttachments += 1;
+          break;
         }
       }
-
-      // If the previous record says the attachment was ready but the source
-      // file's size/mtime has changed since, on-disk artifacts matching the
-      // docKey are stale — they were produced before the change. Reusing them
-      // would keep indexing the pre-change content (seen in practice after a
-      // user re-OCR's a scanned PDF in place). The `artifactsReusable` path is
-      // only valid as a recovery hint when we have no reliable prior
-      // size/mtime to compare against (catalog lost, or previous status was
-      // missing/error with null metadata).
-      const previousWasReadyButChanged =
-        previous?.extractStatus === "ready" && !previousIsUnchanged;
-      if (!previousIsReadyAndUnchanged && (previousWasReadyButChanged || !artifactsReusable)) {
-        changedAttachments.push(attachment);
-        continue;
-      }
-
-      const nextEntry = toCatalogEntry(attachment, {
-        extractStatus: "ready",
-        size: current.size,
-        mtimeMs: currentMtimeMs,
-        sourceHash: previousIsReadyAndUnchanged ? previous.sourceHash ?? null : null,
-        lastIndexedAt: previousIsReadyAndUnchanged ? previous.lastIndexedAt ?? null : null,
-      });
-      nextEntries.push(nextEntry);
-      fileOutcomes.push({
-        kind: "skipped",
-        filePath: attachment.filePath,
-        detail: "reused existing indexed output",
-      });
-      stats.readyAttachments += 1;
-      stats.skippedAttachments += 1;
     }
 
     const pdfAttachments = changedAttachments.filter((a) => a.fileExt === "pdf");

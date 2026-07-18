@@ -41,7 +41,9 @@ tests, commits, and reviews — one name per concept.
   `indexerSignature`, `indexedQmdEmbedModel`).
 - **Triage** — the per-attachment decision phase of a sync run: reuse the
   existing artifact, migrate it from a renamed attachment, re-extract, skip a
-  known error, or record the attachment as missing/unsupported.
+  known error, or record the attachment as missing/unsupported. The decision
+  itself is the pure table in `src/triage.ts` (facts in, verdict out); the
+  sync loop gathers facts and performs the effects.
 - **Rename migration** — carrying an existing artifact over to a new docKey
   when the same file (itemKey + size + mtime) reappears under a new path,
   instead of re-extracting and re-embedding. Candidate matching is triage's
