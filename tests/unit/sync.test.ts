@@ -16,9 +16,9 @@ import {
   runSync,
   withJavaToolOptions,
 } from "../../src/sync.js";
-import type { ArtifactStore } from "../../src/artifact-store.js";
+import { openFsArtifactStore, type ArtifactStore } from "../../src/artifact-store.js";
 import { readCatalogFile, writeCatalogFile } from "../../src/state.js";
-import type { CatalogFile, ManifestBlock } from "../../src/types.js";
+import type { AttachmentCatalogEntry, CatalogFile, ManifestBlock } from "../../src/types.js";
 import { MANIFEST_EXT, readManifestFile, sha1, writeManifestFile } from "../../src/utils.js";
 
 function trivialBlock(): ManifestBlock {
@@ -4862,4 +4862,209 @@ test("runSync retries a timed out batch one file at a time", async () => {
   assert.equal(goodEntry?.extractStatus, "ready");
   assert.equal(badEntry?.extractStatus, "error");
   assert.match(badEntry?.error || "", /timed out after 180000ms/);
+});
+
+// Shared staging for the two adoption fault-injection tests below: an earlier
+// sync indexed papers/old.pdf; the bibliography now references the renamed
+// papers/renamed.pdf with identical (itemKey, size, mtime).
+function stageRenameScenario(prefix: string) {
+  const root = mkdtempSync(join(tmpdir(), prefix));
+  const attachmentsRoot = join(root, "attachments");
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  const normalizedDir = join(dataDir, "normalized");
+  mkdirSync(join(attachmentsRoot, "papers"), { recursive: true });
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+  mkdirSync(normalizedDir, { recursive: true });
+
+  const oldRel = "papers/old.pdf";
+  const newRel = "papers/renamed.pdf";
+  const oldDocKey = sha1(oldRel);
+  const newDocKey = sha1(newRel);
+  const newPath = join(attachmentsRoot, newRel);
+  writeFileSync(newPath, "pdf-body");
+  const frozenMtimeMs = Date.UTC(2025, 5, 1);
+  utimesSync(newPath, new Date(frozenMtimeMs), new Date(frozenMtimeMs));
+  const stat = statSync(newPath);
+
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    indexesCompletedAt: new Date().toISOString(),
+    indexedQmdEmbedModel: "qmd-default",
+    indexerSignature: buildIndexerSignature("qmd-default"),
+    entries: [
+      {
+        docKey: oldDocKey,
+        itemKey: "ITEM1",
+        title: "Paper",
+        authors: ["A Author"],
+        filePath: `${attachmentsRoot}/${oldRel}`,
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: stat.size,
+        mtimeMs: Math.trunc(stat.mtimeMs),
+        sourceHash: "pre-existing-source-hash",
+        lastIndexedAt: "2025-06-01T00:00:00.000Z",
+      },
+    ],
+  });
+
+  const bibliographyPath = join(root, "bibliography.json");
+  writeFileSync(
+    bibliographyPath,
+    JSON.stringify([
+      {
+        id: "cite",
+        title: "Paper",
+        author: [{ family: "A", given: "Author" }],
+        file: newPath,
+        "zotero-item-key": "ITEM1",
+      },
+    ]),
+    "utf-8",
+  );
+
+  const quietQmdFactory = async () => ({
+    search: async () => [],
+    searchLex: async () => [],
+    update: async () => ({}),
+    embed: async () => ({}),
+    getStatus: async () => ({ totalDocuments: 1, needsEmbedding: 0, hasVectorIndex: true, collections: [] }),
+    listContexts: async () => [],
+    addContext: async () => true,
+    removeContext: async () => true,
+    clearEmbeddings: async () => {},
+    cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
+    migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
+    adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    compactDatabase: async () => ({ ran: false, reason: "" }),
+    close: async () => {},
+  });
+
+  const extractCalls: string[] = [];
+  const publishingExtractBatchFn = async (
+    batch: AttachmentCatalogEntry[],
+    _tempRoot: string,
+    store: ArtifactStore,
+  ): Promise<Set<string>> => {
+    const published = new Set<string>();
+    for (const attachment of batch) {
+      extractCalls.push(attachment.docKey);
+      store.publish({
+        markdown: "Re-extracted body",
+        manifest: {
+          docKey: attachment.docKey,
+          itemKey: attachment.itemKey,
+          title: attachment.title,
+          authors: attachment.authors,
+          filePath: attachment.filePath,
+          blocks: [trivialBlock()],
+        },
+      });
+      published.add(attachment.docKey);
+    }
+    return published;
+  };
+
+  return {
+    attachmentsRoot,
+    dataDir,
+    indexDir,
+    manifestsDir,
+    normalizedDir,
+    oldDocKey,
+    newDocKey,
+    bibliographyPath,
+    quietQmdFactory,
+    extractCalls,
+    publishingExtractBatchFn,
+  };
+}
+
+test("runSync falls back to re-extraction in the same run when adoption fails mid-move", async () => {
+  const s = stageRenameScenario("zotagent-sync-adopt-fault-");
+  // Valid source pair at the OLD docKey, so adoption is attempted.
+  writeFileSync(join(s.normalizedDir, `${s.oldDocKey}.md`), "Body from the original extraction");
+  writeManifestFile(join(s.manifestsDir, `${s.oldDocKey}${MANIFEST_EXT}`), {
+    docKey: s.oldDocKey,
+    itemKey: "ITEM1",
+    title: "Paper",
+    authors: ["A Author"],
+    filePath: `${s.attachmentsRoot}/papers/old.pdf`,
+    blocks: [trivialBlock()],
+  });
+
+  // Fault: the second half of the adoption move fails, as if the manifest
+  // rename hit EPERM. The store must roll the first move back and sync must
+  // re-extract in the same run — the branch that was unreachable before the
+  // store seam existed.
+  const result = await runSync(
+    { bibliographyJsonPath: s.bibliographyPath, attachmentsRoot: s.attachmentsRoot, dataDir: s.dataDir },
+    s.quietQmdFactory,
+    undefined,
+    s.publishingExtractBatchFn as never,
+    undefined,
+    {
+      storeFactory: (dirs) =>
+        openFsArtifactStore(dirs, {
+          onStep: (step) => {
+            if (step === "adopt:manifest-move") throw new Error("EPERM (injected)");
+          },
+        }),
+    },
+  );
+
+  assert.deepEqual(s.extractCalls, [s.newDocKey], "sync must re-extract the renamed attachment");
+  assert.equal(result.stats.readyAttachments, 1);
+  assert.equal(result.stats.errorAttachments, 0);
+  // The adoption failed, so the old docKey was never touched: its artifacts
+  // are swept as stale and counted removed, exactly as before the store seam.
+  assert.equal(result.stats.removedAttachments, 1);
+  const newNormalized = join(s.normalizedDir, `${s.newDocKey}.md`);
+  assert.equal(readFileSync(newNormalized, "utf-8"), "Re-extracted body");
+  assert.ok(!existsSync(join(s.normalizedDir, `${s.oldDocKey}.md`)), "stale old artifacts must be swept");
+  const catalog = readCatalogFile(join(s.indexDir, "catalog.json"));
+  assert.equal(catalog.entries[0]?.extractStatus, "ready");
+});
+
+test("runSync re-extracts after a crash between adoption move and identity rewrite", async () => {
+  const s = stageRenameScenario("zotagent-sync-adopt-crash-gap-");
+  // Simulate the documented crash gap: a previous run died after moving the
+  // pair to the NEW docKey but before rewriting the manifest identity. The
+  // pair sits at the new paths, the manifest still claims the old identity,
+  // and the catalog still lists the old entry.
+  writeFileSync(join(s.normalizedDir, `${s.newDocKey}.md`), "Body from the original extraction");
+  writeManifestFile(join(s.manifestsDir, `${s.newDocKey}${MANIFEST_EXT}`), {
+    docKey: s.oldDocKey, // stale identity — the self-heal trigger
+    itemKey: "ITEM1",
+    title: "Paper",
+    authors: ["A Author"],
+    filePath: `${s.attachmentsRoot}/papers/old.pdf`,
+    blocks: [trivialBlock()],
+  });
+
+  const result = await runSync(
+    { bibliographyJsonPath: s.bibliographyPath, attachmentsRoot: s.attachmentsRoot, dataDir: s.dataDir },
+    s.quietQmdFactory,
+    undefined,
+    s.publishingExtractBatchFn as never,
+  );
+
+  // The stale-identity pair fails the reuse verdict (identity-mismatch) and
+  // the rename candidate's own pair is gone (moved away), so the only path
+  // left is a clean re-extraction under the new docKey — the self-heal the
+  // adopt() contract promises.
+  assert.deepEqual(s.extractCalls, [s.newDocKey]);
+  assert.equal(result.stats.readyAttachments, 1);
+  assert.equal(result.stats.errorAttachments, 0);
+  const rewritten = readManifestFile(join(s.manifestsDir, `${s.newDocKey}${MANIFEST_EXT}`));
+  assert.equal(rewritten.docKey, s.newDocKey, "re-extraction must replace the stale-identity manifest");
+  assert.equal(readFileSync(join(s.normalizedDir, `${s.newDocKey}.md`), "utf-8"), "Re-extracted body");
+  const catalog = readCatalogFile(join(s.indexDir, "catalog.json"));
+  assert.equal(catalog.entries[0]?.extractStatus, "ready");
 });
