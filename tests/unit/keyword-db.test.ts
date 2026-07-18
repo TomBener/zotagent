@@ -5,11 +5,11 @@ import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { segmentCjk } from "../../src/cjk.js";
 import { getDataPaths } from "../../src/config.js";
 import {
   KeywordQuerySyntaxError,
   openKeywordIndex,
-  segmentCjk,
   buildFtsQuery,
   rewriteInfixNear,
 } from "../../src/keyword-db.js";

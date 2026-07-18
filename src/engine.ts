@@ -3,6 +3,7 @@ import { basename as pathBasename } from "node:path";
 import { getEncoding, type Tiktoken } from "js-tiktoken";
 
 import { openFsArtifactStore, type ArtifactReader } from "./artifact-store.js";
+import { CJK_CHAR_RE, CJK_CLASS_SOURCE, cjkFlexiblePatternSource } from "./cjk.js";
 import { getDataPaths, resolveConfig, type ConfigOverrides } from "./config.js";
 import { findExactPhraseBlockRange, normalizeExactText } from "./exact.js";
 import { isBoilerplateLikeText, isTableOfContentsLikeText } from "./heuristics.js";
@@ -198,9 +199,8 @@ function truncateSearchPassage(text: string): string {
 // before the token cap runs, so the agent does not waste budget on `\n\n`
 // joiners and the passage reads as a single thought. CJK-adjacent newlines
 // drop the inserted space because Chinese/Japanese/Korean text never uses one.
-const CJK_SCRIPTS_RE_SOURCE = "[\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}\\p{Script=Hangul}]";
 const CJK_NEWLINE_JOIN_RE = new RegExp(
-  `(${CJK_SCRIPTS_RE_SOURCE})\\s*\\n+\\s*(${CJK_SCRIPTS_RE_SOURCE})`,
+  `(${CJK_CLASS_SOURCE})\\s*\\n+\\s*(${CJK_CLASS_SOURCE})`,
   "gu",
 );
 
@@ -242,12 +242,6 @@ const QUOTE_MARK_RE = /\uE000Q\d+\uE001/gu;
 const NEGATED_QUOTE_MARK_RE = /\bNOT\s+\uE000Q(\d+)\uE001/giu;
 const SEARCH_OPERATOR_RE = /^(AND|OR|NOT|NEAR)$/iu;
 const SEARCH_OPERATOR_IN_QUERY_RE = /\b(?:AND|OR|NOT|NEAR(?:\/\d+)?)\b/iu;
-const CJK_CHAR_RE =
-  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
-
-function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-}
 
 function cleanCandidatePhrase(text: string): string {
   return cleanText(text)
@@ -319,30 +313,13 @@ function queryAnchorCandidates(query: string): QueryAnchorCandidate[] {
 }
 
 function candidatePattern(candidate: QueryAnchorCandidate): RegExp | null {
-  const chars = [...candidate.text.normalize("NFKC")];
-  if (chars.length === 0) return null;
-
-  let pattern = "";
-  let containsCjk = false;
-  for (let i = 0; i < chars.length; i += 1) {
-    const ch = chars[i]!;
-    if (/\s/u.test(ch)) {
-      pattern += "\\s+";
-      while (/\s/u.test(chars[i + 1] ?? "")) i += 1;
-      continue;
-    }
-    containsCjk ||= CJK_CHAR_RE.test(ch);
-    pattern += escapeRegExp(ch);
-    const next = chars[i + 1];
-    if (CJK_CHAR_RE.test(ch) && next !== undefined && CJK_CHAR_RE.test(next)) {
-      pattern += "\\s*";
-    }
-  }
+  const { source, containsCjk } = cjkFlexiblePatternSource(candidate.text.normalize("NFKC"));
+  if (!source) return null;
 
   const before = containsCjk ? "" : "(?<![\\p{L}\\p{N}])";
   const after = containsCjk || candidate.prefix ? "" : "(?![\\p{L}\\p{N}])";
   const suffix = candidate.prefix && !containsCjk ? "[\\p{L}\\p{N}]*" : "";
-  return new RegExp(`${before}${pattern}${suffix}${after}`, "iu");
+  return new RegExp(`${before}${source}${suffix}${after}`, "iu");
 }
 
 function findCandidateMatch(

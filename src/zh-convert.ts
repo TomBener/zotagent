@@ -5,6 +5,8 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { HAN_CHAR_RE } from "./cjk.js";
+
 // Resolved opencc-js version, fed into the sync indexer signature. opencc-js
 // drives `toSimplified`, which normalizes both the keyword index (at write time)
 // and queries (at read time), so an upgrade that changes its conversion output
@@ -40,7 +42,6 @@ function readOpenccVersion(): string {
 
 export const OPENCC_PACKAGE_VERSION = readOpenccVersion();
 
-const HAN_RE = /\p{Script=Han}/u;
 
 let converter: ConverterFunction | null = null;
 
@@ -52,6 +53,6 @@ function getConverter(): ConverterFunction {
 }
 
 export function toSimplified(text: string): string {
-  if (text.length === 0 || !HAN_RE.test(text)) return text;
+  if (text.length === 0 || !HAN_CHAR_RE.test(text)) return text;
   return getConverter()(text);
 }

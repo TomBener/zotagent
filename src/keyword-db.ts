@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 
 import { openFsArtifactStore, type ArtifactReader } from "./artifact-store.js";
+import { CJK_CLASS_SOURCE, segmentCjk } from "./cjk.js";
 import { getDataPaths } from "./config.js";
 import type { AppConfig, CatalogEntry } from "./types.js";
 import { ensureDir } from "./utils.js";
@@ -98,33 +99,6 @@ function ensureSchema(db: Database.Database): void {
     db.exec("DELETE FROM keyword_doc_lookup");
     createKeywordBlockFts(db);
   }
-}
-
-const CJK_RANGE =
-  /(\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Hangul})/u;
-
-function isWhitespace(ch: string): boolean {
-  return ch === " " || ch === "\n" || ch === "\t";
-}
-
-export function segmentCjk(text: string): string {
-  const chars = [...text];
-  const out: string[] = [];
-  for (let i = 0; i < chars.length; i++) {
-    const ch = chars[i]!;
-    const isCjk = CJK_RANGE.test(ch);
-    if (out.length > 0 && !isWhitespace(ch)) {
-      const prev = out[out.length - 1]!;
-      if (!isWhitespace(prev)) {
-        const prevIsCjk = CJK_RANGE.test(prev);
-        if (isCjk || prevIsCjk) {
-          out.push(" ");
-        }
-      }
-    }
-    out.push(ch);
-  }
-  return out.join("");
 }
 
 function resetFtsTable(db: Database.Database): void {
@@ -273,7 +247,7 @@ function cjkRunToNear(run: string): string {
 }
 
 function rewriteUnquotedCjk(text: string): string {
-  const CJK_RUN = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]{2,}/gu;
+  const CJK_RUN = new RegExp(`${CJK_CLASS_SOURCE}{2,}`, "gu");
   return text.replace(CJK_RUN, (m, offset) => {
     const near = cjkRunToNear(m);
     const before = offset > 0 && text[offset - 1] !== " " ? " " : "";
@@ -317,8 +291,7 @@ const BARE_INFIX_NEAR_RE = new RegExp(
   `${INFIX_NEAR_PHRASE}\\s+NEAR\\s+${INFIX_NEAR_PHRASE}`,
   "i",
 );
-const CJK_RUN_RE =
-  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]{2,}/u;
+const CJK_RUN_RE = new RegExp(`${CJK_CLASS_SOURCE}{2,}`, "u");
 
 function assertSupportedKeywordQuery(query: string): void {
   const { masked } = maskQuotedPhrases(query);

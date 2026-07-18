@@ -1,15 +1,10 @@
+import { cjkFlexiblePatternSource, isCjkChar } from "./cjk.js";
 import type { AttachmentManifest } from "./types.js";
 import { toSimplified } from "./zh-convert.js";
-
-const SINGLE_CJK_TOKEN = /^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]$/u;
 
 type ExactPhraseOptions = {
   tokenBoundaries?: boolean;
 };
-
-function isCjkChar(ch: string | undefined): boolean {
-  return ch !== undefined && SINGLE_CJK_TOKEN.test(ch);
-}
 
 function hasTokenBoundaryBefore(text: string, offset: number, firstQueryChar: string): boolean {
   if (offset <= 0) return true;
@@ -54,7 +49,7 @@ function collapseSegmentedCjkRuns(normalized: string): string {
   };
 
   for (const token of tokens) {
-    if (SINGLE_CJK_TOKEN.test(token)) {
+    if (isCjkChar(token)) {
       singleCharRun.push(token);
       continue;
     }
@@ -99,28 +94,10 @@ export function countExactMatches(haystack: string, needle: string): number {
   return count;
 }
 
-function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-}
-
 function buildFlexibleCjkPattern(query: string): RegExp | null {
-  if (![...query].some((ch) => isCjkChar(ch))) return null;
-
-  const chars = [...query];
-  let pattern = "";
-  for (let i = 0; i < chars.length; i += 1) {
-    const ch = chars[i]!;
-    if (ch === " ") {
-      pattern += "\\s+";
-      continue;
-    }
-    pattern += escapeRegExp(ch);
-    const next = chars[i + 1];
-    if (isCjkChar(ch) && isCjkChar(next)) {
-      pattern += "\\s*";
-    }
-  }
-  return new RegExp(pattern, "gu");
+  const { source, containsCjk } = cjkFlexiblePatternSource(query);
+  if (!containsCjk) return null;
+  return new RegExp(source, "gu");
 }
 
 export function findExactPhraseBlockRange(
