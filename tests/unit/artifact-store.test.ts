@@ -514,5 +514,7 @@ test("[fs] pathsFor rejects docKeys that are not a single path segment", () => {
   const { store } = makeFsHarness();
   assert.throws(() => store.pathsFor("../escape"));
   assert.throws(() => store.pathsFor("a/b"));
+  assert.throws(() => store.pathsFor("a\\b"));
+  assert.throws(() => store.pathsFor("a\0b"));
   assert.throws(() => store.pathsFor(""));
 });

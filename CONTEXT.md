@@ -51,7 +51,7 @@ tests, commits, and reviews — one name per concept.
   **adoption**: move the pair, rewrite the manifest identity, preserve the
   vertical-text marker and blocks, refuse before moving when the vertical
   verdict disagrees.
-- **Vertical text** — a Zotero-tag-driven verdict (`zotagent:vertical-text`,
+- **Vertical text** — a Zotero-tag-driven verdict (`zotagent:vertical`,
   configurable via `verticalTextTag`) that a PDF is vertical CJK. Drives
   extraction with reading-order off and is recorded on the manifest; an
   artifact is only reusable if its recorded verdict matches the current tag.

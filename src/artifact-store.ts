@@ -293,7 +293,7 @@ export function createArtifactSession(
 // docKeys are sha1 hex in production, but the store only relies on the
 // weaker invariant it can enforce: a docKey is a single path segment.
 function assertDocKeySegment(docKey: string): void {
-  if (docKey.length === 0 || /[/\\ ]/.test(docKey)) {
+  if (docKey.length === 0 || /[/\\\x00]/.test(docKey)) {
     throw new Error(`Invalid docKey (must be a single path segment): ${JSON.stringify(docKey)}`);
   }
 }
