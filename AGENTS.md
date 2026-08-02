@@ -15,8 +15,10 @@
 
 ## Release Process
 
-1. bump `package.json` and `package-lock.json`
+Versions are calendar dates: `YYYY.M.D`, the release date without leading zeros (semver requires it — `2026.8.2`, never `2026.08.02`). One release per day; a follow-up fix waits for the next day. Never go back to `0.x`-style numbers — version comparison everywhere (npm, Homebrew) would read it as a downgrade.
+
+1. set the version in `package.json` and `package-lock.json` to today's date
 2. `npm run check`
 3. commit the release prep
-4. `git tag -a vX.Y.Z -m "vX.Y.Z"` and `git push origin main && git push origin vX.Y.Z`
+4. `git tag -a vYYYY.M.D -m "vYYYY.M.D"` and `git push origin main && git push origin vYYYY.M.D`
 5. after the release workflow finishes, write the final changelog on the GitHub release with `gh release edit`
