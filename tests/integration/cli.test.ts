@@ -280,7 +280,7 @@ test("help summarizes current commands and keeps config-only overrides out of th
     result.stdout,
     /search-in "<text>" --key <key> \[--limit <n>\]/,
   );
-  assert.match(result.stdout, /metadata \["<text>"\] \[--limit <n>\] \[--field <field>\] \[--has-file\]/);
+  assert.match(result.stdout, /metadata \["<text>"\] \[--limit <n>\] \[--field <field>\] \[--indexed\]/);
   assert.match(result.stdout, /\[--author <text>\] \[--year <text>\] \[--title <text>\] \[--journal <text>\] \[--publisher <text>\]/);
   assert.match(result.stdout, /\[--tag <tag>\] \[--collection-key <key>\]/);
   assert.match(
@@ -321,7 +321,7 @@ test("help summarizes current commands and keeps config-only overrides out of th
   assert.match(result.stdout, /Default is keyword search/);
   assert.match(result.stdout, /--field <field>\s+Limit the positional query to/);
   assert.match(result.stdout, /--tag <tag>\s+Filter by top-level Zotero item tag/);
-  assert.match(result.stdout, /--has-file\s+Keep only metadata results/);
+  assert.match(result.stdout, /--indexed\s+Keep only metadata results/);
   assert.match(result.stdout, /--abstract\s+Include the abstract in each result/);
   assert.match(result.stdout, /--clean\s+Apply heuristic cleanup/);
   assert.match(result.stdout, /Skips\s+standalone notes and attachments/);
@@ -478,7 +478,7 @@ test("metadata rejects search-only flags", () => {
 
   assert.equal(result.status, 1);
   assert.match(result.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
-  assert.match(result.stdout, /metadata only supports --limit, --field, --has-file, --abstract, --author, --year, --title, --journal, --publisher, --tag, --collection-key\. Remove: --keyword/);
+  assert.match(result.stdout, /metadata only supports --limit, --field, --indexed, --abstract, --author, --year, --title, --journal, --publisher, --tag, --collection-key\. Remove: --keyword/);
 });
 
 test("search rejects tag filtering in semantic mode", () => {

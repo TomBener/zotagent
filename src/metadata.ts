@@ -1,6 +1,7 @@
 import { loadCatalog } from "./catalog.js";
-import { resolveConfig, type ConfigOverrides } from "./config.js";
+import { getDataPaths, resolveConfig, type ConfigOverrides } from "./config.js";
 import { normalizeExactText } from "./exact.js";
+import { getReadyEntries, readCatalogFile } from "./state.js";
 import type { BibliographyRecord, MetadataField, MetadataSearchResultRow } from "./types.js";
 import { compactHomePath } from "./utils.js";
 
@@ -16,7 +17,7 @@ const FIELD_WEIGHTS: Record<MetadataField, number> = {
 
 interface MetadataSearchOptions {
   fields?: MetadataField[];
-  hasFile?: boolean;
+  indexed?: boolean;
   includeAbstract?: boolean;
   filters?: Partial<Record<MetadataField, string>>;
   itemKeys?: string[];
@@ -52,6 +53,7 @@ function toMetadataSearchResultRow(
   record: BibliographyRecord,
   matchedFields: MetadataField[],
   includeAbstract: boolean,
+  indexedFiles: string[],
 ): MetadataSearchResultRow {
   const score = matchedFields.reduce((total, field) => total + FIELD_WEIGHTS[field], 0);
 
@@ -62,8 +64,8 @@ function toMetadataSearchResultRow(
     authors: record.authors,
     ...(record.year ? { year: record.year } : {}),
     ...(includeAbstract && record.abstract ? { abstract: record.abstract } : {}),
-    hasSupportedFile: record.hasSupportedFile,
-    supportedFiles: record.supportedFiles.map((filePath) => compactHomePath(filePath)),
+    indexed: indexedFiles.length > 0,
+    indexedFiles,
     matchedFields,
     score,
     ...(record.journal ? { journal: record.journal } : {}),
@@ -76,7 +78,7 @@ function sortMetadataResults(
   b: MetadataSearchResultRow,
 ): number {
   if (b.score !== a.score) return b.score - a.score;
-  if (a.hasSupportedFile !== b.hasSupportedFile) return Number(b.hasSupportedFile) - Number(a.hasSupportedFile);
+  if (a.indexed !== b.indexed) return Number(b.indexed) - Number(a.indexed);
   const titleCompare = a.title.localeCompare(b.title);
   if (titleCompare !== 0) return titleCompare;
   return a.itemKey.localeCompare(b.itemKey);
@@ -112,6 +114,17 @@ export async function searchMetadata(
   const includeAbstract = options.includeAbstract ?? false;
   const filterFieldSet = new Set(filterEntries.map(([field]) => field));
   const { records } = loadCatalog(config);
+  // Indexed status comes from the shared index catalog, not from resolving
+  // bibliography file paths against the local attachmentsRoot — the index is
+  // what search-in/fulltext actually read, and it stays correct on devices
+  // that hold the index but not the attachment files themselves.
+  const indexCatalog = readCatalogFile(getDataPaths(config.dataDir).catalogPath);
+  const indexedFilesByItemKey = new Map<string, string[]>();
+  for (const entry of getReadyEntries(indexCatalog)) {
+    const files = indexedFilesByItemKey.get(entry.itemKey) ?? [];
+    files.push(compactHomePath(entry.filePath));
+    indexedFilesByItemKey.set(entry.itemKey, files);
+  }
   const warnings: string[] = [...config.warnings];
   if (itemKeyFilter !== undefined && itemKeyFilter.size > 0) {
     const knownItemKeys = new Set(
@@ -126,7 +139,7 @@ export async function searchMetadata(
   }
   const results = records
     .filter((record) => !itemKeyFilter || itemKeyFilter.has(record.itemKey))
-    .filter((record) => !options.hasFile || record.hasSupportedFile)
+    .filter((record) => !options.indexed || indexedFilesByItemKey.has(record.itemKey))
     .filter((record) =>
       filterEntries.every(([field, normalized]) => matchesField(record, field, normalized)),
     )
@@ -140,7 +153,12 @@ export async function searchMetadata(
       const matchedFields = FIELD_ORDER.filter(
         (field) => queryMatched.includes(field) || filterFieldSet.has(field),
       );
-      return toMetadataSearchResultRow(record, matchedFields, includeAbstract);
+      return toMetadataSearchResultRow(
+        record,
+        matchedFields,
+        includeAbstract,
+        indexedFilesByItemKey.get(record.itemKey) ?? [],
+      );
     })
     .filter((result): result is MetadataSearchResultRow => result !== null)
     .sort(sortMetadataResults)

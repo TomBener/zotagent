@@ -58,8 +58,6 @@ export interface BibliographyRecord {
   publisher?: string;
   type?: string;
   attachmentPaths: string[];
-  supportedFiles: string[];
-  hasSupportedFile: boolean;
 }
 
 export interface AttachmentCatalogEntry {
@@ -187,8 +185,8 @@ export interface MetadataSearchResultRow {
   authors: string[];
   year?: string;
   abstract?: string;
-  hasSupportedFile: boolean;
-  supportedFiles: string[];
+  indexed: boolean;
+  indexedFiles: string[];
   matchedFields: MetadataField[];
   score: number;
   journal?: string;

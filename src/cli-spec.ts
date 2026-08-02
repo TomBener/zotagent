@@ -61,7 +61,7 @@ export const COMMAND_FLAGS: Record<string, ReadonlyArray<FlagSpec>> = {
   metadata: [
     { name: "limit" },
     { name: "field" },
-    { name: "has-file", boolean: true },
+    { name: "indexed", boolean: true },
     { name: "abstract", boolean: true },
     { name: "author" },
     { name: "year" },
@@ -179,7 +179,7 @@ Search
       syntax as search: "exact phrase", OR, NOT, term NEAR/<n> term, prefix*.
       Requires a populated keyword index (run zotagent sync first).
 
-  metadata ["<text>"] [--limit <n>] [--field <field>] [--has-file] [--abstract]
+  metadata ["<text>"] [--limit <n>] [--field <field>] [--indexed] [--abstract]
            [--author <text>] [--year <text>] [--title <text>] [--journal <text>] [--publisher <text>]
            [--tag <tag>] [--collection-key <key>]
       Search Zotero bibliography metadata read from bibliographyJsonPath.
@@ -187,7 +187,9 @@ Search
       positional query is substring-matched across --field selections; each
       filter flag adds an AND constraint on that specific field. --tag and
       --collection-key fetch matching top-level item keys from the Zotero Web
-      API, then filter locally.
+      API, then filter locally. Each result reports indexed/indexedFiles from
+      the shared full-text index: whether search-in/fulltext can read the item,
+      independent of whether attachment files exist on this device.
         --field <field>             Limit the positional query to title, author, year, abstract,
                                     journal, or publisher. Repeatable.
         --author <text>             Filter by author substring.
@@ -200,7 +202,8 @@ Search
         --collection-key <key>      Filter by top-level items directly in this Zotero collection.
                                     Repeatable (union); combinable with --tag (intersection);
                                     requires Zotero read API config.
-        --has-file                  Keep only metadata results with a supported indexed attachment.
+        --indexed                   Keep only metadata results with a full-text-indexed attachment
+                                    (readable via search-in/fulltext).
         --abstract                  Include the abstract in each result. Omitted by default to keep
                                     bulk responses compact for agents.
 

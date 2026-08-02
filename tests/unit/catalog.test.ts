@@ -53,8 +53,9 @@ test("loadCatalog keeps attachments inside root and marks supported file types",
   const paperRecord = catalog.records.find((r) => r.itemKey === "ITEM1");
   assert.deepEqual(paperRecord?.authorSearchTexts, ["Smith Jane", "Jane Smith"]);
   assert.equal(paperRecord?.journal, "Journal of Testing");
-  assert.deepEqual(paperRecord?.supportedFiles, [pdfPath]);
-  assert.equal(paperRecord?.hasSupportedFile, true);
+  assert.deepEqual(paperRecord?.attachmentPaths, [pdfPath]);
+  // Three raw paths in the bibliography; /tmp/outside.pdf fails relocation.
+  assert.equal(catalog.filePathCount, 3);
   assert.equal(catalog.attachments.length, 2);
   assert.equal(catalog.attachments[0]!.supported, true);
   assert.equal(catalog.attachments[0]!.fileExt, "epub");
@@ -202,7 +203,6 @@ test("loadCatalog only relocates files that match the requested Zotero subfolder
   });
 
   assert.deepEqual(catalog.records[0]?.attachmentPaths, [keptPdfPath]);
-  assert.deepEqual(catalog.records[0]?.supportedFiles, [keptPdfPath]);
   assert.equal(catalog.attachments.length, 1);
   assert.equal(catalog.attachments[0]?.filePath, keptPdfPath);
 });
@@ -309,7 +309,6 @@ test("loadCatalog keeps semicolons inside attachment file names", () => {
   });
 
   assert.deepEqual(catalog.records[0]?.attachmentPaths, [semicolonPdfPath, txtPath]);
-  assert.deepEqual(catalog.records[0]?.supportedFiles, [semicolonPdfPath, txtPath]);
   assert.deepEqual(
     catalog.attachments.map((entry) => [entry.filePath, entry.fileExt, entry.supported]),
     [

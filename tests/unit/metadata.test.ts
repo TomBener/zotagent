@@ -31,7 +31,40 @@ function writeBibliography(root: string, items: unknown[]): { bibliographyPath: 
   return { bibliographyPath, dataDir: join(root, "data") };
 }
 
-test("searchMetadata works without sync and returns metadata-only records", async () => {
+function writeIndexCatalog(
+  dataDir: string,
+  entries: Array<{ itemKey: string; filePath: string; extractStatus?: "ready" | "error" }>,
+): void {
+  const indexDir = join(dataDir, "index");
+  mkdirSync(indexDir, { recursive: true });
+  const catalogEntries = entries.map((entry, index) => ({
+    docKey: `doc${index}`,
+    itemKey: entry.itemKey,
+    title: entry.itemKey,
+    authors: [],
+    filePath: entry.filePath,
+    fileExt: "pdf",
+    exists: true,
+    supported: true,
+    extractStatus: entry.extractStatus ?? "ready",
+    size: 1,
+    mtimeMs: 1,
+    sourceHash: "hash",
+    lastIndexedAt: "2026-01-01T00:00:00Z",
+  }));
+  writeFileSync(
+    join(indexDir, "catalog.json"),
+    JSON.stringify({
+      version: 1,
+      generatedAt: "2026-01-01T00:00:00Z",
+      entries: catalogEntries,
+      indexesCompletedAt: "2026-01-01T00:00:00Z",
+    }),
+    "utf-8",
+  );
+}
+
+test("searchMetadata reports indexed status from the shared index catalog", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-metadata-"));
   const { attachmentsRoot, pdfPath, epubPath } = createFixturePaths(root);
   const { bibliographyPath, dataDir } = writeBibliography(root, [
@@ -69,6 +102,13 @@ test("searchMetadata works without sync and returns metadata-only records", asyn
       "zotero-item-key": "ITEM3",
     },
   ]);
+  // ITEM1 is fully indexed; ITEM3 lists an attachment in the bibliography but
+  // its extraction failed, so only ITEM1 counts as indexed. ITEM2 has nothing.
+  writeIndexCatalog(dataDir, [
+    { itemKey: "ITEM1", filePath: pdfPath },
+    { itemKey: "ITEM1", filePath: epubPath },
+    { itemKey: "ITEM3", filePath: epubPath, extractStatus: "error" },
+  ]);
 
   const result = await searchMetadata("large language models", 10, {
     bibliographyJsonPath: bibliographyPath,
@@ -80,8 +120,8 @@ test("searchMetadata works without sync and returns metadata-only records", asyn
   assert.deepEqual(result.results[0]?.matchedFields, ["title", "abstract"]);
   assert.equal("abstract" in result.results[0]!, false);
   assert.equal(result.results[0]?.journal, "American Journal of Political Science");
-  assert.equal(result.results[0]?.hasSupportedFile, true);
-  assert.deepEqual(result.results[0]?.supportedFiles, [pdfPath, epubPath]);
+  assert.equal(result.results[0]?.indexed, true);
+  assert.deepEqual(result.results[0]?.indexedFiles, [pdfPath, epubPath]);
 
   const withAbstract = await searchMetadata(
     "large language models",
@@ -106,10 +146,21 @@ test("searchMetadata works without sync and returns metadata-only records", asyn
 
   assert.equal(metadataOnly.results.length, 1);
   assert.equal(metadataOnly.results[0]?.itemKey, "ITEM2");
-  assert.equal(metadataOnly.results[0]?.hasSupportedFile, false);
-  assert.deepEqual(metadataOnly.results[0]?.supportedFiles, []);
+  assert.equal(metadataOnly.results[0]?.indexed, false);
+  assert.deepEqual(metadataOnly.results[0]?.indexedFiles, []);
 
-  const hasFileOnly = await searchMetadata(
+  // A bibliography file entry alone is not enough — the error-status ITEM3
+  // stays unindexed.
+  const epubOnly = await searchMetadata("EPUB only item", 10, {
+    bibliographyJsonPath: bibliographyPath,
+    attachmentsRoot,
+    dataDir,
+  });
+  assert.equal(epubOnly.results[0]?.itemKey, "ITEM3");
+  assert.equal(epubOnly.results[0]?.indexed, false);
+  assert.deepEqual(epubOnly.results[0]?.indexedFiles, []);
+
+  const indexedOnly = await searchMetadata(
     "political",
     10,
     {
@@ -117,11 +168,11 @@ test("searchMetadata works without sync and returns metadata-only records", asyn
       attachmentsRoot,
       dataDir,
     },
-    { hasFile: true },
+    { indexed: true },
   );
 
   assert.deepEqual(
-    hasFileOnly.results.map((row) => row.itemKey),
+    indexedOnly.results.map((row) => row.itemKey),
     ["ITEM1"],
   );
 });

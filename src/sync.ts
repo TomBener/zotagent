@@ -634,6 +634,12 @@ export async function runSync(
     logger.info(
       `Loaded bibliography with ${rawCatalogData.records.length} records and ${rawCatalogData.attachments.length} attachments.`,
     );
+    if (rawCatalogData.filePathCount > 0 && rawCatalogData.attachments.length === 0) {
+      logger.warn(
+        `All ${rawCatalogData.filePathCount} attachment path(s) in the bibliography failed to resolve under attachmentsRoot (${config.attachmentsRoot}). This usually means attachmentsRoot is misconfigured; syncing now would index nothing.`,
+        { console: true },
+      );
+    }
     const { filtered: catalogData, stats: excludeStats } = applyExcludes(rawCatalogData, excludedItemKeys);
     if (excludeStats.excludedRecords > 0 || excludeStats.unmatchedKeys.length > 0) {
       const tagLabel = config.excludeTag ? `"${config.excludeTag}"` : "(no tag configured)";

@@ -24,7 +24,7 @@
 - `search --semantic` — vector search over [QMD](https://github.com/tobi/qmd) embeddings with LLM query expansion; slower and heavier than keyword search. `--min-score` can filter both keyword and semantic results before mapping.
 - CJK search is handled explicitly: Chinese, Japanese, and Korean text is segmented for FTS, Traditional Chinese is folded to Simplified at index and query time for keyword search, and exact CJK phrase matching remains accurate while returned text preserves the source form.
 - `search-in` — scope a text query to one indexed item, addressed by `itemKey` or `citationKey` (auto-detected). It uses the same FTS5 syntax as `search` and adds a manifest-level cross-block scan for a single quoted phrase.
-- `metadata` — search the Zotero bibliography (Better CSL JSON) across `title`, `author`, `year`, `abstract`, `journal`, and `publisher`. `--field` narrows the positional query; per-field filters (`--author`, `--year`, `--title`, `--journal`, `--publisher`) AND together and can replace the positional query entirely; `--tag` and `--collection-key` fetch matching top-level item keys from the Zotero Web API and filter locally (combinable with each other; intersection); `--has-file` keeps only items with supported attachments and `--abstract` opts into bulkier abstract output.
+- `metadata` — search the Zotero bibliography (Better CSL JSON) across `title`, `author`, `year`, `abstract`, `journal`, and `publisher`. `--field` narrows the positional query; per-field filters (`--author`, `--year`, `--title`, `--journal`, `--publisher`) AND together and can replace the positional query entirely; `--tag` and `--collection-key` fetch matching top-level item keys from the Zotero Web API and filter locally (combinable with each other; intersection); `--indexed` keeps only items whose full text is in the shared index (readable via `search-in`/`fulltext`) and `--abstract` opts into bulkier abstract output. Each result reports `indexed`/`indexedFiles` from that index — independent of whether attachment files exist on the current device.
 - Search results return compact passages centered on the hit, stable `itemKey`s, internal `charOffset`s for `expand`, and page hints (`pageStart` / `pageEnd`) when the extractor recorded them.
 
 ### Retrieve
@@ -185,7 +185,7 @@ Search
       syntax as `search`: "exact phrase", OR, NOT, term NEAR/<n> term, prefix*.
       Requires a populated keyword index (run `zotagent sync` first).
 
-  metadata ["<text>"] [--limit <n>] [--field <field>] [--has-file] [--abstract]
+  metadata ["<text>"] [--limit <n>] [--field <field>] [--indexed] [--abstract]
            [--author <text>] [--year <text>] [--title <text>] [--journal <text>] [--publisher <text>]
            [--tag <tag>] [--collection-key <key>]
       Search Zotero bibliography metadata read from bibliographyJsonPath.
@@ -206,7 +206,8 @@ Search
         --collection-key <key>      Filter by top-level items directly in this Zotero collection.
                                     Repeatable (union); combinable with --tag (intersection);
                                     requires Zotero read API config.
-        --has-file                  Keep only metadata results with a supported indexed attachment.
+        --indexed                   Keep only metadata results with a full-text-indexed attachment
+                                    (readable via search-in/fulltext).
         --abstract                  Include the abstract in each result. Omitted by default to keep
                                     bulk responses compact for agents.
 

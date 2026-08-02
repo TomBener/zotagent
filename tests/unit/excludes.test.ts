@@ -13,8 +13,6 @@ function makeRecord(itemKey: string, citationKey?: string): BibliographyRecord {
     authors: ["A"],
     authorSearchTexts: ["a"],
     attachmentPaths: [],
-    supportedFiles: [],
-    hasSupportedFile: false,
   };
 }
 

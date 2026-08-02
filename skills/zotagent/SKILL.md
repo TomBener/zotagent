@@ -15,7 +15,7 @@ Don't invent citation keys, item keys, or passage text. If a query returns nothi
 |---|---|---|
 | `zotagent search "<q>" [--semantic] [--tag <tag>] [--collection-key <key>] [--limit n] [--min-score n]` | Indexed full text only — body, not title (FTS5 keyword by default; qmd vector search with `--semantic`; optional Zotero tag and/or collection filter for keyword search) | Finding passages that discuss a topic across the library or within a tagged or collection-scoped subset |
 | `zotagent search-in "<q>" --key <k> [--limit n]` | Full text of one item's indexed attachments | Drilling into a single paper for terms or quoted phrases |
-| `zotagent metadata ["<q>"] [metadata filters...] [--tag <tag>] [--collection-key <key>] [--field f] [--abstract] [--has-file] [--limit n]` | Bibliography fields: title / author / year / journal / publisher / abstract, optionally filtered by Zotero tags or collections | Finding papers by metadata or by title, verifying existence, resolving an `itemKey` |
+| `zotagent metadata ["<q>"] [metadata filters...] [--tag <tag>] [--collection-key <key>] [--field f] [--abstract] [--indexed] [--limit n]` | Bibliography fields: title / author / year / journal / publisher / abstract, optionally filtered by Zotero tags or collections | Finding papers by metadata or by title, verifying existence, resolving an `itemKey` |
 
 Metadata quick rules:
 
@@ -24,6 +24,7 @@ Metadata quick rules:
 - `--tag "PhD Thesis"` fetches matching top-level item keys from the Zotero Web API, then filters local results — so put workflow tags on the parent item, not the PDF attachment. Repeat `--tag` to AND tags. Requires Zotero read API config.
 - `--collection-key ABCD1234` filters to top-level items directly in the named Zotero collection (the 8-char key shown at the end of `zotero.org/<user>/collections/<key>`). Repeat `--collection-key` to union across collections; combine with `--tag` for an intersection. Direct members only — sub-collections are not included. Requires Zotero read API config.
 - `--abstract` includes abstract text in the output (omitted by default to keep responses compact). To search abstract text, use a positional query with `--field abstract`.
+- Each result reports `indexed` / `indexedFiles`, read from the shared full-text index: whether `search-in` / `fulltext` can read the item. This is device-independent — it says nothing about whether attachment files exist on the current machine, and a `file` entry in Zotero alone does not make it true; the attachment must have been extracted by a `sync`. `--indexed` keeps only indexed items.
 - `metadata "Pratt 1985"` generally returns empty (year is not OR'd in) — split into `--author "Pratt" --year "1985"`.
 
 Keyword syntax — `search` and `search-in` both run SQLite FTS5 with a porter stemmer over a Trad→Simp folded index:
@@ -109,7 +110,7 @@ zotagent metadata --collection-key ABCD1234
 zotagent metadata "land reform" --collection-key ABCD1234 --tag "PhD Thesis"
 
 # Keep only indexed items; include abstract text only when needed
-zotagent metadata "dangwei shuji" --has-file
+zotagent metadata "dangwei shuji" --indexed
 zotagent metadata "aging in China" --abstract
 
 # Use a returned key with retrieval commands
@@ -207,6 +208,6 @@ Sync exclusions are driven by a Zotero tag, not a local file: tag a top-level it
 
 ## Index freshness
 
-`search` / `search-in` / `blocks` / `expand` / `fulltext` read a local index. On `NO_INDEX` or "No indexed documents found", suggest `zotagent sync`. `metadata` / `add` / `s2` / `recent` work without the local index. After `add`, the new paper isn't full-text searchable until the next `sync`.
+`search` / `search-in` / `blocks` / `expand` / `fulltext` read a local index. On `NO_INDEX` or "No indexed documents found", suggest `zotagent sync`. `metadata` / `add` / `s2` / `recent` work without the local index (`metadata` then reports `indexed: false` everywhere). After `add`, the new paper isn't full-text searchable until the next `sync`.
 
 If you need a command or flag not covered here, run `zotagent help`.

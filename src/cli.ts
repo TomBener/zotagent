@@ -770,7 +770,7 @@ async function main(): Promise<void> {
             : undefined;
         const data = await searchMetadata(query, limit, overrides, {
           ...(requestedFields.length > 0 ? { fields: requestedFields as MetadataField[] } : {}),
-          ...(getBooleanFlag(parsed.flags, "has-file") ? { hasFile: true } : {}),
+          ...(getBooleanFlag(parsed.flags, "indexed") ? { indexed: true } : {}),
           ...(getBooleanFlag(parsed.flags, "abstract") ? { includeAbstract: true } : {}),
           ...(hasFilters ? { filters } : {}),
           ...(itemKeys !== undefined ? { itemKeys } : {}),

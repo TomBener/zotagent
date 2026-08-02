@@ -30,6 +30,15 @@ export interface CatalogData {
   attachments: AttachmentCatalogEntry[];
 }
 
+export interface LoadedCatalog extends CatalogData {
+  /**
+   * Attachment paths listed in the bibliography before relocation against
+   * attachmentsRoot. When this is non-zero but `attachments` is empty, every
+   * path failed to resolve — almost always a misconfigured attachmentsRoot.
+   */
+  filePathCount: number;
+}
+
 const JOURNAL_TYPES = new Set(["article-journal", "article-magazine", "article-newspaper", "article"]);
 const PUBLISHER_TYPES = new Set(["book", "chapter", "thesis", "report", "paper-conference"]);
 
@@ -215,10 +224,11 @@ function relocateAttachmentPath(
   };
 }
 
-export function loadCatalog(config: AppConfig): CatalogData {
+export function loadCatalog(config: AppConfig): LoadedCatalog {
   const rawItems = readBibliography(config.bibliographyJsonPath);
   const records: BibliographyRecord[] = [];
   const attachments: AttachmentCatalogEntry[] = [];
+  let filePathCount = 0;
 
   for (const item of rawItems) {
     const itemKey = (item["zotero-item-key"] || "").trim();
@@ -229,7 +239,9 @@ export function loadCatalog(config: AppConfig): CatalogData {
     const people = authors.names.length > 0 ? authors : editors;
     const title = (item.title || "").trim() || itemKey;
     const type = (item.type || "").trim() || undefined;
-    const resolvedAttachments = splitFileField(item.file).reduce<Array<{
+    const rawFilePaths = splitFileField(item.file);
+    filePathCount += rawFilePaths.length;
+    const resolvedAttachments = rawFilePaths.reduce<Array<{
       absolutePath: string;
       relativePath: string;
     }>>((out, filePath) => {
@@ -241,9 +253,6 @@ export function loadCatalog(config: AppConfig): CatalogData {
       return out;
     }, []);
     const attachmentPaths = resolvedAttachments.map((attachment) => attachment.absolutePath);
-    const supportedFiles = resolvedAttachments
-      .map((attachment) => attachment.absolutePath)
-      .filter((filePath) => toSupportedFileType(filePath) !== "other");
     const journal =
       type && JOURNAL_TYPES.has(type) ? firstString(item["container-title"]) : undefined;
     const publisher =
@@ -261,8 +270,6 @@ export function loadCatalog(config: AppConfig): CatalogData {
       ...(publisher ? { publisher } : {}),
       type,
       attachmentPaths,
-      supportedFiles,
-      hasSupportedFile: supportedFiles.length > 0,
     });
 
     for (const attachment of resolvedAttachments) {
@@ -288,7 +295,7 @@ export function loadCatalog(config: AppConfig): CatalogData {
   const deduped = preferEpubOverPdf(attachments);
   deduped.sort((a, b) => a.filePath.localeCompare(b.filePath));
   records.sort((a, b) => a.itemKey.localeCompare(b.itemKey));
-  return { records, attachments: deduped };
+  return { records, attachments: deduped, filePathCount };
 }
 
 export function preferEpubOverPdf(
