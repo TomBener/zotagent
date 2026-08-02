@@ -177,6 +177,44 @@ test("searchMetadata reports indexed status from the shared index catalog", asyn
   );
 });
 
+test("searchMetadata warns when the index catalog is missing or has no ready entries", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-metadata-empty-catalog-"));
+  const { attachmentsRoot, pdfPath } = createFixturePaths(root);
+  const { bibliographyPath, dataDir } = writeBibliography(root, [
+    {
+      id: "benoit2026ull",
+      title: "Using large language models to analyze political texts",
+      author: [{ family: "Benoit", given: "Kenneth" }],
+      issued: { "date-parts": [[2026]] },
+      type: "article-journal",
+      file: pdfPath,
+      "zotero-item-key": "ITEM1",
+    },
+  ]);
+  const overrides = { bibliographyJsonPath: bibliographyPath, attachmentsRoot, dataDir };
+
+  // No catalog written at all — warn, but still return metadata results.
+  const missingCatalog = await searchMetadata("large language models", 10, overrides);
+  assert.equal(missingCatalog.results.length, 1);
+  assert.equal(missingCatalog.results[0]?.indexed, false);
+  assert.ok(
+    missingCatalog.warnings?.some((w) => /index catalog .* missing or has no ready entries/u.test(w)),
+  );
+
+  // A catalog whose only entries failed extraction is just as unusable.
+  writeIndexCatalog(dataDir, [{ itemKey: "ITEM1", filePath: pdfPath, extractStatus: "error" }]);
+  const noReadyEntries = await searchMetadata("large language models", 10, overrides);
+  assert.ok(
+    noReadyEntries.warnings?.some((w) => /index catalog .* missing or has no ready entries/u.test(w)),
+  );
+
+  // One ready entry clears the warning.
+  writeIndexCatalog(dataDir, [{ itemKey: "ITEM1", filePath: pdfPath }]);
+  const readyCatalog = await searchMetadata("large language models", 10, overrides);
+  assert.equal(readyCatalog.results[0]?.indexed, true);
+  assert.equal(readyCatalog.warnings, undefined);
+});
+
 test("searchMetadata supports author variants and field filtering", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-metadata-author-"));
   const { attachmentsRoot } = createFixturePaths(root);

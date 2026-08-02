@@ -118,7 +118,8 @@ export async function searchMetadata(
   // bibliography file paths against the local attachmentsRoot — the index is
   // what search-in/fulltext actually read, and it stays correct on devices
   // that hold the index but not the attachment files themselves.
-  const indexCatalog = readCatalogFile(getDataPaths(config.dataDir).catalogPath);
+  const catalogPath = getDataPaths(config.dataDir).catalogPath;
+  const indexCatalog = readCatalogFile(catalogPath);
   const indexedFilesByItemKey = new Map<string, string[]>();
   for (const entry of getReadyEntries(indexCatalog)) {
     const files = indexedFilesByItemKey.get(entry.itemKey) ?? [];
@@ -126,6 +127,11 @@ export async function searchMetadata(
     indexedFilesByItemKey.set(entry.itemKey, files);
   }
   const warnings: string[] = [...config.warnings];
+  if (records.length > 0 && indexedFilesByItemKey.size === 0) {
+    warnings.push(
+      `Full-text index catalog at ${compactHomePath(catalogPath)} is missing or has no ready entries; every result reports indexed: false. Run \`zotagent sync\` where the index is built, or re-copy the index directory onto this device.`,
+    );
+  }
   if (itemKeyFilter !== undefined && itemKeyFilter.size > 0) {
     const knownItemKeys = new Set(
       records.filter((record) => itemKeyFilter.has(record.itemKey)).map((record) => record.itemKey),

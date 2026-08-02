@@ -189,7 +189,9 @@ Search
       --collection-key fetch matching top-level item keys from the Zotero Web
       API, then filter locally. Each result reports indexed/indexedFiles from
       the shared full-text index: whether search-in/fulltext can read the item,
-      independent of whether attachment files exist on this device.
+      independent of whether attachment files exist on this device. When that
+      index catalog is missing or has no ready entries, a warning is emitted
+      and every result reports indexed: false.
         --field <field>             Limit the positional query to title, author, year, abstract,
                                     journal, or publisher. Repeatable.
         --author <text>             Filter by author substring.

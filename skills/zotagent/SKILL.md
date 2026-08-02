@@ -208,6 +208,6 @@ Sync exclusions are driven by a Zotero tag, not a local file: tag a top-level it
 
 ## Index freshness
 
-`search` / `search-in` / `blocks` / `expand` / `fulltext` read a local index. On `NO_INDEX` or "No indexed documents found", suggest `zotagent sync`. `metadata` / `add` / `s2` / `recent` work without the local index (`metadata` then reports `indexed: false` everywhere). After `add`, the new paper isn't full-text searchable until the next `sync`.
+`search` / `search-in` / `blocks` / `expand` / `fulltext` read a local index. On "No indexed documents found", suggest `zotagent sync`. `metadata` / `add` / `s2` / `recent` work without the local index (`metadata` then reports `indexed: false` everywhere and warns that the index catalog is empty). After `add`, the new paper isn't full-text searchable until the next `sync`.
 
 If you need a command or flag not covered here, run `zotagent help`.
