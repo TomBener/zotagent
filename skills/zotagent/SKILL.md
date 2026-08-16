@@ -1,6 +1,6 @@
 ---
 name: zotagent
-description: Search, retrieve, inspect, or add Zotero literature via the `zotagent` CLI. Load this skill whenever the user wants to query their Zotero library (keyword / semantic / metadata), pull quotations or context from indexed papers, add items by DOI, web page URL, ISBN / PMID / arXiv identifier, Semantic Scholar paperId, JSON, or manual metadata, inspect recent Zotero items, or diagnose indexed attachments. Use it even on indirect requests — any mention of references, citations, bibliography checks, PDF passages, or literature discovery. Do not guess at zotagent's flags — consult this reference first.
+description: Search, retrieve, inspect, add, or edit Zotero literature via the `zotagent` CLI. Load this skill whenever the user wants to query their Zotero library (keyword / semantic / metadata), pull quotations or context from indexed papers, add items by DOI, web page URL, ISBN / PMID / arXiv identifier, Semantic Scholar paperId, JSON, or manual metadata, change existing items (fix a field, add or remove tags, file into a collection, attach a note, trash an item), inspect recent Zotero items, or diagnose indexed attachments. Use it even on indirect requests — any mention of references, citations, bibliography checks, PDF passages, or literature discovery. Do not guess at zotagent's flags — consult this reference first.
 ---
 
 # zotagent
@@ -209,5 +209,9 @@ Sync exclusions are driven by a Zotero tag, not a local file: tag a top-level it
 ## Index freshness
 
 `search` / `search-in` / `blocks` / `expand` / `fulltext` read a local index. On "No indexed documents found", suggest `zotagent sync`. `metadata` / `add` / `s2` / `recent` work without the local index (`metadata` then reports `indexed: false` everywhere and warns that the index catalog is empty). After `add`, the new paper isn't full-text searchable until the next `sync`.
+
+## Editing Zotero, and fields the CLI doesn't return
+
+`zotagent` reads a local index plus a local bibliography export, and its only write is creating items with `add`. Go to the Zotero API directly for one item's complete field set (DOI, volume, pages, URL, tags, collections, dates), for collection keys and the tag list, and for every edit — changing a field, adding or removing a tag, filing into a collection, attaching a note, trashing an item. Read [`references/zotero-web-api.md`](references/zotero-web-api.md) before the first such call: it carries the credential handling, the read-modify-write rule that keeps an edit from wiping the fields you didn't send, and the confirmation gate on deletions.
 
 If you need a command or flag not covered here, run `zotagent help`.
