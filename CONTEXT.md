@@ -65,7 +65,11 @@ tests, commits, and reviews — one name per concept.
 - **Extraction pipeline** — `src/extract.ts`: tier fallback (ODL structured →
   ODL text-only → pdftotext), batch grouping, and the vertical-text rule,
   which the dispatcher resolves exactly once per batch — tiers receive a
-  plain verdict, never the tag set.
+  plain verdict, never the tag set. Both ODL tiers share one options builder
+  (`odlConvertOptions`) so the content-safety decision cannot drift between
+  them, and the structured tier refuses its own output when the yield per
+  page is too low to believe (`odlYieldShortfall`) — the only way a clean
+  exit turns into a fallback instead of a `ready` catalog entry.
 
 ## Add
 

@@ -30,6 +30,27 @@ const ODL_STRUCTURAL_BUG_PATTERNS = [
 const ODL_EMPTY_OUTPUT_PATTERN = /Extracted output was empty/i;
 const ODL_TIMEOUT_PATTERN = /timed out after/i;
 
+// OpenDataLoader's content-safety layer discards text it judges adversarial.
+// Its "tiny" rule sizes glyphs from the font's /FontBBox, so a subsetted font
+// declaring [0 0 0 0] — routine in CNKI exports and other Founder-typeset
+// Chinese PDFs — makes every glyph look zero-height and the whole body is
+// thrown away: a twelve-page article extracts to its lone DOI line, the only
+// run set in a standard-14 font that carries its own metrics. A personal
+// library has no adversary to defend against here; the remaining rules
+// (hidden-text, off-page, hidden-ocg) cost nothing and stay on.
+const ODL_CONTENT_SAFETY_OFF = "tiny";
+
+// A clean exit carrying a well-formed but nearly empty result is the failure
+// no error path catches: the extractor reports success, the artifact
+// publishes, and the catalog records `ready`. Yield per page is the cheapest
+// honest signal. Calibrated against a 500-PDF sample of a real library, where
+// the thinnest healthy document still yielded 291 chars/page and the 1st
+// percentile 564 — 50 sits an order of magnitude below anything legitimate.
+// Short documents are exempt: a scanned map or a one-page photo plate is
+// text-free by nature rather than by failure.
+const ODL_MIN_YIELD_PAGES = 4;
+const ODL_MIN_CHARS_PER_PAGE = 50;
+
 function isOdlStructuralBug(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return ODL_STRUCTURAL_BUG_PATTERNS.some((pattern) => pattern.test(message));
@@ -44,6 +65,120 @@ function isOdlEmptyOutput(error: unknown): boolean {
 function isOdlTimeout(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return ODL_TIMEOUT_PATTERN.test(message);
+}
+
+/** Thrown when OpenDataLoader exits cleanly having read almost nothing. Routes
+ *  to the pdftotext tier — another pass of the same engine would land in the
+ *  same place. */
+export class LowYieldExtractionError extends Error {
+  constructor(filePath: string, chars: number, pages: number) {
+    super(
+      `Extracted output was implausibly short for ${filePath}: ${chars} chars across ${pages} pages`,
+    );
+    this.name = "LowYieldExtractionError";
+  }
+}
+
+function isOdlLowYield(error: unknown): boolean {
+  return error instanceof LowYieldExtractionError;
+}
+
+function pageCountFromOdlJson(json: string): number | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    return undefined;
+  }
+  if (!parsed || typeof parsed !== "object") return undefined;
+  const pages = (parsed as Record<string, unknown>)["number of pages"];
+  return typeof pages === "number" && Number.isFinite(pages) && pages > 0 ? pages : undefined;
+}
+
+/** The shortfall when a structured extraction is too thin to believe, or
+ *  undefined when it passes or cannot be judged — unparseable JSON, no page
+ *  count, or too few pages to hold an opinion. */
+export function odlYieldShortfall(
+  markdown: string,
+  json: string,
+): { chars: number; pages: number } | undefined {
+  const pages = pageCountFromOdlJson(json);
+  if (pages === undefined || pages < ODL_MIN_YIELD_PAGES) return undefined;
+  const chars = markdown.trim().length;
+  return chars < pages * ODL_MIN_CHARS_PER_PAGE ? { chars, pages } : undefined;
+}
+
+// pdftotext is the last tier, so nothing downstream can improve on what it
+// returns and it must not hand the index text that is not text. A PDF whose
+// embedded fonts carry no usable character map extracts as dense low-ASCII
+// noise: letters scarce, and symbols that prose almost never uses everywhere.
+// Neither ratio separates it alone — a statistical yearbook is legitimately
+// letter-poor, a Republican-era scan legitimately symbol-rich — but together
+// they do. On real pdftotext output the two populations are an order of
+// magnitude apart: rescued documents measured 0.001–0.013 symbols against
+// 0.10–0.31 for the garbled ones, all of them well clear of the letter floor.
+//
+// This judges plain text only, never Markdown: `#`, `|`, `*`, and `>` are
+// syntax there, so ODL's structured output scores as symbol-rich whenever it
+// emits many headings or tables — one fragmented book ran to 300k `#`
+// characters. Applying the pair to that tier would need the syntax stripped
+// first. Short outputs are not judged; the ratios are noise at that length.
+const GARBLED_MAX_LETTER_RATIO = 0.5;
+const GARBLED_MIN_SYMBOL_RATIO = 0.05;
+const GARBLED_MIN_SAMPLE_CHARS = 200;
+const GARBLED_SYMBOLS = new Set([..."#$&*+<=>@\\^_`|~/"]);
+const WHITESPACE_RE = /\s/;
+const LETTER_RE = /\p{L}/u;
+
+/** Thrown when the last tier produces something that is not legible text. No
+ *  tier remains to do better, so the attachment fails honestly rather than
+ *  publishing noise into the keyword and embedding indexes. */
+export class GarbledExtractionError extends Error {
+  constructor(filePath: string, letterRatio: number, symbolRatio: number) {
+    super(
+      `Extracted text is illegible for ${filePath}: ${Math.round(letterRatio * 100)}% letters, ` +
+        `${Math.round(symbolRatio * 100)}% rare symbols — the PDF's fonts carry no usable ` +
+        `character map, so it needs OCR (e.g. ocrmypdf --force-ocr) before it can be indexed`,
+    );
+    this.name = "GarbledExtractionError";
+  }
+}
+
+/** The measured ratios when text reads as character-map noise rather than
+ *  language, or undefined when it passes or is too short to judge. */
+export function garbledTextRatios(
+  text: string,
+): { letterRatio: number; symbolRatio: number } | undefined {
+  let letters = 0;
+  let symbols = 0;
+  let total = 0;
+  for (const char of text) {
+    if (WHITESPACE_RE.test(char)) continue;
+    total += 1;
+    if (LETTER_RE.test(char)) letters += 1;
+    else if (GARBLED_SYMBOLS.has(char)) symbols += 1;
+  }
+  if (total < GARBLED_MIN_SAMPLE_CHARS) return undefined;
+  const letterRatio = letters / total;
+  const symbolRatio = symbols / total;
+  return letterRatio < GARBLED_MAX_LETTER_RATIO && symbolRatio > GARBLED_MIN_SYMBOL_RATIO
+    ? { letterRatio, symbolRatio }
+    : undefined;
+}
+
+/** The ODL invocation both PDF tiers share, so the content-safety decision and
+ *  the vertical-text rule cannot drift apart between them. */
+export function odlConvertOptions(
+  outputDir: string,
+  format: string,
+  vertical: boolean,
+): ConvertOptions {
+  return {
+    outputDir,
+    format,
+    contentSafetyOff: ODL_CONTENT_SAFETY_OFF,
+    ...(vertical ? { readingOrder: "off" } : {}),
+  };
 }
 const ODL_EXTRA_BATCH_TIMEOUT_MS = 30_000;
 const ODL_FORCE_KILL_GRACE_MS = 1_000;
@@ -421,9 +556,19 @@ async function extractBatchPdftotext(
         throw new Error(`pdftotext output not found for ${attachment.filePath}`);
       }
 
+      const text = readFileSync(textPath, "utf-8");
+      const garbled = garbledTextRatios(text);
+      if (garbled) {
+        throw new GarbledExtractionError(
+          attachment.filePath,
+          garbled.letterRatio,
+          garbled.symbolRatio,
+        );
+      }
+
       const built = buildMarkdownManifest(
         attachment,
-        readFileSync(textPath, "utf-8"),
+        text,
         options.isVertical(attachment) ? { verticalText: true } : {},
       );
       store.publish(built);
@@ -451,11 +596,7 @@ async function extractBatchTextOnly(
     await withJavaToolOptions(() =>
       runOdlConvert(
         batch.map((attachment) => attachment.filePath),
-        {
-          outputDir: tempDir,
-          format: "text",
-          ...(verticalText ? { readingOrder: "off" } : {}),
-        },
+        odlConvertOptions(tempDir, "text", verticalText),
         options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {},
       ),
     );
@@ -517,7 +658,8 @@ export async function extractBatch(
   if (
     isOdlStructuralBug(primaryError) ||
     isOdlEmptyOutput(primaryError) ||
-    isOdlTimeout(primaryError)
+    isOdlTimeout(primaryError) ||
+    isOdlLowYield(primaryError)
   ) {
     try {
       return await extractBatchPdftotext(batch, tempRoot, store, {
@@ -562,11 +704,7 @@ async function extractBatchStructured(
     await withJavaToolOptions(() =>
       runOdlConvert(
         batch.map((attachment) => attachment.filePath),
-        {
-          outputDir: tempDir,
-          format: "markdown,json",
-          ...(verticalText ? { readingOrder: "off" } : {}),
-        },
+        odlConvertOptions(tempDir, "markdown,json", verticalText),
         options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {},
       ),
     );
@@ -579,10 +717,17 @@ async function extractBatchStructured(
         throw new Error(`OpenDataLoader output not found for ${attachment.filePath}`);
       }
 
+      const markdown = readFileSync(markdownPath, "utf-8");
+      const json = readFileSync(jsonPath, "utf-8");
+      const shortfall = odlYieldShortfall(markdown, json);
+      if (shortfall) {
+        throw new LowYieldExtractionError(attachment.filePath, shortfall.chars, shortfall.pages);
+      }
+
       const built = buildPdfManifest(
         attachment,
-        readFileSync(markdownPath, "utf-8"),
-        readFileSync(jsonPath, "utf-8"),
+        markdown,
+        json,
         verticalText ? { verticalText: true } : {},
       );
       store.publish(built);
