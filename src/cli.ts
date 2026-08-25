@@ -14,7 +14,13 @@ import { KeywordQuerySyntaxError } from "./keyword-db.js";
 import { searchMetadata } from "./metadata.js";
 import { openQmdClient } from "./qmd.js";
 import { listRecentItems, type RecentSort } from "./recent.js";
-import { searchSemanticScholar } from "./s2.js";
+import {
+  getSemanticScholarCitations,
+  getSemanticScholarReferences,
+  normalizeS2PaperId,
+  searchSemanticScholar,
+  SemanticScholarError,
+} from "./s2.js";
 import { runSync } from "./sync.js";
 import { TranslationServerError } from "./translation-server.js";
 import type { MetadataField } from "./types.js";
@@ -509,7 +515,7 @@ async function main(): Promise<void> {
           : identifier
             ? { kind: "identifier", identifier, input: sharedInput }
             : s2PaperId
-              ? { kind: "s2", paperId: s2PaperId, input: sharedInput }
+              ? { kind: "s2", paperId: normalizeS2PaperId(s2PaperId), input: sharedInput }
               : { kind: "doi-or-manual", input: sharedInput };
         try {
           const outcome = await runAdd(request, overrides);
@@ -586,7 +592,112 @@ async function main(): Promise<void> {
           return;
         }
         const limit = limitInput.value ?? 10;
-        const data = await searchSemanticScholar(query, limit, overrides);
+        if (limit > 100) {
+          emitError("INVALID_ARGUMENT", "`--limit` for s2 cannot exceed 100 (Semantic Scholar page size).");
+          return;
+        }
+        const offsetInput = parseNumericFlag(parsed.flags, "offset", {
+          requirement: "a non-negative integer",
+          constraint: "a non-negative integer",
+          integer: true,
+          min: 0,
+        });
+        if (offsetInput.error) {
+          emitError("INVALID_ARGUMENT", offsetInput.error);
+          return;
+        }
+        const offset = offsetInput.value;
+        if ((offset ?? 0) + limit > 1000) {
+          emitError(
+            "INVALID_ARGUMENT",
+            "`--offset` plus `--limit` cannot exceed 1000 for s2 (Semantic Scholar search window).",
+          );
+          return;
+        }
+        if (parsed.flags.year === true) {
+          emitError("INVALID_ARGUMENT", "`--year` requires a value: a year or a range, e.g. 2020 or 2018-2020.");
+          return;
+        }
+        const year = getStringFlag(parsed.flags, "year");
+        if (year !== undefined && !/^\d{4}(-\d{4})?$/u.test(year)) {
+          emitError("INVALID_ARGUMENT", "`--year` must be a 4-digit year or a range, e.g. 2020 or 2018-2020.");
+          return;
+        }
+        const data = await searchSemanticScholar(
+          query,
+          {
+            limit,
+            ...(offset !== undefined ? { offset } : {}),
+            ...(year ? { year } : {}),
+          },
+          overrides,
+        );
+        emitOk(data);
+        return;
+      }
+
+      // References and citations are the same request in two directions:
+      // identical validation, identical row shape, one branch at the fetch.
+      // Flags are checked and the identifier normalized before any network
+      // call, so bad input never spends a rate-limited request.
+      case "s2-refs":
+      case "s2-citations": {
+        const ids = parsed.positionals.slice(1);
+        if (ids.length === 0) {
+          emitError(
+            "MISSING_ARGUMENT",
+            `Missing paper identifier. Use: zotagent ${command} <paperId|DOI|arXiv id|URL>`,
+          );
+          return;
+        }
+        if (ids.length > 1) {
+          emitError(
+            "UNEXPECTED_ARGUMENT",
+            `${command} accepts exactly one paper identifier. Got: ${ids.join(", ")}`,
+          );
+          return;
+        }
+        const limitInput = parseNumericFlag(parsed.flags, "limit", {
+          requirement: "a positive integer",
+          constraint: "a positive integer",
+          integer: true,
+          min: 1,
+        });
+        if (limitInput.error) {
+          emitError("INVALID_ARGUMENT", limitInput.error);
+          return;
+        }
+        const limit = limitInput.value ?? 50;
+        if (limit > 1000) {
+          emitError(
+            "INVALID_ARGUMENT",
+            `\`--limit\` for ${command} cannot exceed 1000 (Semantic Scholar page size).`,
+          );
+          return;
+        }
+        const offsetInput = parseNumericFlag(parsed.flags, "offset", {
+          requirement: "a non-negative integer",
+          constraint: "a non-negative integer",
+          integer: true,
+          min: 0,
+        });
+        if (offsetInput.error) {
+          emitError("INVALID_ARGUMENT", offsetInput.error);
+          return;
+        }
+        const offset = offsetInput.value ?? 0;
+        if (offset + limit > 10_000) {
+          emitError(
+            "INVALID_ARGUMENT",
+            `\`--offset\` plus \`--limit\` cannot exceed 10000 for ${command} (Semantic Scholar pagination window).`,
+          );
+          return;
+        }
+        const paperId = normalizeS2PaperId(ids[0]);
+        const data =
+          command === "s2-refs"
+            ? await getSemanticScholarReferences(paperId, { limit, offset }, overrides)
+            : await getSemanticScholarCitations(paperId, { limit, offset }, overrides);
         emitOk(data);
         return;
       }
@@ -948,6 +1059,10 @@ async function main(): Promise<void> {
         "INVALID_ARGUMENT",
         error.message,
       );
+      return;
+    }
+    if (error instanceof SemanticScholarError) {
+      emitError(error.code, error.message, error.details);
       return;
     }
     emitError(

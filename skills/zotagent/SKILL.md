@@ -5,7 +5,7 @@ description: Search, retrieve, inspect, add, or edit Zotero literature via the `
 
 # zotagent
 
-`zotagent` is a CLI for a Zotero library: search and retrieve indexed attachments (PDF / EPUB / HTML / TXT) and bibliography metadata, add items by DOI, web page URL, identifier (ISBN / PMID / arXiv), Semantic Scholar paperId, JSON, or manual fields, and inspect recent Zotero items. Task commands emit JSON (`{ok: true, data, meta?}` on success, `{ok: false, error, meta?}` + exit 1 on failure).
+`zotagent` is a CLI for a Zotero library: search and retrieve indexed attachments (PDF / EPUB / HTML / TXT) and bibliography metadata, add items by DOI, web page URL, identifier (ISBN / PMID / arXiv), Semantic Scholar paperId, JSON, or manual fields, follow a paper's references and citations through Semantic Scholar, and inspect recent Zotero items. Task commands emit JSON (`{ok: true, data, meta?}` on success, `{ok: false, error, meta?}` + exit 1 on failure).
 
 Don't invent citation keys, item keys, or passage text. If a query returns nothing, say so.
 
@@ -131,6 +131,10 @@ zotagent add --doi "10.48550/arXiv.2406.01234"
 zotagent s2 "state-owned enterprise governance" --limit 5
 zotagent add --s2-paper-id <paperId>
 
+# --s2-paper-id also takes a DOI, an arXiv id, or a prefixed identifier
+zotagent add --s2-paper-id "10.1093/ajae/aaq063"
+zotagent add --s2-paper-id "ARXIV:2106.15928"
+
 # Manual fallback — authors go in Zotero "Last, First" form; repeat --author for multiple
 zotagent add --title "Title of a paper" --author "Zhang, San" --year 2026 --publication "Journal of Important Studies"
 
@@ -158,9 +162,33 @@ echo '{"itemType":"journalArticle","title":"...","attachFile":"/path/to/foo.pdf"
 
 `s2` results include `openAccessPdfUrl` when available — surface it to the user as a free PDF link alongside the `add` suggestion.
 
-**S2 rate limit**: 1 request/second, cumulative across Semantic Scholar endpoints (`s2` and `add --s2-paper-id`). Run these sequentially, never in parallel — parallel calls will 429. Spacing between separate tool calls is usually enough; no sleep needed.
+**S2 rate limit**: 1 request/second, cumulative across Semantic Scholar endpoints (`s2`, `s2-refs`, `s2-citations`, `add --s2-paper-id`). Run these sequentially, never in parallel — parallel calls will 429. zotagent now retries a 429 on its own (up to 2 retries, honoring `Retry-After`, each wait capped at 10s), so an occasional collision is absorbed; if the retries run out the command fails with `RATE_LIMITED` and the fix is to slow down, not to retry harder. Spacing between separate tool calls is usually enough; no sleep needed. All four commands need `semanticScholarApiKey` in the config; without it they fail with `SEMANTIC_SCHOLAR_NOT_CONFIGURED` — a config problem, never worth retrying.
 
 `add --from-url` / `add --identifier` exist but assume a self-hosted Zotero translation server, which is normally not configured — expect `TRANSLATION_SERVER_NOT_CONFIGURED` and reroute by the source priority above instead of retrying. Set `translationServerUrl` only while a server is actually running (configured-but-dead fails `--doi` too); server-mode details are in the README.
+
+### Explore a paper's references and citations
+
+Citation chaining is the strongest discovery signal in a literature review: `s2-refs` returns the papers a work cites (its bibliography, i.e. backward in time), `s2-citations` the papers that cite it (forward in time).
+
+```bash
+# Backward: what does this paper build on?
+zotagent s2-refs "10.18653/v1/N18-1022" --limit 20
+
+# Forward: who has cited it since?
+zotagent s2-citations "DOI:10.18653/v1/N18-1022" --limit 20
+
+# Page through a long bibliography — data.next is the offset for the next call
+zotagent s2-refs 649def34f8be52c8b66281af98ae884c09aef38b --limit 50 --offset 50
+
+# Quote URLs so the shell does not eat the ? and &
+zotagent s2-refs "https://arxiv.org/abs/2106.15928" --limit 10
+```
+
+Both take **one identifier, never a title**: a 40-character `paperId`, a DOI, an arXiv id, a prefixed id (`DOI:`, `ARXIV:`, `PMID:`, `CorpusId:`, `URL:`), or a doi.org / arxiv.org / semanticscholar.org URL. For a paper you only know by title, run `s2 "<title>"` first and pass a returned `paperId`. A bad identifier fails locally with `INVALID_ARGUMENT` and spends no request.
+
+Rows carry `isInfluential: true` when Semantic Scholar marks the edge influential — a useful ranking hint on a long bibliography. Rows deliberately **omit the abstract**; to read one, feed that row's `paperId` to `add --s2-paper-id` (which fetches the full record) or look the paper up in the library with `metadata`. Entries Semantic Scholar has no record for are dropped and reported in `data.warnings`.
+
+An empty `results` with `ok: true` is a real answer, not a failure: some publishers withhold reference lists from Semantic Scholar, so `s2-refs` on such a paper returns nothing while `s2-citations` on it still works. Don't retry it — try the other direction, or a different identifier for the same work.
 
 ### List recently added or modified items
 
@@ -208,7 +236,7 @@ Sync exclusions are driven by a Zotero tag, not a local file: tag a top-level it
 
 ## Index freshness
 
-`search` / `search-in` / `blocks` / `expand` / `fulltext` read a local index. On "No indexed documents found", suggest `zotagent sync`. `metadata` / `add` / `s2` / `recent` work without the local index (`metadata` then reports `indexed: false` everywhere and warns that the index catalog is empty). After `add`, the new paper isn't full-text searchable until the next `sync`.
+`search` / `search-in` / `blocks` / `expand` / `fulltext` read a local index. On "No indexed documents found", suggest `zotagent sync`. `metadata` / `add` / `s2` / `s2-refs` / `s2-citations` / `recent` work without the local index (`metadata` then reports `indexed: false` everywhere and warns that the index catalog is empty). After `add`, the new paper isn't full-text searchable until the next `sync`.
 
 ## Editing Zotero, and fields the CLI doesn't return
 

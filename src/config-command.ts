@@ -62,7 +62,7 @@ const FIELDS: FieldSpec[] = [
     key: "semanticScholarApiKey",
     required: false,
     secret: true,
-    help: "Semantic Scholar API key. Required by `s2` and `add --s2-paper-id`.",
+    help: "Semantic Scholar API key. Required by `s2`, `s2-refs`, `s2-citations`, and `add --s2-paper-id`.",
   },
   {
     key: "translationServerUrl",

@@ -272,7 +272,9 @@ test("help summarizes current commands and keeps config-only overrides out of th
     result.stdout,
     /add \[--doi <doi> \| --s2-paper-id <id> \| --from-url <url> \| --identifier <id> \| --json <file\|->\]/,
   );
-  assert.match(result.stdout, /s2 "<text>" \[--limit <n>\]/);
+  assert.match(result.stdout, /s2 "<text>" \[--limit <n>\] \[--offset <n>\] \[--year <y\|y1-y2>\]/);
+  assert.match(result.stdout, /s2-refs <paper> \[--limit <n>\] \[--offset <n>\]/);
+  assert.match(result.stdout, /s2-citations <paper> \[--limit <n>\] \[--offset <n>\]/);
   assert.match(result.stdout, /recent \[--limit <n>\] \[--sort added\|modified\]/);
   assert.match(result.stdout, /^Search$/m);
   assert.match(result.stdout, /search "<text>" \[--keyword \| --semantic\] \[--limit <n>\] \[--min-score <n>\] \[--tag <tag>\] \[--collection-key <key>\]/);
@@ -311,7 +313,10 @@ test("help summarizes current commands and keeps config-only overrides out of th
   assert.match(result.stdout, /--pdf-timeout-ms <n>\s+Override the OpenDataLoader timeout/);
   assert.match(result.stdout, /--pdf-batch-size <n>\s+Override the maximum number of PDFs per extraction batch\./);
   assert.match(result.stdout, /--doi <doi>\s+Import from DOI metadata when possible\./);
-  assert.match(result.stdout, /--s2-paper-id <id>\s+Import a Semantic Scholar paper by paperId\./);
+  assert.match(
+    result.stdout,
+    /--s2-paper-id <id>\s+Import a Semantic Scholar paper\. Accepts the same identifier/,
+  );
   assert.match(result.stdout, /--collection-key <key>\s+Add the new item\(s\) to a Zotero collection by collection key\./);
   assert.match(result.stdout, /--item-type <type>\s+Override the Zotero item type\./);
   assert.match(
@@ -533,7 +538,7 @@ test("s2 rejects metadata and search-only flags", () => {
 
   assert.equal(result.status, 1);
   assert.match(result.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
-  assert.match(result.stdout, /s2 only supports --limit/);
+  assert.match(result.stdout, /s2 only supports --limit, --offset, --year/);
 });
 
 test("s2 rejects invalid limit values", () => {
@@ -542,6 +547,103 @@ test("s2 rejects invalid limit values", () => {
   assert.equal(result.status, 1);
   assert.match(result.stdout, /"code": "INVALID_ARGUMENT"/);
   assert.match(result.stdout, /`--limit` must be a positive integer\./);
+});
+
+test("s2 caps --limit at the Semantic Scholar page size", () => {
+  const result = runCli(["s2", "aging in China", "--limit", "500"]);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /"code": "INVALID_ARGUMENT"/);
+  assert.match(result.stdout, /`--limit` for s2 cannot exceed 100/);
+});
+
+test("s2 rejects a malformed --year filter", () => {
+  const result = runCli(["s2", "aging in China", "--year", "20x0"]);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /"code": "INVALID_ARGUMENT"/);
+  assert.match(result.stdout, /`--year` must be a 4-digit year or a range/);
+});
+
+// The s2-refs / s2-citations cases validate flags and normalize the identifier
+// before any network call, so every case below fails hermetically.
+test("s2-refs requires exactly one paper identifier", () => {
+  const missing = runCli(["s2-refs"]);
+
+  assert.equal(missing.status, 1);
+  assert.match(missing.stdout, /"code": "MISSING_ARGUMENT"/);
+  assert.match(missing.stdout, /Missing paper identifier\. Use: zotagent s2-refs/);
+
+  const tooMany = runCli(["s2-refs", "10.1093/ajae/aaq063", "10.1093/qje/qjw024"]);
+
+  assert.equal(tooMany.status, 1);
+  assert.match(tooMany.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
+  assert.match(tooMany.stdout, /s2-refs accepts exactly one paper identifier/);
+});
+
+test("s2-refs rejects an identifier it cannot recognize", () => {
+  const result = runCli(["s2-refs", "not-a-real-id"]);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /"code": "INVALID_ARGUMENT"/);
+  assert.match(result.stdout, /Unrecognized paper identifier/);
+});
+
+test("s2-refs rejects out-of-range limit and offset values", () => {
+  const zeroLimit = runCli(["s2-refs", "10.1093/ajae/aaq063", "--limit", "0"]);
+
+  assert.equal(zeroLimit.status, 1);
+  assert.match(zeroLimit.stdout, /"code": "INVALID_ARGUMENT"/);
+  assert.match(zeroLimit.stdout, /`--limit` must be a positive integer\./);
+
+  const hugeLimit = runCli(["s2-refs", "10.1093/ajae/aaq063", "--limit", "2000"]);
+
+  assert.equal(hugeLimit.status, 1);
+  assert.match(hugeLimit.stdout, /"code": "INVALID_ARGUMENT"/);
+  assert.match(hugeLimit.stdout, /`--limit` for s2-refs cannot exceed 1000/);
+
+  const negativeOffset = runCli(["s2-refs", "10.1093/ajae/aaq063", "--offset", "-1"]);
+
+  assert.equal(negativeOffset.status, 1);
+  assert.match(negativeOffset.stdout, /"code": "INVALID_ARGUMENT"/);
+  assert.match(negativeOffset.stdout, /`--offset` must be a non-negative integer\./);
+});
+
+test("s2-citations rejects flags it does not declare", () => {
+  const result = runCli(["s2-citations", "10.1093/qje/qjw024", "--year", "2020"]);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
+  assert.match(result.stdout, /s2-citations only supports --limit, --offset/);
+});
+
+test("add --s2-paper-id shares the s2-refs identifier normalizer", () => {
+  const result = runCli(["add", "--s2-paper-id", "not-a-real-id"]);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /"code": "INVALID_ARGUMENT"/);
+  assert.match(result.stdout, /Unrecognized paper identifier/);
+});
+
+test("a missing Semantic Scholar API key fails with a structured code", () => {
+  // Point HOME at an empty directory so ~/.zotagent/config.json is absent,
+  // and blank out the key env vars (empty strings count as unset).
+  const emptyHome = mkdtempSync(join(tmpdir(), "zotagent-no-key-"));
+  const result = spawnSync(process.execPath, ["--import", "tsx", cliPath, "s2-refs", "10.1093/ajae/aaq063"], {
+    encoding: "utf-8",
+    cwd: repoRoot.pathname,
+    env: {
+      ...process.env,
+      HOME: emptyHome,
+      USERPROFILE: emptyHome,
+      ZOTAGENT_SEMANTIC_SCHOLAR_API_KEY: "",
+      SEMANTIC_SCHOLAR_API_KEY: "",
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /"code": "SEMANTIC_SCHOLAR_NOT_CONFIGURED"/);
+  assert.match(result.stdout, /Missing Semantic Scholar API key/);
 });
 
 test("search rejects invalid limit and min-score values", () => {

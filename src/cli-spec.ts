@@ -47,7 +47,9 @@ export const COMMAND_FLAGS: Record<string, ReadonlyArray<FlagSpec>> = {
     { name: "item-type" },
     { name: "attach-file" },
   ],
-  s2: [{ name: "limit" }],
+  s2: [{ name: "limit" }, { name: "offset" }, { name: "year" }],
+  "s2-refs": [{ name: "limit" }, { name: "offset" }],
+  "s2-citations": [{ name: "limit" }, { name: "offset" }],
   recent: [{ name: "limit" }, { name: "sort" }],
   search: [
     { name: "keyword", boolean: true },
@@ -265,7 +267,9 @@ Add to Zotero
       ingest from sources without working DOIs (e.g. CNKI). The JSON form is mutually
       exclusive with all other input flags except --collection-key.
         --doi <doi>                 Import from DOI metadata when possible.
-        --s2-paper-id <id>          Import a Semantic Scholar paper by paperId.
+        --s2-paper-id <id>          Import a Semantic Scholar paper. Accepts the same identifier
+                                    forms as s2-refs (paperId, DOI, arXiv id, DOI:/ARXIV:/PMID:/
+                                    CorpusId:/URL: prefixes, doi.org / arxiv.org URLs).
         --from-url <url>            Translate a web page into an item via translation-server.
                                     If the page lists multiple candidates, add fails with
                                     MULTIPLE_RESULTS and details.choices; re-run with
@@ -299,8 +303,23 @@ Add to Zotero
                                     an orphan in Zotero. AddResult exposes attachmentItemKey on
                                     success.
 
-  s2 "<text>" [--limit <n>]
+  s2 "<text>" [--limit <n>] [--offset <n>] [--year <y|y1-y2>]
       Search Semantic Scholar; pass a returned paperId to \`add --s2-paper-id\`.
+        --limit <n>                 Return up to n results. Default: 10. Max: 100.
+        --offset <n>                Skip the first n results (pagination).
+        --year <y|y1-y2>            Filter by publication year, e.g. 2020 or 2018-2020.
+
+  s2-refs <paper> [--limit <n>] [--offset <n>]
+      List the papers a work cites (its bibliography) from Semantic Scholar.
+      <paper> is an identifier, never a title: a 40-char S2 paperId, a DOI
+      (10.x/...), an arXiv id (2106.15928), a prefixed id (DOI:, ARXIV:,
+      PMID:, CorpusId:, URL:), or a doi.org / arxiv.org / semanticscholar.org
+      URL. Rows omit the abstract; \`add --s2-paper-id <paperId>\` fetches one.
+        --limit <n>                 Return up to n rows. Default: 50. Max: 1000.
+        --offset <n>                Skip the first n rows; data.next gives the next offset.
+
+  s2-citations <paper> [--limit <n>] [--offset <n>]
+      List the papers that cite a work. Same identifier forms and flags as s2-refs.
 
   recent [--limit <n>] [--sort added|modified]
       List regular top-level Zotero items most recently added or modified.

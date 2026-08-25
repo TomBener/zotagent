@@ -81,6 +81,23 @@ tests, commits, and reviews — one name per concept.
   metadata mapping (CSL→Zotero types, DOI hygiene, author parsing, title
   splitting) lives in `src/item-metadata.ts`.
 
+- **S2 identifier normalizer** — `normalizeS2PaperId` in `src/s2.ts`: the one
+  place that turns whatever identifier an agent has (paperId, bare DOI, arXiv
+  id, `DOI:` / `ARXIV:` / `PMID:` / `CorpusId:` / `URL:` prefix, doi.org /
+  arxiv.org / semanticscholar.org URL) into the exact string the Semantic
+  Scholar graph API accepts. Pure and total — it throws
+  `SemanticScholarError("INVALID_ARGUMENT")` — so the CLI validates before
+  spending a rate-limited request. Shared by `s2-refs`, `s2-citations`, and
+  `add --s2-paper-id`.
+
+- **Citation graph commands** — `s2-refs` / `s2-citations`: flat passthroughs
+  over Semantic Scholar's `references` / `citations` endpoints, one identifier
+  in, abstract-free rows out (plus `isInfluential` on influential edges).
+  Edges pointing at papers Semantic Scholar has no record for are skipped and
+  counted into `data.warnings`, never fatal. Every Semantic Scholar GET goes
+  through `fetchSemanticScholarJson`, which retries HTTP 429 with
+  `Retry-After` and fails as `RATE_LIMITED` once retries run out.
+
 ## Search
 
 - **Keyword index** — the FTS5 sqlite index over manifest blocks.

@@ -45,7 +45,8 @@ All three address an item by `--key`, which accepts either `itemKey` or `citatio
 - `add --from-url` / `add --identifier` — run Zotero's site translators through a [translation-server](https://github.com/zotero/translation-server) instance (`translationServerUrl` in config). This is the same metadata extraction the Zotero browser connector performs: full field coverage, editors/translators, publisher keywords as tags, and translator notes as child notes (attachments are not saved — translation-server strips them; use `--attach-file` for a downloaded file). `--identifier` accepts DOI, ISBN, PMID, or arXiv ID — the CLI equivalent of Zotero's "Add Item by Identifier". When `translationServerUrl` is configured, `add --doi` also resolves through the server for richer metadata; without it, `--doi` uses doi.org CSL JSON as before.
 - `add --json` — accepts lenient Zotero-like metadata (`authors`, `keywords`, `abstract`, `doi`, `year`, collections, and direct Zotero fields), returns an array in all cases, and reports per-item failures without aborting the rest of a batch.
 - `--attach-file` / per-item `attachFile` — attach a local file as a Zotero `linked_file` child, with known content types for PDF, EPUB, HTML, and TXT. Paths under `attachmentsRoot` are stored with Zotero's portable `attachments:<rel>` form; invalid paths fail before parent creation.
-- `s2` — search Semantic Scholar; pipe a returned `paperId` into `add --s2-paper-id`. Imported papers prefer DOI metadata when available and fall back to Semantic Scholar metadata otherwise.
+- `s2` — search Semantic Scholar; pipe a returned `paperId` into `add --s2-paper-id`. Paginate with `--offset` and narrow by publication year with `--year 2020` or `--year 2018-2020`. Imported papers prefer DOI metadata when available and fall back to Semantic Scholar metadata otherwise.
+- `s2-refs` / `s2-citations` — walk the Semantic Scholar citation graph: the papers a work cites (its bibliography) and the papers that cite it. Both take one identifier — a `paperId`, a DOI, an arXiv id, a `DOI:` / `ARXIV:` / `PMID:` / `CorpusId:` / `URL:` prefixed id, or a doi.org / arxiv.org / semanticscholar.org URL — and the same normalizer accepts all of those for `add --s2-paper-id`. Rows are abstract-free for compact scanning and carry `isInfluential` when Semantic Scholar marks the edge influential; `data.next` paginates. Every Semantic Scholar request retries HTTP 429 automatically, honoring `Retry-After`.
 - `recent` — list regular top-level items most recently added or modified, straight from the Zotero Web API (no local index needed). Useful for confirming an `add` landed or orienting an agent in the library.
 
 All commands write JSON to stdout and are designed to be chained by AI agents.
@@ -99,7 +100,7 @@ Where each field comes from:
 
 - **`zoteroCollectionKey`** — optional. 8-character key of a collection that `add` will drop new items into. Open the collection in the Zotero web library (`zotero.org/<user>/collections/<key>`); the last segment is the key.
 
-- **`semanticScholarApiKey`** — required by `s2` and `add --s2-paper-id`; other commands ignore it. Request one from the "API Key Form" on [semanticscholar.org/product/api](https://www.semanticscholar.org/product/api#api-key) (approval typically takes a few business days).
+- **`semanticScholarApiKey`** — required by `s2`, `s2-refs`, `s2-citations`, and `add --s2-paper-id`; other commands ignore it. Request one from the "API Key Form" on [semanticscholar.org/product/api](https://www.semanticscholar.org/product/api#api-key) (approval typically takes a few business days).
 
 - **`translationServerUrl`** — optional. Base URL of a [Zotero translation-server](https://github.com/zotero/translation-server) instance, e.g. `http://127.0.0.1:1969`. Start one locally with `docker run -d -p 1969:1969 --name translation-server zotero/translation-server`. Enables `add --from-url` and `add --identifier`, and upgrades `add --doi` to translator-grade metadata. Leave unset to keep the dependency-free doi.org path.
 
@@ -266,7 +267,9 @@ Add to Zotero
       ingest from sources without working DOIs (e.g. CNKI). The JSON form is mutually
       exclusive with all other input flags except --collection-key.
         --doi <doi>                 Import from DOI metadata when possible.
-        --s2-paper-id <id>          Import a Semantic Scholar paper by paperId.
+        --s2-paper-id <id>          Import a Semantic Scholar paper. Accepts the same identifier
+                                    forms as s2-refs (paperId, DOI, arXiv id, DOI:/ARXIV:/PMID:/
+                                    CorpusId:/URL: prefixes, doi.org / arxiv.org URLs).
         --from-url <url>            Translate a web page into an item via translation-server.
                                     If the page lists multiple candidates, add fails with
                                     MULTIPLE_RESULTS and details.choices; re-run with
@@ -298,8 +301,23 @@ Add to Zotero
                                     field there). Path is validated before the parent item is
                                     created. AddResult exposes attachmentItemKey on success.
 
-  s2 "<text>" [--limit <n>]
+  s2 "<text>" [--limit <n>] [--offset <n>] [--year <y|y1-y2>]
       Search Semantic Scholar; pass a returned paperId to `add --s2-paper-id`.
+        --limit <n>                 Return up to n results. Default: 10. Max: 100.
+        --offset <n>                Skip the first n results (pagination).
+        --year <y|y1-y2>            Filter by publication year, e.g. 2020 or 2018-2020.
+
+  s2-refs <paper> [--limit <n>] [--offset <n>]
+      List the papers a work cites (its bibliography) from Semantic Scholar.
+      <paper> is an identifier, never a title: a 40-char S2 paperId, a DOI
+      (10.x/...), an arXiv id (2106.15928), a prefixed id (DOI:, ARXIV:,
+      PMID:, CorpusId:, URL:), or a doi.org / arxiv.org / semanticscholar.org
+      URL. Rows omit the abstract; `add --s2-paper-id <paperId>` fetches one.
+        --limit <n>                 Return up to n rows. Default: 50. Max: 1000.
+        --offset <n>                Skip the first n rows; data.next gives the next offset.
+
+  s2-citations <paper> [--limit <n>] [--offset <n>]
+      List the papers that cite a work. Same identifier forms and flags as s2-refs.
 
   recent [--limit <n>] [--sort added|modified]
       List regular top-level Zotero items most recently added or modified.

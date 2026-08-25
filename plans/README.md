@@ -20,6 +20,7 @@ below as candidates for a future planning pass.
 | 005  | Keyword indexing skips unreadable manifests | P2 | S | 001 | DONE |
 | 006  | Reject attachment paths escaping `attachmentsRoot` via dot segments | P1 | S | — | DONE |
 | 007  | Resolve transitive npm audit advisories under `@tobilu/qmd` | P2 | S | — | DONE |
+| 008  | Annotate Semantic Scholar rows with `inLibrary` + `itemKey` | P2 | M | — | TODO |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) | REJECTED (with one-line rationale)
 
@@ -30,6 +31,9 @@ Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) | REJE
   on PRs rather than only locally. If executing in parallel, that ordering is
   a nice-to-have, not a hard block.
 - 002 is fully independent (docs only).
+- 008 did not come from the 2026-07-03 audit: it is a follow-up carved out of
+  the Semantic Scholar citation-graph work (`s2-refs` / `s2-citations`) and is
+  filed as a stub, not a ready-to-run plan.
 
 ## Vetted findings not yet planned (candidates for a next pass)
 

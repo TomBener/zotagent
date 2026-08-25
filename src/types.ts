@@ -46,6 +46,14 @@ export interface SemanticScholarSearchResultRow {
 export interface SemanticScholarPaper extends SemanticScholarSearchResultRow {
 }
 
+// One edge of the Semantic Scholar citation graph, flattened: the linked
+// paper's metadata plus the edge-only signal. Rows come back without an
+// abstract (see LINKED_PAPER_FIELDS in src/s2.ts); `isInfluential` is
+// present only when Semantic Scholar marked the edge influential.
+export interface SemanticScholarLinkedPaperRow extends SemanticScholarSearchResultRow {
+  isInfluential?: boolean;
+}
+
 export interface BibliographyRecord {
   itemKey: string;
   citationKey?: string;
