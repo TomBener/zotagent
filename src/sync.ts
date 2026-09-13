@@ -3,6 +3,7 @@ import {
   copyFileSync,
   statSync,
   writeFileSync,
+  type Stats,
 } from "node:fs";
 import { createReadStream } from "node:fs";
 import { createHash } from "node:crypto";
@@ -31,7 +32,7 @@ import { KEYWORD_INDEX_SCHEMA_VERSION, openKeywordIndex, type KeywordIndexFactor
 import { QMD_PACKAGE_VERSION, openQmdClient, resolveQmdEmbedModel, type QmdFactory } from "./qmd.js";
 import { OPENCC_PACKAGE_VERSION } from "./zh-convert.js";
 import { mapEntriesByDocKey, readCatalogFile, summarizeCatalog, writeCatalogFile } from "./state.js";
-import { decideTriage } from "./triage.js";
+import { artifactsAcceptable, decideTriage } from "./triage.js";
 import type { AttachmentCatalogEntry, CatalogEntry, CatalogFile, SyncStats } from "./types.js";
 import {
   compactHomePath,
@@ -246,6 +247,49 @@ async function sha1File(filePath: string): Promise<string> {
   });
 }
 
+// True when the file's bytes are actually on this disk. On macOS an iCloud
+// "Optimize Storage" eviction leaves a dataless placeholder: statSync still
+// reports the real size, but blocks is 0 and any read blocks until iCloud has
+// downloaded the file again. Never open a file that reports 0 blocks unless
+// the work genuinely needs its contents.
+function hasLocalData(stats: Stats): boolean {
+  return stats.blocks > 0;
+}
+
+// Hashing is always an optimisation here — a rescue from re-extracting, or a
+// bookkeeping field — so a read failure (EACCES, EIO, the file unlinked
+// between stat and open, an evicted iCloud placeholder while offline) must
+// never abort the run. Both helpers degrade to "we do not know", which sends
+// the attachment down the normal extract path where a real failure is
+// reported per file.
+async function tryHashMatches(
+  filePath: string,
+  expectedHash: string,
+  logger: SyncLogger,
+): Promise<boolean> {
+  try {
+    return (await sha1File(filePath)) === expectedHash;
+  } catch (error) {
+    logger.warn(
+      `Could not read ${compactHomePath(filePath)} to compare its content hash: ${summarizeSyncError(error)}`,
+      { console: false },
+    );
+    return false;
+  }
+}
+
+async function tryHashFile(filePath: string, logger: SyncLogger): Promise<string | null> {
+  try {
+    return await sha1File(filePath);
+  } catch (error) {
+    logger.warn(
+      `Could not read ${compactHomePath(filePath)} to record its content hash: ${summarizeSyncError(error)}`,
+      { console: false },
+    );
+    return null;
+  }
+}
+
 function areAuthorsEqual(a: string[], b: string[]): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i += 1) {
@@ -255,10 +299,22 @@ function areAuthorsEqual(a: string[], b: string[]): boolean {
 }
 
 // Fields compared feed directly into the keyword index (title + manifest
-// content, gated by file size/mtime/sourceHash) or into qmd contexts
+// content, gated by the source-file identity below) or into qmd contexts
 // (title/authors/year/abstract). If any differ, we cannot reuse the prior
 // index state.
+//
+// Source identity: two entries with the same non-empty sourceHash describe the
+// same bytes, so their size/mtime need not match — an mtime rewritten by an
+// iCloud/Dropbox re-download is filesystem noise, not a content change, and
+// must not push a hash-rescued entry back through the keyword update. Without
+// a usable hash on both sides we fall back to comparing size/mtime/sourceHash.
 export function isEntryContentUnchanged(prev: CatalogEntry, next: CatalogEntry): boolean {
+  const sameBytes =
+    typeof prev.sourceHash === "string" &&
+    prev.sourceHash.length > 0 &&
+    prev.sourceHash === next.sourceHash;
+  const sourceIdentityUnchanged =
+    sameBytes || (prev.size === next.size && prev.mtimeMs === next.mtimeMs && prev.sourceHash === next.sourceHash);
   return (
     prev.extractStatus === next.extractStatus &&
     prev.itemKey === next.itemKey &&
@@ -268,9 +324,7 @@ export function isEntryContentUnchanged(prev: CatalogEntry, next: CatalogEntry):
     prev.abstract === next.abstract &&
     prev.type === next.type &&
     prev.filePath === next.filePath &&
-    prev.size === next.size &&
-    prev.mtimeMs === next.mtimeMs &&
-    prev.sourceHash === next.sourceHash &&
+    sourceIdentityUnchanged &&
     areAuthorsEqual(prev.authors, next.authors)
   );
 }
@@ -443,6 +497,11 @@ function writeProgressCatalog(
   // callers keep the old state here until old vectors have been cleared.
   // `indexesCompletedAt` is deliberately omitted: the short-circuit path still
   // requires it, so a mid-flight write cannot be mistaken for a completed sync.
+  // This overwrites the file, so callers must pass every entry the catalog
+  // should still contain. While extraction is queued that means
+  // progressEntries(): nextEntries plus the previous entry of everything not
+  // yet extracted, or an interrupted run truncates the catalog. Once the queue
+  // has drained, nextEntries is already the whole story.
   const snapshot: CatalogFile = {
     version: 1,
     generatedAt: new Date().toISOString(),
@@ -765,19 +824,48 @@ export async function runSync(
         : undefined;
       const renameFromPrev = renameKey !== undefined ? renameCandidateIndex.get(renameKey) : undefined;
 
-      const decision = decideTriage({
-        supported: attachment.supported,
-        fileExists,
+      const artifactFacts = {
         isPdf: attachment.fileExt === "pdf",
-        previousStatus: previous?.extractStatus,
-        sizeMtimeUnchanged:
-          previous !== undefined &&
-          current !== undefined &&
-          previous.size === current.size &&
-          previous.mtimeMs === currentMtimeMs,
         artifactsReusable,
         artifactPairPresent: Boolean(artifactProbe?.hasNormalized && artifactProbe?.hasManifest),
         previousCatalogCompleted,
+      };
+      // Content-hash fallback, computed only where it can change the outcome:
+      // a ready entry whose artifacts would be accepted and whose recorded
+      // size still matches, but whose mtime moved — an iCloud (or Dropbox)
+      // re-download rewrites mtime without changing a byte, and hashing is far
+      // cheaper than re-extracting. A size change can never hash-match, and a
+      // rejected artifact pair re-extracts regardless, so both skip the read.
+      // For a dataless iCloud file this read is still worth it: the only
+      // alternative is extraction, which downloads and reads it anyway.
+      let sourceUnchanged =
+        previous !== undefined &&
+        current !== undefined &&
+        previous.size === current.size &&
+        previous.mtimeMs === currentMtimeMs;
+      if (
+        !sourceUnchanged &&
+        previous?.extractStatus === "ready" &&
+        current !== undefined &&
+        previous.size === current.size &&
+        typeof previous.sourceHash === "string" &&
+        previous.sourceHash.length > 0 &&
+        artifactsAcceptable(artifactFacts)
+      ) {
+        sourceUnchanged = await tryHashMatches(attachment.filePath, previous.sourceHash, logger);
+        if (sourceUnchanged) {
+          logger.info(
+            `${compactHomePath(attachment.filePath)}: mtime changed but content unchanged; reusing artifacts.`,
+          );
+        }
+      }
+
+      const decision = decideTriage({
+        ...artifactFacts,
+        supported: attachment.supported,
+        fileExists,
+        previousStatus: previous?.extractStatus,
+        sourceUnchanged,
         retryErrors: options.retryErrors === true,
         hasRenameCandidate: renameFromPrev !== undefined && renameFromPrev !== null,
       });
@@ -884,12 +972,27 @@ export async function runSync(
         }
 
         case "reuse": {
+          // Recovery reuse (catalog lost, or the previous entry was
+          // missing/error) cannot claim the previous lastIndexedAt, but it can
+          // record what the file is. Never read the file just for bookkeeping —
+          // a dataless iCloud file would be downloaded. Local bytes are hashed
+          // so the next mtime-only change can be recognised; dataless files
+          // earn a hash when they are next extracted. The hash describes the
+          // bytes on disk now, which a recovery reuse already trusts to be the
+          // bytes the artifacts came from — the manifest records no source
+          // digest to check against, so the hash inherits that trust.
+          const recoveredSourceHash =
+            !decision.carryPreviousIndexState && hasLocalData(current!)
+              ? await tryHashFile(attachment.filePath, logger)
+              : null;
           nextEntries.push(
             toCatalogEntry(attachment, {
               extractStatus: "ready",
               size: current!.size,
               mtimeMs: currentMtimeMs,
-              sourceHash: decision.carryPreviousIndexState ? previous!.sourceHash ?? null : null,
+              sourceHash: decision.carryPreviousIndexState
+                ? previous!.sourceHash ?? null
+                : recoveredSourceHash,
               lastIndexedAt: decision.carryPreviousIndexState ? previous!.lastIndexedAt ?? null : null,
             }),
           );
@@ -904,6 +1007,27 @@ export async function runSync(
         }
       }
     }
+
+    // Entries a mid-flight progress write must persist: everything decided so
+    // far, plus the previous entry of every attachment that is queued for
+    // extraction but has not been recorded yet. Without the carried entries an
+    // interrupted run (SIGINT during extraction) would overwrite the catalog
+    // with a truncated list and permanently drop those attachments' indexed
+    // state. Only changedAttachments are carried, and those all come from the
+    // current bibliography, so entries that dropped out of it still disappear.
+    // By the final progress write the queue is fully recorded, leaving the
+    // final and completion catalogs unchanged.
+    const progressEntries = (): CatalogEntry[] => {
+      const recorded = new Set(nextEntries.map((entry) => entry.docKey));
+      const carried: CatalogEntry[] = [];
+      for (const attachment of changedAttachments) {
+        if (recorded.has(attachment.docKey)) continue;
+        recorded.add(attachment.docKey);
+        const previous = previousByDocKey.get(attachment.docKey);
+        if (previous) carried.push(previous);
+      }
+      return [...nextEntries, ...carried];
+    };
 
     const pdfAttachments = changedAttachments.filter((a) => a.fileExt === "pdf");
     const nonPdfAttachments = changedAttachments.filter((a) => a.fileExt !== "pdf");
@@ -930,7 +1054,7 @@ export async function runSync(
       }
     }
     if (nonPdfAttachments.length > 0) {
-      writeProgressCatalog(paths.catalogPath, nextEntries, progressIndexerState);
+      writeProgressCatalog(paths.catalogPath, progressEntries(), progressIndexerState);
     }
 
     async function recordReadyAttachment(
@@ -966,34 +1090,38 @@ export async function runSync(
         error instanceof Error ? error.message : String(error),
       );
 
-      // Roll back to the previous ready state if the source is byte-identical
-      // to the last successful sync AND the previously indexed artifacts are
+      // Roll back to the previous ready state if the source still is what the
+      // last successful sync indexed AND the previously indexed artifacts are
       // still a valid pair on disk. store.publish restores the previous pair
       // on a thrown failure, so passing this check means the prior
       // normalized + manifest are exactly what was indexed last time.
-      // Size+mtime alone is not a strong-enough identity proof (someone could
-      // replace the file in place while preserving stat), so verify with
-      // sha1. The reuse verdict is deliberately called without a vertical
-      // expectation: keeping a horizontal extraction is better than deleting
-      // it when a vertical re-extract fails. It still catches a previously
-      // broken state (normalized missing, manifest unparseable, identity
-      // mismatch) by failing the rollback.
-      const sizeMtimeMatch =
+      // Same "is this still the same source?" question as triage, answered a
+      // notch more strictly: where a sourceHash was recorded it is
+      // authoritative, because size+mtime alone is not identity proof (someone
+      // could replace the file in place while preserving stat) and a failed
+      // re-extraction is exactly when silently keeping stale text hurts most.
+      // A size mismatch can never hash-match, so it skips the read. Where no
+      // hash was recorded, the stat comparison is all there is. The reuse
+      // verdict is deliberately called without a vertical expectation: keeping
+      // a horizontal extraction is better than deleting it when a vertical
+      // re-extract fails. It still catches a previously broken state
+      // (normalized missing, manifest unparseable, identity mismatch) by
+      // failing the rollback.
+      const sizeMatch =
         previous?.extractStatus === "ready" &&
         previous.size !== null &&
-        previous.mtimeMs !== null &&
         current !== undefined &&
-        previous.size === current.size &&
-        previous.mtimeMs === Math.trunc(current.mtimeMs);
+        previous.size === current.size;
+      const previousHash = previous?.sourceHash;
+      const sameSource = !sizeMatch
+        ? false
+        : typeof previousHash === "string" && previousHash.length > 0
+          ? await tryHashMatches(attachment.filePath, previousHash, logger)
+          : previous!.mtimeMs !== null && previous!.mtimeMs === Math.trunc(current!.mtimeMs);
       const previousArtifactsValid =
         previous !== undefined &&
         store.reuseVerdict({ docKey: previous.docKey, itemKey: previous.itemKey }).reusable;
-      const previousArtifactsReusable =
-        sizeMtimeMatch &&
-        previousArtifactsValid &&
-        typeof previous?.sourceHash === "string" &&
-        previous.sourceHash.length > 0 &&
-        (await sha1File(attachment.filePath)) === previous.sourceHash;
+      const previousArtifactsReusable = sameSource && previousArtifactsValid;
 
       if (previousArtifactsReusable && previous !== undefined) {
         logger.warn(
@@ -1004,11 +1132,14 @@ export async function runSync(
           filePath: attachment.filePath,
           detail: `re-extraction failed; kept previous artifacts (${summarizeSyncError(error)})`,
         });
+        // Record the CURRENT stat with the previous hash/lastIndexedAt: the
+        // bytes are the ones already indexed, so the next run should recognise
+        // them with a plain stat comparison instead of hashing again.
         nextEntries.push(
           toCatalogEntry(attachment, {
             extractStatus: "ready",
-            size: previous.size,
-            mtimeMs: previous.mtimeMs,
+            size: current!.size,
+            mtimeMs: Math.trunc(current!.mtimeMs),
             sourceHash: previous.sourceHash ?? null,
             lastIndexedAt: previous.lastIndexedAt ?? null,
           }),
@@ -1169,7 +1300,7 @@ export async function runSync(
             skippedAttachments: stats.skippedAttachments,
             note: "finished individual retries",
           });
-          writeProgressCatalog(paths.catalogPath, nextEntries, progressIndexerState);
+          writeProgressCatalog(paths.catalogPath, progressEntries(), progressIndexerState);
           return;
         }
 
@@ -1208,7 +1339,7 @@ export async function runSync(
         skippedAttachments: stats.skippedAttachments,
         note: "batch finished",
       });
-      writeProgressCatalog(paths.catalogPath, nextEntries, progressIndexerState);
+      writeProgressCatalog(paths.catalogPath, progressEntries(), progressIndexerState);
     };
 
     let nextBatchIndex = 0;

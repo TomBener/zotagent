@@ -11,7 +11,7 @@ const base: TriageFacts = {
   fileExists: true,
   isPdf: true,
   previousStatus: "ready",
-  sizeMtimeUnchanged: true,
+  sourceUnchanged: true,
   artifactsReusable: true,
   artifactPairPresent: true,
   previousCatalogCompleted: true,
@@ -36,7 +36,7 @@ const rows: Array<{ name: string; over: Partial<TriageFacts>; want: TriageDecisi
     want: { action: "reuse", carryPreviousIndexState: true },
   },
   {
-    name: "PDFs never take the existence fast path — a failed verdict (e.g. vertical tag flip) re-extracts",
+    name: "PDFs never take the existence fast path — an unchanged source with a failed verdict (e.g. vertical tag flip) re-extracts",
     over: { artifactsReusable: false },
     want: { action: "extract" },
   },
@@ -52,8 +52,16 @@ const rows: Array<{ name: string; over: Partial<TriageFacts>; want: TriageDecisi
   },
   {
     name: "source changed since ready — matching artifacts are stale, re-extract (re-OCR rule)",
-    over: { sizeMtimeUnchanged: false },
+    over: { sourceUnchanged: false },
     want: { action: "extract" },
+  },
+  {
+    // sourceUnchanged is more than the stat comparison: after an iCloud
+    // re-download rewrites mtime without touching a byte, sync.ts arrives at
+    // this same fact by hashing the file and matching the recorded sourceHash.
+    name: "a source proven unchanged by its content hash reuses like any other unchanged source",
+    over: { sourceUnchanged: true },
+    want: { action: "reuse", carryPreviousIndexState: true },
   },
   {
     name: "unchanged previous error is skipped without --retry-errors",
@@ -74,7 +82,7 @@ const rows: Array<{ name: string; over: Partial<TriageFacts>; want: TriageDecisi
     name: "never seen + no artifacts + rename candidate adopts",
     over: {
       previousStatus: undefined,
-      sizeMtimeUnchanged: false,
+      sourceUnchanged: false,
       artifactsReusable: false,
       hasRenameCandidate: true,
     },
@@ -82,22 +90,22 @@ const rows: Array<{ name: string; over: Partial<TriageFacts>; want: TriageDecisi
   },
   {
     name: "never seen + no artifacts + no candidate extracts",
-    over: { previousStatus: undefined, sizeMtimeUnchanged: false, artifactsReusable: false },
+    over: { previousStatus: undefined, sourceUnchanged: false, artifactsReusable: false },
     want: { action: "extract" },
   },
   {
     name: "never seen but artifacts already on disk — recovery reuse without index state",
-    over: { previousStatus: undefined, sizeMtimeUnchanged: false },
+    over: { previousStatus: undefined, sourceUnchanged: false },
     want: { action: "reuse", carryPreviousIndexState: false },
   },
   {
     name: "a rename candidate never outranks reusable artifacts of our own",
-    over: { previousStatus: undefined, sizeMtimeUnchanged: false, hasRenameCandidate: true },
+    over: { previousStatus: undefined, sourceUnchanged: false, hasRenameCandidate: true },
     want: { action: "reuse", carryPreviousIndexState: false },
   },
   {
     name: "previously missing entry with artifacts on disk reuses without index state",
-    over: { previousStatus: "missing", sizeMtimeUnchanged: false },
+    over: { previousStatus: "missing", sourceUnchanged: false },
     want: { action: "reuse", carryPreviousIndexState: false },
   },
   {

@@ -16,6 +16,7 @@ import {
 import {
   buildContext,
   buildIndexerSignature,
+  isEntryContentUnchanged,
   runSync,
 } from "../../src/sync.js";
 import { openFsArtifactStore, type ArtifactStore } from "../../src/artifact-store.js";
@@ -3138,6 +3139,14 @@ test("runSync resumes from existing normalized and manifest outputs when catalog
 
   const nextCatalog = readCatalogFile(join(indexDir, "catalog.json"));
   assert.equal(nextCatalog.entries[0]?.extractStatus, "ready");
+  // A recovery reuse cannot claim a lastIndexedAt, but it hashes the file it
+  // just adopted so the next run can tell an mtime-only change from an edit.
+  assert.equal(
+    nextCatalog.entries[0]?.sourceHash,
+    createHash("sha1").update(readFileSync(pdfPath)).digest("hex"),
+    "recovery reuse must backfill a real sha1 of the source",
+  );
+  assert.equal(nextCatalog.entries[0]?.lastIndexedAt, null, "lastIndexedAt must be re-earned");
   assert.ok(existsSync(normalizedPath), "resumed normalized artifact must survive at the derived path");
   assert.ok(existsSync(manifestPath), "resumed manifest must survive at the derived path");
   assert.ok(nextCatalog.indexedQmdEmbedModel, "expected effective qmd embed model to be persisted");
@@ -5113,4 +5122,524 @@ test("runSync sweeps orphan artifacts without counting them as removed attachmen
   assert.ok(!existsSync(join(s.manifestsDir, `${orphanKey}${MANIFEST_EXT}`)), "orphan manifest must be swept");
   assert.equal(readFileSync(join(s.normalizedDir, "notes.md"), "utf-8"), "user notes");
   assert.ok(existsSync(join(s.normalizedDir, `${s.newDocKey}.md`)), "adopted artifact must survive");
+});
+
+test("isEntryContentUnchanged accepts an mtime change when the sourceHash proves identical bytes", () => {
+  const baseEntry = {
+    docKey: "doc",
+    itemKey: "ITEM1",
+    citationKey: "cite",
+    title: "Paper",
+    authors: ["A Author"],
+    filePath: "/lib/paper.pdf",
+    fileExt: "pdf",
+    exists: true,
+    supported: true,
+    extractStatus: "ready",
+    size: 100,
+    mtimeMs: 1_000,
+    sourceHash: "abc123",
+    lastIndexedAt: "2025-01-01T00:00:00.000Z",
+  } satisfies CatalogFile["entries"][number];
+
+  assert.equal(
+    isEntryContentUnchanged(baseEntry, { ...baseEntry, mtimeMs: 2_000 }),
+    true,
+    "equal sourceHash means equal bytes; mtime is filesystem noise",
+  );
+  assert.equal(
+    isEntryContentUnchanged(
+      { ...baseEntry, sourceHash: null },
+      { ...baseEntry, sourceHash: null, mtimeMs: 2_000 },
+    ),
+    false,
+    "without a hash on both sides the size/mtime comparison is all we have",
+  );
+  assert.equal(
+    isEntryContentUnchanged(baseEntry, { ...baseEntry, sourceHash: "def456" }),
+    false,
+    "a different hash is a real content change",
+  );
+});
+
+test("runSync reuses artifacts when a re-download changes mtime but not bytes, and still re-extracts real changes", async () => {
+  // Regression: an iCloud re-download rewrites mtime without touching a byte.
+  // Triage used to read the stat mismatch as proof the source changed and
+  // re-extracted the whole library; the recorded sourceHash settles it.
+  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-mtime-only-"));
+  const attachmentsRoot = join(root, "attachments");
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  const normalizedDir = join(dataDir, "normalized");
+  mkdirSync(join(attachmentsRoot, "papers"), { recursive: true });
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+  mkdirSync(normalizedDir, { recursive: true });
+
+  // A: byte-identical, only the mtime moved. B: genuinely edited in place.
+  const redownloadedPath = join(attachmentsRoot, "papers", "redownloaded.pdf");
+  const editedPath = join(attachmentsRoot, "papers", "edited.pdf");
+  const redownloadedBytes = Buffer.from("%PDF-1.4 untouched body\n");
+  writeFileSync(redownloadedPath, redownloadedBytes);
+  writeFileSync(editedPath, Buffer.from("%PDF-1.4 body after an in-place re-OCR\n"));
+  const redownloadedHash = createHash("sha1").update(redownloadedBytes).digest("hex");
+  const editedPreviousHash = createHash("sha1").update(Buffer.from("%PDF-1.4 body\n")).digest("hex");
+  const redownloadedStat = statSync(redownloadedPath);
+  const editedStat = statSync(editedPath);
+  const redownloadedDocKey = sha1("papers/redownloaded.pdf");
+  const editedDocKey = sha1("papers/edited.pdf");
+
+  for (const [docKey, filePath] of [
+    [redownloadedDocKey, redownloadedPath],
+    [editedDocKey, editedPath],
+  ] as const) {
+    writeFileSync(join(normalizedDir, `${docKey}.md`), "Body from the previous sync");
+    writeManifestFile(join(manifestsDir, `${docKey}${MANIFEST_EXT}`), {
+      docKey,
+      itemKey: "ITEM1",
+      title: "Paper",
+      authors: ["A Author"],
+      filePath,
+      blocks: [trivialBlock()],
+    });
+  }
+
+  const bibliographyPath = join(root, "bibliography.json");
+  writeFileSync(
+    bibliographyPath,
+    JSON.stringify([
+      {
+        id: "cite",
+        title: "Paper",
+        author: [{ family: "A", given: "Author" }],
+        file: [redownloadedPath, editedPath].join(";"),
+        "zotero-item-key": "ITEM1",
+      },
+    ]),
+    "utf-8",
+  );
+
+  const previousIndexedAt = "2025-01-02T03:04:05.000Z";
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    indexesCompletedAt: new Date().toISOString(),
+    indexedQmdEmbedModel: "fake-embed-model",
+    indexerSignature: buildIndexerSignature("fake-embed-model"),
+    entries: [
+      {
+        docKey: redownloadedDocKey,
+        itemKey: "ITEM1",
+        citationKey: "cite",
+        title: "Paper",
+        authors: ["A Author"],
+        filePath: redownloadedPath,
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: redownloadedStat.size,
+        mtimeMs: Math.trunc(redownloadedStat.mtimeMs),
+        sourceHash: redownloadedHash,
+        lastIndexedAt: previousIndexedAt,
+      },
+      {
+        docKey: editedDocKey,
+        itemKey: "ITEM1",
+        citationKey: "cite",
+        title: "Paper",
+        authors: ["A Author"],
+        filePath: editedPath,
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        // Records the pre-edit bytes: smaller file, older mtime, other hash.
+        size: 14,
+        mtimeMs: Math.trunc(editedStat.mtimeMs) - 60_000,
+        sourceHash: editedPreviousHash,
+        lastIndexedAt: previousIndexedAt,
+      },
+    ],
+  });
+
+  // The re-download: same bytes, new mtime.
+  const bumpedMtimeMs = Math.trunc(redownloadedStat.mtimeMs) + 120_000;
+  utimesSync(redownloadedPath, new Date(bumpedMtimeMs), new Date(bumpedMtimeMs));
+
+  const quietQmdFactory = async () => ({
+    search: async () => [],
+    searchLex: async () => [],
+    update: async () => ({}),
+    embed: async () => ({}),
+    getStatus: async () => ({ totalDocuments: 2, needsEmbedding: 0, hasVectorIndex: true, collections: [] }),
+    listContexts: async () => [],
+    addContext: async () => true,
+    removeContext: async () => true,
+    clearEmbeddings: async () => {},
+    cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
+    migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
+    adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    compactDatabase: async () => ({ ran: false, reason: "" }),
+    close: async () => {},
+  });
+
+  const keywordUpdates: Array<{ changedDocKeys: string[]; removedDocKeys: string[] }> = [];
+  let keywordRebuilds = 0;
+  const keywordFactory = async () => ({
+    rebuildIndex: async () => {
+      keywordRebuilds += 1;
+      return { skippedDocKeys: [] };
+    },
+    updateIndex: async (changedEntries: Array<{ docKey: string }>, removedDocKeys: string[]) => {
+      keywordUpdates.push({
+        changedDocKeys: changedEntries.map((entry) => entry.docKey),
+        removedDocKeys,
+      });
+      return { skippedDocKeys: [] };
+    },
+    vacuum: async () => {},
+    searchDocs: async () => [],
+    searchBlocks: async () => [],
+    isEmpty: async () => false,
+    close: async () => {},
+  });
+
+  const extracted: string[] = [];
+  const extractBatchFn = async (
+    batch: AttachmentCatalogEntry[],
+    _tempRoot: string,
+    store: ArtifactStore,
+  ): Promise<Set<string>> => {
+    const published = new Set<string>();
+    for (const attachment of batch) {
+      extracted.push(attachment.docKey);
+      store.publish({
+        markdown: "Body from the re-extraction",
+        manifest: {
+          docKey: attachment.docKey,
+          itemKey: attachment.itemKey,
+          title: attachment.title,
+          authors: attachment.authors,
+          filePath: attachment.filePath,
+          blocks: [trivialBlock()],
+        },
+      });
+      published.add(attachment.docKey);
+    }
+    return published;
+  };
+
+  const result = await runSync(
+    {
+      bibliographyJsonPath: bibliographyPath,
+      attachmentsRoot,
+      dataDir,
+      qmdEmbedModel: "fake-embed-model",
+    },
+    quietQmdFactory,
+    keywordFactory,
+    extractBatchFn as never,
+    () => {},
+  );
+
+  assert.deepEqual(extracted, [editedDocKey], "only the genuinely changed PDF may be re-extracted");
+  assert.equal(result.stats.updatedAttachments, 1);
+  assert.equal(result.stats.skippedAttachments, 1);
+
+  const logBody = readFileSync(result.logPath, "utf-8");
+  assert.match(logBody, /redownloaded\.pdf: reused existing indexed output/);
+  assert.match(logBody, /mtime changed but content unchanged/);
+  assert.equal(
+    readFileSync(join(normalizedDir, `${redownloadedDocKey}.md`), "utf-8"),
+    "Body from the previous sync",
+    "the reused artifact must be left alone",
+  );
+
+  const catalog = readCatalogFile(join(indexDir, "catalog.json"));
+  const reusedEntry = catalog.entries.find((entry) => entry.docKey === redownloadedDocKey);
+  assert.equal(reusedEntry?.sourceHash, redownloadedHash, "the proven-identical hash must be carried");
+  assert.equal(reusedEntry?.lastIndexedAt, previousIndexedAt, "the entry stays indexed as of the last run");
+  assert.equal(reusedEntry?.mtimeMs, bumpedMtimeMs, "the new mtime is recorded so the next run stats cheaply");
+
+  assert.equal(keywordRebuilds, 0);
+  assert.deepEqual(
+    keywordUpdates,
+    [{ changedDocKeys: [editedDocKey], removedDocKeys: [] }],
+    "an mtime-only change must not push the entry back through the keyword update",
+  );
+});
+
+test("runSync progress catalog keeps the previous entries of attachments still awaiting extraction", async () => {
+  // Regression: progress writes used to persist only the entries decided so
+  // far, so a SIGINT mid-extraction truncated index/catalog.json and dropped
+  // the previous state of everything still queued.
+  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-progress-carry-"));
+  const attachmentsRoot = join(root, "attachments");
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  mkdirSync(join(attachmentsRoot, "papers"), { recursive: true });
+  mkdirSync(indexDir, { recursive: true });
+
+  const firstPath = join(attachmentsRoot, "papers", "one.pdf");
+  const secondPath = join(attachmentsRoot, "papers", "two.pdf");
+  writeFileSync(firstPath, "%PDF-1.4 one\n");
+  writeFileSync(secondPath, "%PDF-1.4 two\n");
+  const firstDocKey = sha1("papers/one.pdf");
+  const secondDocKey = sha1("papers/two.pdf");
+
+  const bibliographyPath = join(root, "bibliography.json");
+  writeFileSync(
+    bibliographyPath,
+    JSON.stringify([
+      {
+        id: "cite",
+        title: "Paper",
+        author: [{ family: "A", given: "Author" }],
+        file: [firstPath, secondPath].join(";"),
+        "zotero-item-key": "ITEM1",
+      },
+    ]),
+    "utf-8",
+  );
+
+  // Both entries are ready in the previous catalog but their artifacts are
+  // gone, so both are queued for extraction. A file that dropped out of the
+  // bibliography must NOT be carried forward by a progress write.
+  const previousIndexedAt = "2025-01-02T03:04:05.000Z";
+  const droppedDocKey = sha1("papers/dropped.pdf");
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    indexesCompletedAt: new Date().toISOString(),
+    entries: [firstDocKey, secondDocKey, droppedDocKey].map((docKey, index) => ({
+      docKey,
+      itemKey: "ITEM1",
+      citationKey: "cite",
+      title: "Paper",
+      authors: ["A Author"],
+      filePath: [firstPath, secondPath, join(attachmentsRoot, "papers", "dropped.pdf")][index]!,
+      fileExt: "pdf" as const,
+      exists: true,
+      supported: true,
+      extractStatus: "ready" as const,
+      size: 4,
+      mtimeMs: 1_000,
+      sourceHash: `previous-hash-${index}`,
+      lastIndexedAt: previousIndexedAt,
+    })),
+  });
+
+  const quietQmdFactory = async () => ({
+    search: async () => [],
+    searchLex: async () => [],
+    update: async () => ({}),
+    embed: async () => ({}),
+    getStatus: async () => ({ totalDocuments: 2, needsEmbedding: 0, hasVectorIndex: true, collections: [] }),
+    listContexts: async () => [],
+    addContext: async () => true,
+    removeContext: async () => true,
+    clearEmbeddings: async () => {},
+    cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
+    migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
+    adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    compactDatabase: async () => ({ ran: false, reason: "" }),
+    close: async () => {},
+  });
+
+  // One PDF per batch, one worker: the second extraction runs after the first
+  // batch's progress write, which is exactly the state an interrupt would
+  // leave behind.
+  const catalogDuringExtraction: CatalogFile[] = [];
+  const extractionOrder: string[] = [];
+  const extractBatchFn = async (
+    batch: AttachmentCatalogEntry[],
+    _tempRoot: string,
+    store: ArtifactStore,
+  ): Promise<Set<string>> => {
+    catalogDuringExtraction.push(readCatalogFile(join(indexDir, "catalog.json")));
+    const published = new Set<string>();
+    for (const attachment of batch) {
+      extractionOrder.push(attachment.docKey);
+      store.publish({
+        markdown: "Body from the re-extraction",
+        manifest: {
+          docKey: attachment.docKey,
+          itemKey: attachment.itemKey,
+          title: attachment.title,
+          authors: attachment.authors,
+          filePath: attachment.filePath,
+          blocks: [trivialBlock()],
+        },
+      });
+      published.add(attachment.docKey);
+    }
+    return published;
+  };
+
+  const result = await runSync(
+    { bibliographyJsonPath: bibliographyPath, attachmentsRoot, dataDir },
+    quietQmdFactory,
+    undefined,
+    extractBatchFn as never,
+    () => {},
+    { pdfBatchSize: 1, pdfConcurrency: 1 },
+  );
+
+  assert.equal(extractionOrder.length, 2, "both PDFs must be extracted");
+  const midFlight = catalogDuringExtraction[1]!;
+  const pendingDocKey = extractionOrder[1]!;
+  const pendingEntry = midFlight.entries.find((entry) => entry.docKey === pendingDocKey);
+  assert.ok(
+    pendingEntry,
+    "a mid-extraction catalog must still list the attachment that has not been extracted yet",
+  );
+  assert.equal(pendingEntry.lastIndexedAt, previousIndexedAt, "its previous index state must survive");
+  assert.match(pendingEntry.sourceHash ?? "", /^previous-hash-/);
+  assert.equal(
+    midFlight.entries.find((entry) => entry.docKey === extractionOrder[0]!)?.lastIndexedAt !==
+      previousIndexedAt,
+    true,
+    "the already-extracted attachment must show its fresh entry, not the carried one",
+  );
+  assert.ok(
+    !midFlight.entries.some((entry) => entry.docKey === droppedDocKey),
+    "an attachment that left the bibliography must not be resurrected by a progress write",
+  );
+  assert.equal(midFlight.indexesCompletedAt, undefined, "progress writes stay uncompleted");
+
+  // The completed catalog is untouched by the carry: nothing pending is left.
+  const finalCatalog = readCatalogFile(join(indexDir, "catalog.json"));
+  assert.deepEqual(
+    finalCatalog.entries.map((entry) => entry.docKey).sort(),
+    [firstDocKey, secondDocKey].sort(),
+  );
+  assert.equal(result.stats.readyAttachments, 2);
+  assert.equal(result.stats.removedAttachments, 1, "the dropped attachment is swept as usual");
+});
+
+test("runSync rolls back a failed re-extraction whose source only changed mtime, recording the current stat", async () => {
+  // The rollback asks the same "is this still the same source?" question as
+  // triage: a re-download that moved mtime but not a byte must still keep the
+  // previously indexed artifacts, and the entry must come out stat-matching so
+  // the next run needs no hash at all.
+  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-rollback-mtime-"));
+  const attachmentsRoot = join(root, "attachments");
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  const normalizedDir = join(dataDir, "normalized");
+  mkdirSync(join(attachmentsRoot, "papers"), { recursive: true });
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+  mkdirSync(normalizedDir, { recursive: true });
+
+  // Vertical PDF whose cached manifest predates verticalText: the tag forces a
+  // re-extraction (so the artifacts are not "acceptable" and triage never
+  // hashes), and that re-extraction is going to fail.
+  const pdfPath = join(attachmentsRoot, "papers", "paper.pdf");
+  const pdfBytes = Buffer.from(
+    "%PDF-1.3\n10 0 obj <</Type/Font/Subtype/Type0/Encoding/Identity-V>> endobj\n%%EOF\n",
+  );
+  writeFileSync(pdfPath, pdfBytes);
+  const realSourceHash = createHash("sha1").update(pdfBytes).digest("hex");
+  const currentStat = statSync(pdfPath);
+  const docKey = sha1("papers/paper.pdf");
+  const normalizedPath = join(normalizedDir, `${docKey}.md`);
+  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
+  const oldNormalizedBody = "Stale but searchable scrambled body";
+  writeFileSync(normalizedPath, oldNormalizedBody);
+  writeManifestFile(manifestPath, {
+    docKey,
+    itemKey: "ITEM1",
+    title: "Paper",
+    authors: ["A Author"],
+    filePath: pdfPath,
+    blocks: [trivialBlock()],
+  });
+
+  const bibliographyPath = join(root, "bibliography.json");
+  writeFileSync(
+    bibliographyPath,
+    JSON.stringify([
+      {
+        id: "cite",
+        title: "Paper",
+        author: [{ family: "A", given: "Author" }],
+        file: pdfPath,
+        "zotero-item-key": "ITEM1",
+      },
+    ]),
+    "utf-8",
+  );
+
+  const previousIndexedAt = "2025-01-02T03:04:05.000Z";
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    indexesCompletedAt: new Date().toISOString(),
+    entries: [
+      {
+        docKey,
+        itemKey: "ITEM1",
+        citationKey: "cite",
+        title: "Paper",
+        authors: ["A Author"],
+        filePath: pdfPath,
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: currentStat.size,
+        // Same bytes, older mtime: the file was re-downloaded since.
+        mtimeMs: Math.trunc(currentStat.mtimeMs) - 60_000,
+        sourceHash: realSourceHash,
+        lastIndexedAt: previousIndexedAt,
+      },
+    ],
+  });
+
+  const quietQmdFactory = async () => ({
+    search: async () => [],
+    searchLex: async () => [],
+    update: async () => ({}),
+    embed: async () => ({}),
+    getStatus: async () => ({ totalDocuments: 1, needsEmbedding: 0, hasVectorIndex: true, collections: [] }),
+    listContexts: async () => [],
+    addContext: async () => true,
+    removeContext: async () => true,
+    clearEmbeddings: async () => {},
+    cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
+    migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
+    adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    compactDatabase: async () => ({ ran: false, reason: "" }),
+    close: async () => {},
+  });
+  const failingExtractBatch = async () => {
+    throw new Error("simulated ODL timeout");
+  };
+
+  const result = await runSync(
+    { bibliographyJsonPath: bibliographyPath, attachmentsRoot, dataDir },
+    quietQmdFactory,
+    undefined,
+    failingExtractBatch as never,
+    () => {},
+    { verticalItemKeys: new Set(["ITEM1"]) },
+  );
+
+  assert.equal(result.stats.errorAttachments, 0, "an mtime-only change must not become a hard error");
+  assert.equal(result.stats.readyAttachments, 1);
+  assert.equal(readFileSync(normalizedPath, "utf-8"), oldNormalizedBody, "previous artifacts must survive");
+
+  const persisted = readCatalogFile(join(indexDir, "catalog.json"));
+  assert.equal(persisted.entries[0]?.extractStatus, "ready");
+  assert.equal(persisted.entries[0]?.sourceHash, realSourceHash);
+  assert.equal(persisted.entries[0]?.lastIndexedAt, previousIndexedAt);
+  assert.equal(
+    persisted.entries[0]?.mtimeMs,
+    Math.trunc(currentStat.mtimeMs),
+    "the rolled-back entry must record the current mtime so the next run stat-matches",
+  );
 });
