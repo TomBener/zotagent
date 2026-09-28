@@ -30,6 +30,10 @@ import { MANIFEST_EXT, readManifestFile, sha1, writeManifestFile } from "../../s
 // lists with the real key, and fail outright offline. Tests that exercise the
 // tags inject them (verticalItemKeys / excludeItemKeys / fetchImpl).
 process.env.HOME = mkdtempSync(join(tmpdir(), "zotagent-sync-home-"));
+// Credentials can also arrive through the environment; drop those too.
+for (const key of Object.keys(process.env)) {
+  if (/^(?:ZOTAGENT_)?ZOTERO_/u.test(key)) delete process.env[key];
+}
 
 function trivialBlock(): ManifestBlock {
   return {
