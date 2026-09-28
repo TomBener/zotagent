@@ -304,6 +304,41 @@ test("addToZotero never re-sends a failed DOI create as a manual item", async ()
   assert.equal(JSON.parse(creates[0]!)[0].DOI, "10.1000/slow");
 });
 
+test("addToZotero falls back to manual fields when Zotero rejects the DOI item", async () => {
+  // A refusal (4xx, or a 200 whose `failed` map holds the item) means nothing
+  // was created, so one manual-fallback create cannot duplicate anything.
+  for (const rejection of [
+    () => new Response('{"message":"Invalid field"}', { status: 400 }),
+    () => jsonResponse({ successful: {}, success: {}, unchanged: {}, failed: { "0": { code: 400, message: "Invalid field" } } }),
+  ]) {
+    const creates: Array<Record<string, unknown>> = [];
+    const fetchMock: typeof fetch = async (input, init) => {
+      const url = String(input);
+      if (url === "https://doi.org/10.1000/bad-field") {
+        return jsonResponse({ type: "article-journal", title: "DOI Title", "container-title": ["J"] });
+      }
+      if (url.startsWith("https://api.zotero.org/items/new?itemType=")) {
+        return jsonResponse({ itemType: url.split("=")[1], title: "", creators: [], date: "", publicationTitle: "", url: "", accessDate: "", DOI: "", tags: [], collections: [], relations: {} });
+      }
+      if (url === "https://api.zotero.org/users/123456/items") {
+        creates.push(JSON.parse(String(init?.body))[0]);
+        return creates.length === 1 ? rejection() : jsonResponse({ success: { "0": "MANUAL01" } });
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    };
+    const result = await addToZotero(
+      { doi: "10.1000/bad-field", title: "Manual Title" },
+      { zoteroLibraryId: "123456", zoteroLibraryType: "user", zoteroApiKey: "secret", translationServerUrl: "" },
+      fetchMock,
+    );
+    assert.equal(result.itemKey, "MANUAL01");
+    assert.equal(result.source, "manual-fallback");
+    assert.equal(creates.length, 2);
+    assert.equal(creates[1]?.title, "Manual Title");
+    assert.match(result.warnings?.[0] ?? "", /Zotero rejected the DOI metadata/u);
+  }
+});
+
 test("addToZotero omits publisher for journal articles imported from DOI", async () => {
   const requests: Array<{ url: string; init?: RequestInit }> = [];
   const fetchMock: typeof fetch = async (input, init) => {

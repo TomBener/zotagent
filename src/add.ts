@@ -602,6 +602,16 @@ function buildManualItem(
   return payload;
 }
 
+/** Zotero answered and refused the item, so nothing was created and a
+ *  retry with different data cannot duplicate it — unlike a timeout or a
+ *  5xx, after which the write may or may not have committed. */
+class ZoteroRejectedItemError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ZoteroRejectedItemError";
+  }
+}
+
 async function createItem(
   config: ZoteroCredentials,
   payload: EditableZoteroItem,
@@ -613,10 +623,15 @@ async function createItem(
     headers: zoteroJsonHeaders(config.apiKey, { "Zotero-Write-Token": createWriteToken() }),
     body: JSON.stringify([payload]),
   }, REQUEST_TIMEOUT_MS);
-  const data = await readJsonResponse<{ success?: Record<string, string>; successful?: Record<string, { key?: string }> }>(
-    response,
-    url,
-  );
+  if (response.status >= 400 && response.status < 500) {
+    const detail = (await response.text()).trim() || response.statusText;
+    throw new ZoteroRejectedItemError(`Request failed (${response.status}) for ${url}: ${detail}`);
+  }
+  const data = await readJsonResponse<{
+    success?: Record<string, string>;
+    successful?: Record<string, { key?: string }>;
+    failed?: Record<string, unknown>;
+  }>(response, url);
 
   const successKey = data.success?.["0"];
   if (successKey) return successKey;
@@ -624,6 +639,9 @@ async function createItem(
   const successfulKey = data.successful?.["0"]?.key;
   if (successfulKey) return successfulKey;
 
+  if (data.failed?.["0"] !== undefined) {
+    throw new ZoteroRejectedItemError(`Zotero rejected the item: ${JSON.stringify(data.failed["0"])}`);
+  }
   throw new Error(`Zotero item creation did not return an item key: ${JSON.stringify(data)}`);
 }
 
@@ -912,7 +930,24 @@ export async function addToZotero(
     // Spread order matters: the result reports the DOI actually written to
     // the item (translators may normalize the requested form); cleanedDoi
     // only fills in when the item type has no DOI field.
-    return { doi: cleanedDoi, ...(await createWithChildren(ctx, prepared.payload, prepared.meta, fetchImpl)) };
+    try {
+      return { doi: cleanedDoi, ...(await createWithChildren(ctx, prepared.payload, prepared.meta, fetchImpl)) };
+    } catch (error) {
+      // A refusal means nothing was created, so the manual fields may still
+      // make the item — typically the DOI record carried a field Zotero
+      // rejects. Any other create failure may have committed and propagates.
+      if (!(error instanceof ZoteroRejectedItemError) || prepared.meta.source === "manual-fallback" || !manualInput.title) {
+        throw error;
+      }
+      ctx.warnings.push(`Zotero rejected the DOI metadata; created item from manual fields instead. ${error.message}`);
+      const template = await fetchTemplate(manualItemType, fetchImpl);
+      const payload = buildManualItem(template, manualInput);
+      if ("DOI" in payload) payload.DOI = cleanedDoi;
+      return {
+        doi: cleanedDoi,
+        ...(await createWithChildren(ctx, payload, { source: "manual-fallback", doi: cleanedDoi }, fetchImpl)),
+      };
+    }
   }
 
   const template = await fetchTemplate(manualItemType, fetchImpl);
