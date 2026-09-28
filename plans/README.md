@@ -42,9 +42,11 @@ Ordered by leverage. Each was confirmed against the code at `9b80ba6`.
 - **CORRECTNESS-02** — Zotero item creation is non-idempotent: `createWriteToken()`
   (`src/add.ts:125`) returns a fresh token per call, so a post-commit timeout
   (8s, `src/add.ts:42`) followed by a retry duplicates items. Effort M.
-  *Partly addressed 2026-09-28 (c1f34b9): the DOI path no longer re-POSTs a
-  failed create as a manual-fallback item. A caller that retries `add` after
-  a timeout can still duplicate.*
+  *Partly addressed 2026-09-28 (c1f34b9, 93a423d): the DOI path no longer
+  re-POSTs as a manual-fallback item after an ambiguous create failure
+  (timeout, 5xx, network); only a definitive refusal of the item's data
+  (HTTP 400 or a `failed` entry, nothing created) still falls back. A caller
+  that retries `add` after a timeout can still duplicate.*
 - **PERF-01** — `add --json` batch is serial and re-fetches the identical item
   template per item (`src/add.ts:1284,1292`); Zotero accepts 50 items per POST.
   Effort M. Interacts with CORRECTNESS-02 — plan them together.
