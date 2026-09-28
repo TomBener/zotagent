@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { expandDocument, fullTextDocument, getDocumentBlocks, searchLiterature, searchWithinDocuments } from "../../src/engine.js";
-import type { KeywordSearchOptions } from "../../src/keyword-db.js";
+import { openKeywordIndex, type KeywordSearchOptions } from "../../src/keyword-db.js";
+import { resolveConfig } from "../../src/config.js";
 import { writeCatalogFile } from "../../src/state.js";
 import type { AttachmentManifest, CatalogFile } from "../../src/types.js";
 import { MANIFEST_EXT, writeManifestFile } from "../../src/utils.js";
@@ -108,6 +109,59 @@ test("searchLiterature keyword mode uses the keyword index and skips qmd", async
   assert.equal(result.results.length, 1);
   assert.equal(result.results[0]!.itemKey, "ITEM9000");
   assert.match(result.results[0]!.passage, /dangwei shuji/i);
+});
+
+test("searchLiterature points a sync-disabled host at matching versions when the index is stale", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-stale-"));
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  mkdirSync(indexDir, { recursive: true });
+  const docKey = "8".repeat(40);
+  writeManifest(join(dataDir, "manifests", `${docKey}${MANIFEST_EXT}`), {
+    docKey, itemKey: "ITEM8000", title: "T", authors: ["A"], filePath: "/tmp/stale.pdf",
+    blocks: [{ blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"], text: "dangwei shuji",
+      charStart: 0, charEnd: 13, lineStart: 1, lineEnd: 1, isReferenceLike: false }],
+  });
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [{
+      docKey, itemKey: "ITEM8000", title: "T", authors: ["A"], filePath: "/tmp/stale.pdf", fileExt: "pdf",
+      exists: true, supported: true, extractStatus: "ready", size: 1, mtimeMs: 1, sourceHash: "h",
+      lastIndexedAt: new Date().toISOString(),
+    }],
+  });
+  const overrides = { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir };
+  // Opened but never rebuilt by this version: the state of an index another
+  // zotagent version built.
+  await (await openKeywordIndex(resolveConfig(overrides))).close();
+
+  const keywordFactory = async () => ({
+    rebuildIndex: async () => {},
+    searchDocs: async () => [{ docKey, blockIndex: 0, score: 1 }],
+    searchBlocks: async () => [],
+    isEmpty: async () => false,
+    close: async () => {},
+  });
+  const unusedQmd = async () => { throw new Error("qmd should not be opened"); };
+  const previous = process.env.ZOTAGENT_SYNC_ENABLED;
+  try {
+    process.env.ZOTAGENT_SYNC_ENABLED = "false";
+    const readOnly = await searchLiterature("dangwei", 10, overrides, unusedQmd, {}, keywordFactory);
+    const readOnlyWarning = readOnly.warnings?.find((w) => w.includes("different zotagent version"));
+    assert.ok(readOnlyWarning, "stale warning on the read-only host");
+    assert.match(readOnlyWarning, /Sync is disabled on this host/);
+    assert.doesNotMatch(readOnlyWarning, /next `zotagent sync` rebuilds/);
+
+    process.env.ZOTAGENT_SYNC_ENABLED = "true";
+    const syncing = await searchLiterature("dangwei", 10, overrides, unusedQmd, {}, keywordFactory);
+    const syncingWarning = syncing.warnings?.find((w) => w.includes("different zotagent version"));
+    assert.ok(syncingWarning, "stale warning on the syncing host");
+    assert.match(syncingWarning, /next `zotagent sync` rebuilds it/);
+  } finally {
+    if (previous === undefined) delete process.env.ZOTAGENT_SYNC_ENABLED;
+    else process.env.ZOTAGENT_SYNC_ENABLED = previous;
+  }
 });
 
 test("searchLiterature reflows PDF line breaks in result passages", async () => {

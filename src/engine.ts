@@ -11,7 +11,7 @@ import { keywordIndexIsCurrent, maskQuotedPhrases, openKeywordIndex, unmaskQuote
 import { mergeManifestsForItem } from "./manifest.js";
 import { openQmdClient, type QmdFactory } from "./qmd.js";
 import { getReadyEntries, readCatalogFile, summarizeCatalog } from "./state.js";
-import type { AttachmentManifest, CatalogEntry, ManifestBlock, SearchResultRow } from "./types.js";
+import type { AppConfig, AttachmentManifest, CatalogEntry, ManifestBlock, SearchResultRow } from "./types.js";
 import { cleanText, compactHomePath, exists, overlap } from "./utils.js";
 import { toSimplified } from "./zh-convert.js";
 
@@ -573,9 +573,19 @@ function renderManifestMarkdown(manifest: AttachmentManifest): string {
   return cleanText(snippets.join("\n\n"));
 }
 
-const STALE_KEYWORD_INDEX_WARNING =
-  "The keyword index was built by an older zotagent and has not been rebuilt since; it can miss " +
-  "matches (ligatures, full-width forms, CJK phrasing) until the next `zotagent sync` rebuilds it.";
+// The index can be stale in either direction — built by an older zotagent
+// before an upgrade, or by a newer one on the host that syncs a shared
+// dataDir — so the warning names neither, and a host that cannot sync is
+// pointed at the versions rather than at a sync it would refuse.
+function staleKeywordIndexWarning(config: AppConfig): string {
+  const stale =
+    "The keyword index was built by a different zotagent version than this one; it can miss " +
+    "matches (ligatures, full-width forms, CJK phrasing) until it is rebuilt.";
+  return config.syncEnabled === false
+    ? `${stale} Sync is disabled on this host: run the same zotagent version here and on the host ` +
+        "that maintains this dataDir, then run `zotagent sync` there if this warning remains."
+    : `${stale} The next \`zotagent sync\` rebuilds it.`;
+}
 
 export async function searchLiterature(
   query: string,
@@ -700,7 +710,7 @@ export async function searchLiterature(
     } finally {
       await keywordIndex.close();
     }
-    if (!keywordIndexIsCurrent(config.dataDir)) warnings.push(STALE_KEYWORD_INDEX_WARNING);
+    if (!keywordIndexIsCurrent(config.dataDir)) warnings.push(staleKeywordIndexWarning(config));
   }
 
   return wrap(mapped.slice(0, limit));
@@ -797,7 +807,7 @@ export async function searchWithinDocuments(
     results: ordered.slice(0, limit),
     warnings: keywordIndexIsCurrent(config.dataDir)
       ? config.warnings
-      : [...config.warnings, STALE_KEYWORD_INDEX_WARNING],
+      : [...config.warnings, staleKeywordIndexWarning(config)],
   };
 }
 

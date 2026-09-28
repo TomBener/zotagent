@@ -238,7 +238,7 @@ Two sync refusals stop before anything is touched; report them to the user rathe
 
 ## Index freshness
 
-`search` / `search-in` / `blocks` / `expand` / `fulltext` read a local index. On "No indexed documents found", suggest `zotagent sync`. If `search` / `search-in` warn that the keyword index "was built by an older zotagent", tell the user a `sync` will rebuild it (results can miss matches until then) — do not run it yourself. `metadata` / `add` / `s2` / `s2-refs` / `s2-citations` / `recent` work without the local index (`metadata` then reports `indexed: false` everywhere and warns that the index catalog is empty). After `add`, the new paper isn't full-text searchable until the next `sync`.
+`search` / `search-in` / `blocks` / `expand` / `fulltext` read a local index. On "No indexed documents found", suggest `zotagent sync`. If `search` / `search-in` warn that the keyword index "was built by a different zotagent version", pass the warning's advice on to the user — a `sync` rebuilds it, or on a host with sync disabled, matching zotagent versions across hosts (results can miss matches until then) — and do not run `sync` yourself. `metadata` / `add` / `s2` / `s2-refs` / `s2-citations` / `recent` work without the local index (`metadata` then reports `indexed: false` everywhere and warns that the index catalog is empty). After `add`, the new paper isn't full-text searchable until the next `sync`.
 
 ## Editing Zotero, and fields the CLI doesn't return
 
