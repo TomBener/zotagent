@@ -471,7 +471,9 @@ function matchRows(
   }
   const sanitized = query.replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/gu, " ").trim();
   if (sanitized.length === 0) {
-    throw new Error("Search text cannot be empty.");
+    throw new KeywordQuerySyntaxError(
+      `The keyword query ${JSON.stringify(query)} has no words to search for, only punctuation.`,
+    );
   }
   try {
     return run(buildFtsQuery(sanitized));

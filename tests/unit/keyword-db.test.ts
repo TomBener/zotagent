@@ -738,7 +738,7 @@ test("search handles malformed FTS5 queries gracefully", async () => {
 
     // A dangling operator survives the fallback; it is the user's query to
     // fix, so it surfaces as a syntax error, not an internal one.
-    for (const query of ["AND", "NOT", "aging OR"]) {
+    for (const query of ["AND", "NOT", "aging OR", "(((", "???", '"', "::", "，，"]) {
       await assert.rejects(client.searchDocs(query, 10), KeywordQuerySyntaxError, query);
       await assert.rejects(client.searchBlocks(query, 10), KeywordQuerySyntaxError, query);
     }
