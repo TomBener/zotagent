@@ -48,9 +48,12 @@ const ODL_CONTENT_SAFETY_OFF = "tiny";
 // the thinnest healthy document still yielded 291 chars/page and the 1st
 // percentile 564 — 50 sits an order of magnitude below anything legitimate.
 // Short documents are exempt: a scanned map or a one-page photo plate is
-// text-free by nature rather than by failure.
-const ODL_MIN_YIELD_PAGES = 4;
-const ODL_MIN_CHARS_PER_PAGE = 50;
+// text-free by nature rather than by failure. The same floor guards the
+// pdftotext tier, where the thin result is a scan whose only text layer is a
+// download stamp ("Downloaded from JSTOR" on every page, ~23 chars/page);
+// healthy pdftotext output measured 366 chars/page at its thinnest.
+const MIN_YIELD_PAGES = 4;
+const MIN_CHARS_PER_PAGE = 50;
 
 function isOdlStructuralBug(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
@@ -68,9 +71,10 @@ function isOdlTimeout(error: unknown): boolean {
   return ODL_TIMEOUT_PATTERN.test(message);
 }
 
-/** Thrown when OpenDataLoader exits cleanly having read almost nothing. Routes
- *  to the pdftotext tier — another pass of the same engine would land in the
- *  same place. */
+/** Thrown when an extractor exits cleanly having read almost nothing. From an
+ *  OpenDataLoader tier it routes to pdftotext — another pass of the same
+ *  engine would land in the same place; from pdftotext, the last tier, it
+ *  fails the attachment. */
 export class LowYieldExtractionError extends Error {
   constructor(filePath: string, chars: number, pages: number) {
     super(
@@ -104,9 +108,19 @@ export function odlYieldShortfall(
   json: string,
 ): { chars: number; pages: number } | undefined {
   const pages = pageCountFromOdlJson(json);
-  if (pages === undefined || pages < ODL_MIN_YIELD_PAGES) return undefined;
+  if (pages === undefined || pages < MIN_YIELD_PAGES) return undefined;
   const chars = markdown.trim().length;
-  return chars < pages * ODL_MIN_CHARS_PER_PAGE ? { chars, pages } : undefined;
+  return chars < pages * MIN_CHARS_PER_PAGE ? { chars, pages } : undefined;
+}
+
+/** The same judgement for pdftotext's plain text, which marks each page end
+ *  with a form feed and pads layout with whitespace — so pages are counted
+ *  from form feeds and only non-whitespace characters count as yield. */
+export function pdftotextYieldShortfall(text: string): { chars: number; pages: number } | undefined {
+  const pages = text.split("\f").length - 1;
+  if (pages < MIN_YIELD_PAGES) return undefined;
+  const chars = text.replace(/\s+/gu, "").length;
+  return chars < pages * MIN_CHARS_PER_PAGE ? { chars, pages } : undefined;
 }
 
 // pdftotext is the last tier, so nothing downstream can improve on what it
@@ -644,6 +658,10 @@ async function extractBatchPdftotext(
           `${Math.round(garbled.letterRatio * 100)}% letters, ` +
             `${Math.round(garbled.symbolRatio * 100)}% rare symbols`,
         );
+      }
+      const thin = pdftotextYieldShortfall(text);
+      if (thin) {
+        throw new LowYieldExtractionError(attachment.filePath, thin.chars, thin.pages);
       }
       const scattered = scatteredGlyphRatios(text);
       if (scattered) {

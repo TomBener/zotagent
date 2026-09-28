@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { buildArgs } from "@opendataloader/pdf";
 
-import { garbledTextRatios, groupForOdlBatches, odlConvertOptions, odlYieldShortfall, scatteredGlyphRatios } from "../../src/extract.js";
+import { garbledTextRatios, groupForOdlBatches, odlConvertOptions, odlYieldShortfall, pdftotextYieldShortfall, scatteredGlyphRatios } from "../../src/extract.js";
 import type { AttachmentCatalogEntry } from "../../src/types.js";
 
 function odlJson(pages: number): string {
@@ -170,4 +170,19 @@ test("groupForOdlBatches never batches stems that collide on a case-insensitive 
     assert.equal(new Set(stems).size, stems.length, `colliding stems in one batch: ${stems.join(", ")}`);
   }
   assert.equal(batches.flat().length, 5);
+});
+
+test("pdftotextYieldShortfall catches a scan whose only text is a download stamp", () => {
+  // Real pdftotext output shape: one stamp line per page, a form feed after each.
+  const stamped = "Downloaded from JSTOR 2020\n\f".repeat(6);
+  assert.deepEqual(pdftotextYieldShortfall(stamped), { chars: 6 * 23, pages: 6 });
+});
+
+test("pdftotextYieldShortfall ignores layout padding and exempts short documents", () => {
+  const page = `${" ".repeat(400)}${"Ordinary prose with enough words on the page. ".repeat(3)}\n\f`;
+  assert.equal(pdftotextYieldShortfall(page.repeat(10)), undefined);
+  // Three pages is too short to hold an opinion, however thin.
+  assert.equal(pdftotextYieldShortfall("x\n\f".repeat(3)), undefined);
+  // No form feeds: page count unknown, no judgement.
+  assert.equal(pdftotextYieldShortfall("x"), undefined);
 });
