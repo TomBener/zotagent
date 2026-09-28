@@ -2,7 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { buildArgs } from "@opendataloader/pdf";
 
-import { garbledTextRatios, odlConvertOptions, odlYieldShortfall, scatteredGlyphRatios } from "../../src/extract.js";
+import { garbledTextRatios, groupForOdlBatches, odlConvertOptions, odlYieldShortfall, scatteredGlyphRatios } from "../../src/extract.js";
+import type { AttachmentCatalogEntry } from "../../src/types.js";
 
 function odlJson(pages: number): string {
   return JSON.stringify({ "file name": "x.pdf", "number of pages": pages, kids: [] });
@@ -144,4 +145,29 @@ test("scatteredGlyphRatios needs both signals before condemning text", () => {
 
 test("scatteredGlyphRatios holds no opinion on short output", () => {
   assert.equal(scatteredGlyphRatios("ᒪ ᴾ ᰛ ȼ ᱕"), undefined);
+});
+
+function pdfAttachment(filePath: string, itemKey: string): AttachmentCatalogEntry {
+  return {
+    docKey: itemKey.toLowerCase().padEnd(40, "0"), itemKey, title: itemKey, authors: [], filePath,
+    fileExt: "pdf", exists: true, supported: true, type: "article-journal",
+  };
+}
+
+test("groupForOdlBatches never batches stems that collide on a case-insensitive volume", () => {
+  const batches = groupForOdlBatches(
+    [
+      pdfAttachment("/lib/A/Paper.pdf", "ITEMA001"),
+      pdfAttachment("/lib/B/paper.pdf", "ITEMB001"),
+      pdfAttachment("/lib/C/Caf\u00e9.pdf", "ITEMC001"),
+      pdfAttachment("/lib/D/Cafe\u0301.pdf", "ITEMD001"),
+      pdfAttachment("/lib/E/Other.pdf", "ITEME001"),
+    ],
+    new Set(),
+  );
+  for (const batch of batches) {
+    const stems = batch.map((a) => a.filePath.split("/").pop()!.replace(/\.pdf$/u, "").normalize("NFC").toLowerCase());
+    assert.equal(new Set(stems).size, stems.length, `colliding stems in one batch: ${stems.join(", ")}`);
+  }
+  assert.equal(batches.flat().length, 5);
 });

@@ -521,7 +521,11 @@ export function groupForOdlBatches(
       continue;
     }
 
-    const stem = stemForFile(attachment.filePath);
+    // ODL names each output after its input's stem, in one directory per
+    // batch — and the default macOS volume compares names case- and
+    // normalization-insensitively, so `Paper.pdf` and `paper.pdf` (or NFC and
+    // NFD spellings) would write one file and both members would read it.
+    const stem = stemForFile(attachment.filePath).normalize("NFC").toLowerCase();
     if (current.length >= maxBatchSize || stems.has(stem)) {
       out.push(current);
       current = [];
