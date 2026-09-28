@@ -2,77 +2,34 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import JSZip from "jszip";
 import { parseHTML } from "linkedom";
+import { domToMarkdown } from "./dom-markdown.js";
 import { cleanText } from "./utils.js";
-
-const BLOCK_TAGS = new Set([
-  "p", "div", "blockquote", "section", "article", "aside", "header", "footer",
-  "nav", "main", "figure", "figcaption", "details", "summary", "pre", "table",
-  "ul", "ol", "dl", "hr", "address",
-]);
 
 function xhtmlToMarkdown(html: string): string {
   const { document } = parseHTML(html);
-  const lines: string[] = [];
-  let inline: string[] = [];
-
-  function flushInline(): void {
-    const text = inline.join("").trim();
-    if (text) lines.push(text);
-    inline = [];
-  }
-
-  function walk(node: Node): void {
-    if (node.nodeType === 3) {
-      const text = (node.textContent ?? "").replace(/\s+/g, " ");
-      if (text.trim() || (text === " " && inline.length > 0)) inline.push(text);
-      return;
-    }
-    if (node.nodeType !== 1) return;
-
-    const el = node as Element;
-    const tag = el.tagName?.toLowerCase() ?? "";
-
-    if (tag === "script" || tag === "style") return;
-
-    const headingMatch = tag.match(/^h([1-6])$/);
-    if (headingMatch) {
-      flushInline();
-      const level = Number(headingMatch[1]);
-      const text = (el.textContent ?? "").trim();
-      if (text) lines.push(`\n${"#".repeat(level)} ${text}\n`);
-      return;
-    }
-
-    if (tag === "li") {
-      flushInline();
-      const text = (el.textContent ?? "").trim();
-      if (text) lines.push(`- ${text}`);
-      return;
-    }
-
-    if (tag === "br") {
-      flushInline();
-      lines.push("");
-      return;
-    }
-
-    if (BLOCK_TAGS.has(tag)) {
-      flushInline();
-      const before = lines.length;
-      for (const child of Array.from(node.childNodes)) walk(child);
-      flushInline();
-      if (lines.length > before) lines.push("");
-      return;
-    }
-
-    for (const child of Array.from(node.childNodes)) walk(child);
-  }
-
   const body = document.querySelector("body");
-  if (body) walk(body);
-  flushInline();
+  return body ? domToMarkdown(body as unknown as Node) : "";
+}
 
-  return cleanText(lines.join("\n"));
+// OPF documents may prefix their elements (`<opf:item>`), which a tag-name
+// selector for `item` does not match.
+function elementsByLocalName(root: Document, name: string): Element[] {
+  return Array.from(root.querySelectorAll("*")).filter(
+    (el) => el.tagName.toLowerCase().replace(/^[^:]*:/u, "") === name,
+  );
+}
+
+// Manifest hrefs are URLs: percent-encoded (`ch%201.xhtml`, `%E7%AC%AC2.xhtml`)
+// and possibly carrying a fragment. The zip holds the decoded names.
+function hrefToZipPath(href: string, opfDir: string): string {
+  const withoutFragment = href.replace(/#.*$/u, "");
+  let decoded = withoutFragment;
+  try {
+    decoded = decodeURIComponent(withoutFragment);
+  } catch {
+    // A literal % in a file name: keep the href as written.
+  }
+  return resolve(`/${opfDir}`, decoded).slice(1);
 }
 
 function parseContainerXml(xml: string): string {
@@ -87,14 +44,14 @@ function parseOpfSpine(opfXml: string, opfDir: string): string[] {
   const { document } = parseHTML(opfXml);
   const manifest = new Map<string, string>();
 
-  for (const item of Array.from(document.querySelectorAll("item"))) {
+  for (const item of elementsByLocalName(document as unknown as Document, "item")) {
     const id = item.getAttribute("id");
     const href = item.getAttribute("href");
-    if (id && href) manifest.set(id, resolve(`/${opfDir}`, href).slice(1));
+    if (id && href) manifest.set(id, hrefToZipPath(href, opfDir));
   }
 
   const spineItems: string[] = [];
-  for (const itemref of Array.from(document.querySelectorAll("itemref"))) {
+  for (const itemref of elementsByLocalName(document as unknown as Document, "itemref")) {
     const idref = itemref.getAttribute("idref");
     if (idref) {
       const href = manifest.get(idref);

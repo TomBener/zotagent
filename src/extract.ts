@@ -11,6 +11,7 @@ import { createRequire } from "node:module";
 
 import { EmptyArtifactError, type ArtifactStore } from "./artifact-store.js";
 import { buildMarkdownManifest, buildPdfManifest } from "./manifest.js";
+import { decodeTextBytes } from "./dom-markdown.js";
 import { extractEpub } from "./epub.js";
 import { extractHtml } from "./html-extract.js";
 import type { AttachmentCatalogEntry } from "./types.js";
@@ -839,7 +840,7 @@ export async function extractNonPdfAttachment(
   } else if (attachment.fileExt === "html") {
     markdown = await extractHtml(attachment.filePath);
   } else if (attachment.fileExt === "txt") {
-    markdown = readFileSync(attachment.filePath, "utf-8");
+    markdown = decodeTextBytes(readFileSync(attachment.filePath));
   } else {
     throw new Error(`Unsupported file type for extraction: ${attachment.fileExt}`);
   }
