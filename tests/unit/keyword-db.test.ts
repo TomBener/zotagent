@@ -242,7 +242,10 @@ test("buildFtsQuery converts CJK runs to ordered phrases", () => {
   assert.equal(buildFtsQuery("hello"), "hello");
   assert.equal(buildFtsQuery("新 疆"), "新 疆");
   assert.equal(buildFtsQuery("独山子油矿"), '"独 山 子 油 矿"');
-  assert.equal(buildFtsQuery("is边疆"), 'is "边 疆"');
+  // A word glued to CJK is one phrase, the adjacency the index holds.
+  assert.equal(buildFtsQuery("is边疆"), '"is 边 疆"');
+  assert.equal(buildFtsQuery("1949年"), '"1949 年"');
+  assert.equal(buildFtsQuery("盛世*"), '"盛 世"*');
   assert.equal(buildFtsQuery('"盛世才"'), '"盛 世 才"');
   assert.equal(buildFtsQuery('hello "盛世才" world'), 'hello "盛 世 才" world');
 });
@@ -264,9 +267,12 @@ test("buildFtsQuery folds traditional Chinese to simplified", () => {
 test("buildFtsQuery applies NFKC before folding", () => {
   // Ligatures and full-width forms reach the index as their plain letters.
   assert.equal(buildFtsQuery("exempli\uFB01es"), "exemplifies");
-  assert.equal(buildFtsQuery("\uFF11\uFF19\uFF14\uFF19年以后"), '1949 "年 以 后"');
-  // Full-width quotes become the ASCII phrase operator.
-  assert.equal(buildFtsQuery("\uFF02institutional change\uFF02"), '"institutional change"');
+  assert.equal(buildFtsQuery("\uFF11\uFF19\uFF14\uFF19年以后"), '"1949 年 以 后"');
+  // Full-width punctuation separates words as it does in the index; it never
+  // turns into FTS5 syntax (quotes, commas, parentheses, colons).
+  assert.equal(buildFtsQuery("\uFF02institutional change\uFF02"), "institutional change");
+  assert.equal(buildFtsQuery("国家\uFF0C能力"), '"国 家" "能 力"');
+  assert.equal(buildFtsQuery("\uFF08国家\uFF09\uFF1A能力"), '"国 家" "能 力"');
 });
 
 test("rewriteInfixNear rewrites infix NEAR to function form", () => {
@@ -405,6 +411,8 @@ test("CJK keyword search respects character order and NFKC-folds both sides", as
     assert.deepEqual(await hit("exemplifies"), [docs[1]!.docKey]);
     assert.deepEqual(await hit("flow"), [docs[1]!.docKey]);
     assert.deepEqual(await hit("1949年以后"), [docs[1]!.docKey]);
+    assert.deepEqual(await hit("1949年"), [docs[1]!.docKey]);
+    assert.deepEqual(await hit("社会\uFF0C国家"), [docs[0]!.docKey]);
     assert.deepEqual(await hit("exempliﬁes"), [docs[1]!.docKey]);
   } finally {
     await client.close();

@@ -48,10 +48,22 @@ export const KEYWORD_INDEX_SCHEMA_VERSION = "keyword-fts5-porter-unicode61-conte
 // (the ﬁ/ﬂ ligatures PDFs are full of, full-width digits and Latin,
 // compatibility ideographs) reach opencc as the ordinary characters it
 // knows — the same order normalizeExactText uses for the phrase scanner.
-// On the query side this also turns full-width quotes and asterisks into
-// the ASCII operators FTS5 reads.
+//
+// Compatibility punctuation is the exception: NFKC would turn full-width
+// `，（）：＂＊` and the vertical/small forms into ASCII `, ( ) : " *`, which
+// FTS5 reads as query syntax, so `国家，能力` became a syntax error and a
+// full-width quote an unintended phrase. unicode61 treats these characters
+// as separators, so they become spaces instead: the tokens are identical,
+// and only characters the user typed as ASCII act as operators.
+const COMPAT_PUNCTUATION_RE =
+  /[\u2024-\u2026\u203C\u2047-\u2049\u2100\u2101\u2105\u2106\u2474-\u24B5\u2A74-\u2A76\u3200-\u321E\u3220-\u3243\u33C2\u33D8\uFE10-\uFE19\uFE30-\uFE4F\uFE50-\uFE6B\uFF01-\uFF0F\uFF1A-\uFF20\uFF3B-\uFF40\uFF5B-\uFF65]/gu;
+const ASCII_PUNCTUATION_RE = /[!-/:-@[-`{-~]/gu;
+
 function foldKeywordText(text: string): string {
-  return toSimplified(text.normalize("NFKC"));
+  const separated = text.replace(COMPAT_PUNCTUATION_RE, (char) =>
+    char.normalize("NFKC").replace(ASCII_PUNCTUATION_RE, " "),
+  );
+  return toSimplified(separated.normalize("NFKC"));
 }
 
 // Pack (docId, blockIndex) into the FTS5 rowid: docId * 2^24 + blockIndex.
@@ -251,20 +263,26 @@ function updateTable(
 }
 
 // The index holds one token per CJK character (segmentCjk), so an unquoted
-// run must be reassembled into an ordered phrase: FTS5 NEAR ignores order,
-// which made 会社 match 社会 and 事故 match 故事. Punctuation and whitespace
-// are not tokens, so line breaks and OCR spacing inside a word still match.
-function cjkRunToPhrase(run: string): string {
-  return `"${[...run].join(" ")}"`;
+// word containing CJK must be reassembled into an ordered phrase: FTS5 NEAR
+// ignores order, which made 会社 match 社会 and 事故 match 故事. The word is
+// the whole glued run of letters and digits, so `1949年` becomes the phrase
+// "1949 年" the index holds rather than a bareword no token equals.
+// Punctuation and whitespace are not tokens, so line breaks and OCR spacing
+// inside a word still match.
+const GLUED_CJK_WORD_RE = new RegExp(`[\\p{L}\\p{N}]*${CJK_CLASS_SOURCE}[\\p{L}\\p{N}]*`, "gu");
+
+function cjkWordToPhrase(word: string): string {
+  return [...word].length === 1 ? word : `"${segmentCjk(word)}"`;
 }
 
 function rewriteUnquotedCjk(text: string): string {
-  const CJK_RUN = new RegExp(`${CJK_CLASS_SOURCE}{2,}`, "gu");
-  return text.replace(CJK_RUN, (m, offset) => {
-    const phrase = cjkRunToPhrase(m);
+  return text.replace(GLUED_CJK_WORD_RE, (m, offset: number) => {
+    const phrase = cjkWordToPhrase(m);
     const before = offset > 0 && text[offset - 1] !== " " ? " " : "";
     const afterIdx = offset + m.length;
-    const after = afterIdx < text.length && text[afterIdx] !== " " ? " " : "";
+    // A trailing `*` stays glued so the phrase keeps its prefix operator.
+    const next = text[afterIdx];
+    const after = next !== undefined && next !== " " && next !== "*" ? " " : "";
     return `${before}${phrase}${after}`;
   });
 }
