@@ -418,7 +418,7 @@ Every key below is optional except `title`. `itemType` defaults to `journalArtic
 
 | Input field | Maps to | Notes |
 |---|---|---|
-| `itemType` | `itemType` | Defaults to `"journalArticle"`. Validated by Zotero `/items/new`; an unknown type fails the single item with `INVALID_ITEM_TYPE` (an outage or timeout on that lookup is `JSON_ITEM_FAILED`). |
+| `itemType` | `itemType` | Defaults to `"journalArticle"`. Validated by Zotero `/items/new`; an unknown type fails the single item with `INVALID_ITEM_TYPE` (an outage, timeout, or rate limit on that lookup is `JSON_ITEM_FAILED`). |
 | `title` | `title` | **Required.** |
 | `creators` | `creators` (pass-through) | Array of `{creatorType, firstName?, lastName?, name?}`. |
 | `authors` | `creators` | Array of strings. `"Last, First"` and `"First Last"` are split; single tokens (incl. CJK like `"李华"`) become `{creatorType: "author", name: "<token>"}`. If both `creators` and `authors` are present, `creators` wins and a warning is added. |

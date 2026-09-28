@@ -1144,16 +1144,18 @@ test("addJsonItemsToZotero returns a per-item error when Zotero rejects the item
   assert.equal(failure.itemType, "bogus");
 });
 
-test("addJsonItemsToZotero does not call a template-fetch outage an invalid itemType", async () => {
-  const { fetchMock } = stubZotero({ templateStatus: { journalArticle: 503 } });
-  const [failure] = await addJsonItemsToZotero(
-    [mapLenientItem({ itemType: "journalArticle", title: "Unlucky" })],
-    { zoteroLibraryId: "123456", zoteroLibraryType: "user", zoteroApiKey: "secret", translationServerUrl: "" },
-    undefined,
-    fetchMock,
-  );
-  assert.ok(failure && "ok" in failure && failure.ok === false);
-  assert.equal(failure.error.code, "JSON_ITEM_FAILED");
+test("addJsonItemsToZotero does not call a template-fetch outage or rate limit an invalid itemType", async () => {
+  for (const status of [503, 429]) {
+    const { fetchMock } = stubZotero({ templateStatus: { journalArticle: status } });
+    const [failure] = await addJsonItemsToZotero(
+      [mapLenientItem({ itemType: "journalArticle", title: "Unlucky" })],
+      { zoteroLibraryId: "123456", zoteroLibraryType: "user", zoteroApiKey: "secret", translationServerUrl: "" },
+      undefined,
+      fetchMock,
+    );
+    assert.ok(failure && "ok" in failure && failure.ok === false);
+    assert.equal(failure.error.code, "JSON_ITEM_FAILED", `HTTP ${status}`);
+  }
 });
 
 test("addJsonItemsToZotero CLI collection key overrides per-item collections", async () => {
