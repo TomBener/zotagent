@@ -81,8 +81,9 @@ function resolveSyncEnabled(raw: unknown, envValue: string | undefined, warnings
     );
     return false;
   }
-  if (raw === undefined) return undefined;
+  if (raw === undefined || raw === null) return undefined;
   if (typeof raw === "boolean") return raw;
+  if (raw === 1 || raw === 0) return raw === 1;
   const parsed = typeof raw === "string" ? parse(raw) : undefined;
   if (parsed !== undefined) return parsed;
   warnings.push(

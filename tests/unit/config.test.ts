@@ -100,12 +100,13 @@ test("resolveConfig accepts a numeric zoteroLibraryId", () => {
 });
 
 test("resolveConfig reads syncEnabled booleans and boolean-like strings", () => {
-  for (const [raw, want] of [[false, false], [true, true], ["false", false], ["off", false], ["yes", true]] as const) {
+  for (const [raw, want] of [[false, false], [true, true], ["false", false], ["off", false], ["yes", true], [0, false], [1, true]] as const) {
     const config = withConfigFile({ syncEnabled: raw }, NO_SYNC_ENV, () => resolveConfig());
     assert.equal(config.syncEnabled, want, `syncEnabled: ${JSON.stringify(raw)}`);
     assert.deepEqual(config.warnings, []);
   }
   assert.equal(withConfigFile({}, NO_SYNC_ENV, () => resolveConfig()).syncEnabled, undefined);
+  assert.equal(withConfigFile({ syncEnabled: null }, NO_SYNC_ENV, () => resolveConfig()).syncEnabled, undefined);
 });
 
 test("resolveConfig fails closed on an unreadable syncEnabled", () => {
