@@ -602,9 +602,11 @@ function buildManualItem(
   return payload;
 }
 
-/** Zotero answered and refused the item, so nothing was created and a
- *  retry with different data cannot duplicate it — unlike a timeout or a
- *  5xx, after which the write may or may not have committed. */
+/** Zotero answered and refused the item's data (HTTP 400, or a `failed`
+ *  entry), so nothing was created and a retry with different data cannot
+ *  duplicate it — unlike a timeout or a 5xx, after which the write may or
+ *  may not have committed. Other 4xx answers (a bad key, a locked library,
+ *  rate limiting) are not about the data and would refuse any retry too. */
 class ZoteroRejectedItemError extends Error {
   constructor(message: string) {
     super(message);
@@ -623,9 +625,9 @@ async function createItem(
     headers: zoteroJsonHeaders(config.apiKey, { "Zotero-Write-Token": createWriteToken() }),
     body: JSON.stringify([payload]),
   }, REQUEST_TIMEOUT_MS);
-  if (response.status >= 400 && response.status < 500) {
+  if (response.status === 400) {
     const detail = (await response.text()).trim() || response.statusText;
-    throw new ZoteroRejectedItemError(`Request failed (${response.status}) for ${url}: ${detail}`);
+    throw new ZoteroRejectedItemError(`Request failed (400) for ${url}: ${detail}`);
   }
   const data = await readJsonResponse<{
     success?: Record<string, string>;

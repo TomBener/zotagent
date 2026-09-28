@@ -305,8 +305,9 @@ test("addToZotero never re-sends a failed DOI create as a manual item", async ()
 });
 
 test("addToZotero falls back to manual fields when Zotero rejects the DOI item", async () => {
-  // A refusal (4xx, or a 200 whose `failed` map holds the item) means nothing
-  // was created, so one manual-fallback create cannot duplicate anything.
+  // A refusal of the data (400, or a 200 whose `failed` map holds the item)
+  // means nothing was created, so one manual-fallback create cannot
+  // duplicate anything.
   for (const rejection of [
     () => new Response('{"message":"Invalid field"}', { status: 400 }),
     () => jsonResponse({ successful: {}, success: {}, unchanged: {}, failed: { "0": { code: 400, message: "Invalid field" } } }),
@@ -337,6 +338,33 @@ test("addToZotero falls back to manual fields when Zotero rejects the DOI item",
     assert.equal(creates[1]?.title, "Manual Title");
     assert.match(result.warnings?.[0] ?? "", /Zotero rejected the DOI metadata/u);
   }
+});
+
+test("addToZotero does not fall back when Zotero refuses the request itself", async () => {
+  // 403 (bad key) is not about the item's data: a manual create would be
+  // refused the same way, so the error propagates after one request.
+  let creates = 0;
+  const fetchMock: typeof fetch = async (input) => {
+    const url = String(input);
+    if (url === "https://doi.org/10.1000/forbidden") return jsonResponse({ type: "article-journal", title: "T" });
+    if (url.startsWith("https://api.zotero.org/items/new?itemType=")) {
+      return jsonResponse({ itemType: url.split("=")[1], title: "", creators: [], DOI: "", tags: [], collections: [], relations: {} });
+    }
+    if (url === "https://api.zotero.org/users/123456/items") {
+      creates += 1;
+      return new Response("Forbidden", { status: 403 });
+    }
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+  await assert.rejects(
+    addToZotero(
+      { doi: "10.1000/forbidden", title: "Manual Title" },
+      { zoteroLibraryId: "123456", zoteroLibraryType: "user", zoteroApiKey: "secret", translationServerUrl: "" },
+      fetchMock,
+    ),
+    /Request failed \(403\)/u,
+  );
+  assert.equal(creates, 1);
 });
 
 test("addToZotero omits publisher for journal articles imported from DOI", async () => {
