@@ -34,7 +34,7 @@ Keyword syntax — `search` and `search-in` both run SQLite FTS5 with a porter s
 | Exact phrase | `"institutional change"` | Token-adjacent match. Quotes a multi-word phrase. |
 | AND (default) | `alpha beta` | Implicit between bare tokens. |
 | OR | `Acemoglu OR Robinson` | Must be uppercase. Lowercase `or` is a literal term, not an operator. |
-| NOT | `alpha NOT beta` | Excludes the right-hand expression. Same uppercase rule. |
+| NOT | `alpha NOT beta` | Excludes the right-hand expression. Same uppercase rule. There is no `-beta` form; a leading `-` fails with `INVALID_ARGUMENT`, as does a dangling `AND` / `OR` / `NOT`. |
 | Proximity | `"土地" NEAR/20 "开发"` | Within N tokens, unordered. Use `NEAR/<n>`, not bare `NEAR` or `NEAR(...)`. |
 | Prefix wildcard | `Pete*` | Matches any token starting with `Pete`: `Peter`, `Petersen`, etc. Wildcard only at the end. |
 

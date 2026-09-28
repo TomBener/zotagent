@@ -305,8 +305,18 @@ const BARE_INFIX_NEAR_RE = new RegExp(
 );
 const CJK_RUN_RE = new RegExp(`${CJK_CLASS_SOURCE}{2,}`, "u");
 
+// A leading "-" reads as "exclude" in web search engines, but FTS5 has no
+// such operator; the query used to fall back to punctuation-stripped text,
+// silently turning `state -capacity` into a search that requires capacity.
+const MINUS_EXCLUSION_RE = /(?:^|\s)-(?=[\p{L}\p{N}\uE000])/u;
+
 function assertSupportedKeywordQuery(query: string): void {
   const { masked } = maskQuotedPhrases(query);
+  if (MINUS_EXCLUSION_RE.test(masked)) {
+    throw new KeywordQuerySyntaxError(
+      'A leading "-" does not exclude a term in keyword search. Put NOT between terms instead, e.g. `state NOT capacity`.',
+    );
+  }
   if (/\bNEAR\s*\(/iu.test(masked)) {
     throw new KeywordQuerySyntaxError(
       'NEAR(...) is not supported. Use the single proximity form: "<term A>" NEAR/50 "<term B>".',
@@ -379,6 +389,50 @@ function resolveDocIds(db: Database.Database, docKeys: string[] | undefined): nu
   return rows.map((r) => r.docId);
 }
 
+type MatchRow = { docKey: string; blockIndex: number; rank: number };
+
+// The shapes of FTS5 refusing the query text itself, as opposed to the
+// database failing: those must surface as-is, never as a syntax complaint.
+const FTS_SYNTAX_ERROR_RE = /fts5: syntax error|unterminated string|no such column|unknown special query/u;
+
+function isFtsSyntaxError(error: unknown): boolean {
+  return error instanceof Error && FTS_SYNTAX_ERROR_RE.test(error.message);
+}
+
+// Run a MATCH query. When FTS5 rejects the rewritten query, retry once with
+// punctuation stripped — stray quotes, parentheses, and colons are the usual
+// culprits — and if that is rejected too, report it as a query the user can
+// fix rather than an internal error.
+function matchRows(
+  db: Database.Database,
+  sql: string,
+  query: string,
+  docIds: number[],
+  limit: number,
+): KeywordSearchResult[] {
+  const run = (ftsQuery: string) =>
+    (db.prepare(sql).all(ftsQuery, ...docIds, limit) as MatchRow[])
+      .map((row) => ({ docKey: row.docKey, blockIndex: row.blockIndex, score: -row.rank }));
+  try {
+    return run(buildFtsQuery(query));
+  } catch (error) {
+    if (!isFtsSyntaxError(error)) throw error;
+  }
+  const sanitized = query.replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/gu, " ").trim();
+  if (sanitized.length === 0) {
+    throw new Error("Search text cannot be empty.");
+  }
+  try {
+    return run(buildFtsQuery(sanitized));
+  } catch (error) {
+    if (!isFtsSyntaxError(error)) throw error;
+    throw new KeywordQuerySyntaxError(
+      `Could not parse the keyword query ${JSON.stringify(query)}. AND, OR, and NOT must stand between ` +
+        `two terms (uppercase); quote a word to search for it literally, e.g. "OR".`,
+    );
+  }
+}
+
 export async function openKeywordIndex(config: AppConfig): Promise<KeywordIndexClient> {
   const paths = getDataPaths(config.dataDir);
   ensureDir(paths.indexDir);
@@ -445,22 +499,7 @@ export async function openKeywordIndex(config: AppConfig): Promise<KeywordIndexC
         LIMIT ?
       `;
 
-      const ftsQuery = buildFtsQuery(query);
-      try {
-        const rows = db.prepare(sql).all(ftsQuery, ...docIds, limit) as Array<{ docKey: string; blockIndex: number; rank: number }>;
-        return rows.map((row) => ({ docKey: row.docKey, blockIndex: row.blockIndex, score: -row.rank }));
-      } catch (error) {
-        if (error instanceof KeywordQuerySyntaxError) {
-          throw error;
-        }
-        const sanitized = query.replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/gu, " ").trim();
-        if (sanitized.length === 0) {
-          throw new Error("Search text cannot be empty.");
-        }
-        const fallback = buildFtsQuery(sanitized);
-        const rows = db.prepare(sql).all(fallback, ...docIds, limit) as Array<{ docKey: string; blockIndex: number; rank: number }>;
-        return rows.map((row) => ({ docKey: row.docKey, blockIndex: row.blockIndex, score: -row.rank }));
-      }
+      return matchRows(db, sql, query, docIds, limit);
     },
 
     searchBlocks: async (query, limit, options) => {
@@ -486,22 +525,7 @@ export async function openKeywordIndex(config: AppConfig): Promise<KeywordIndexC
         LIMIT ?
       `;
 
-      const ftsQuery = buildFtsQuery(query);
-      try {
-        const rows = db.prepare(sql).all(ftsQuery, ...docIds, limit) as Array<{ docKey: string; blockIndex: number; rank: number }>;
-        return rows.map((row) => ({ docKey: row.docKey, blockIndex: row.blockIndex, score: -row.rank }));
-      } catch (error) {
-        if (error instanceof KeywordQuerySyntaxError) {
-          throw error;
-        }
-        const sanitized = query.replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/gu, " ").trim();
-        if (sanitized.length === 0) {
-          throw new Error("Search text cannot be empty.");
-        }
-        const fallback = buildFtsQuery(sanitized);
-        const rows = db.prepare(sql).all(fallback, ...docIds, limit) as Array<{ docKey: string; blockIndex: number; rank: number }>;
-        return rows.map((row) => ({ docKey: row.docKey, blockIndex: row.blockIndex, score: -row.rank }));
-      }
+      return matchRows(db, sql, query, docIds, limit);
     },
 
     close: async () => {

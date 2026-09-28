@@ -178,6 +178,7 @@ Search
       Search indexed documents. Pass at most one of --keyword (default) or --semantic.
       Default is keyword search (FTS5 with porter stemming): "exact phrase", OR, NOT,
       term NEAR/<n> term, prefix*. Use NEAR/50 for proximity; NEAR(...) is not accepted.
+      There is no -term exclusion: write "a NOT b".
       Chinese, Japanese, and Korean text is supported with accurate phrase matching.
       --semantic uses qmd vector search with LLM query expansion (slower, heavier).
         --limit <n>                 Return up to n search results. Default: 10 (max 100) for search, 20 for

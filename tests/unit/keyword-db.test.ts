@@ -704,9 +704,27 @@ test("search handles malformed FTS5 queries gracefully", async () => {
     // Unbalanced quotes should not throw, should fall back to sanitized query
     const results = await client.searchDocs('"aging in', 10);
     assert.equal(results.length, 1);
+
+    // A dangling operator survives the fallback; it is the user's query to
+    // fix, so it surfaces as a syntax error, not an internal one.
+    for (const query of ["AND", "NOT", "aging OR"]) {
+      await assert.rejects(client.searchDocs(query, 10), KeywordQuerySyntaxError, query);
+      await assert.rejects(client.searchBlocks(query, 10), KeywordQuerySyntaxError, query);
+    }
   } finally {
     await client.close();
   }
+});
+
+test("buildFtsQuery rejects a leading minus instead of silently including the term", () => {
+  // FTS5 has no "-term" exclusion; the old fallback stripped the minus and
+  // searched for the very term the user meant to exclude.
+  for (const query of ["aging -China", "-China", 'aging -"in China"']) {
+    assert.throws(() => buildFtsQuery(query), KeywordQuerySyntaxError, query);
+  }
+  // Hyphens inside words are not operators.
+  assert.equal(buildFtsQuery("COVID-19 state-building"), "COVID-19 state-building");
+  assert.equal(buildFtsQuery('"anti -China"'), '"anti -China"');
 });
 
 function writeValidManifest(manifestsDir: string, docKey: string, text: string): string {
