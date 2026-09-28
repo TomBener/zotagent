@@ -16,6 +16,13 @@ test("odlConvertOptions disables the tiny content-safety rule", () => {
   assert.equal(options.readingOrder, undefined);
 });
 
+test("odlConvertOptions never writes images", () => {
+  const args = buildArgs(odlConvertOptions("/tmp/out", "markdown,json", false));
+  const at = args.indexOf("--image-output");
+  assert.notEqual(at, -1);
+  assert.equal(args[at + 1], "off");
+});
+
 test("odlConvertOptions turns reading order off for vertical text", () => {
   assert.equal(odlConvertOptions("/tmp/out", "text", true).readingOrder, "off");
 });

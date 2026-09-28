@@ -56,6 +56,7 @@ export type ReuseRefusal =
   | "empty-normalized"
   | "unreadable-manifest"
   | "no-blocks"
+  | "no-text"
   | "identity-mismatch"
   | "vertical-mismatch";
 
@@ -202,10 +203,27 @@ const STAGING_RESIDUE_RE = /\.(?:new|stale)-\d+-\d+-\d+(?:\.tmp)?$/;
  *  never treated as sweepable. */
 export const ARTIFACT_DOC_KEY_RE = /^[0-9a-f]{40}$/;
 
+// A block made only of image references carries no text. OpenDataLoader
+// renders every picture as `![image N](<Stem_images/imageFileN.png>)` (with or
+// without the angle brackets, sometimes inside a table row joined by `<br>`),
+// so an image-only scan extracts to a well-formed stack of such links: long
+// enough to pass the yield-per-page floor, yet nothing an index can search.
+const IMAGE_REFERENCE_RE = /!\[[^\]\n]*\]\(<?[^\n]*?_images\/imageFile\d+\.(?:png|jpe?g)>?\)/giu;
+const HTML_TAG_RE = /<[^>\n]*>/gu;
+const TEXT_CHAR_RE = /[\p{L}\p{N}]/u;
+
+function blockHasText(text: string): boolean {
+  return TEXT_CHAR_RE.test(text.replace(IMAGE_REFERENCE_RE, " ").replace(HTML_TAG_RE, " "));
+}
+
 /** Shared write-side validity gate: publish refuses exactly what the reuse
- *  verdict would classify as absent. Exported for adapter parity. */
+ *  verdict would classify as absent or text-free. Exported for adapter parity. */
 export function assertPublishable(built: BuiltArtifact): void {
-  if (built.markdown.trim().length > 0 && built.manifest.blocks.length > 0) {
+  if (
+    built.markdown.trim().length > 0 &&
+    built.manifest.blocks.length > 0 &&
+    built.manifest.blocks.some((block) => blockHasText(block.text))
+  ) {
     return;
   }
   throw new EmptyArtifactError(built.manifest);
@@ -219,6 +237,7 @@ export function manifestRefusal(
   expectation?: { vertical: boolean },
 ): ReuseRefusal | undefined {
   if (!Array.isArray(manifest.blocks) || manifest.blocks.length === 0) return "no-blocks";
+  if (!manifest.blocks.some((block) => blockHasText(block.text))) return "no-text";
   if (manifest.docKey !== identity.docKey || manifest.itemKey !== identity.itemKey) {
     return "identity-mismatch";
   }

@@ -28,10 +28,13 @@ tests, commits, and reviews — one name per concept.
   engine, diagnose, and the keyword index all go through it.
 - **Reuse verdict** — the store's answer to "may this cached artifact stand
   in for re-extraction?": pair complete, normalized non-empty, manifest
-  readable with blocks, identity (docKey + itemKey) matches, and — for PDFs —
+  readable with blocks, at least one block carrying text rather than only
+  image references, identity (docKey + itemKey) matches, and — for PDFs —
   the recorded vertical-text marker matches the current tag verdict.
   Refusals carry a reason (missing / empty-normalized / unreadable-manifest /
-  no-blocks / identity-mismatch / vertical-mismatch).
+  no-blocks / no-text / identity-mismatch / vertical-mismatch). Publish
+  refuses the same text-free shapes, so an image-only scan fails extraction
+  instead of landing as `ready`.
 
 ## Sync
 

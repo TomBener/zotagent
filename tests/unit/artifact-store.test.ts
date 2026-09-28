@@ -160,8 +160,31 @@ for (const harness of harnesses) {
     seedRaw("NOBLOCKS", { markdown: "content", manifest: sampleManifest("NOBLOCKS", { blocks: [] }) });
     assert.deepEqual(store.reuseVerdict(id("NOBLOCKS")), { reusable: false, reason: "no-blocks" });
 
+    seedRaw("NOTEXT", {
+      markdown: "content",
+      manifest: sampleManifest("NOTEXT", { blocks: [sampleBlock("![image 1](<Scan_images/imageFile1.png>)")] }),
+    });
+    assert.deepEqual(store.reuseVerdict(id("NOTEXT")), { reusable: false, reason: "no-text" });
+
     seedRaw("WRONGID", { markdown: "content", manifest: sampleManifest("WRONGID", { itemKey: "OTHER" }) });
     assert.deepEqual(store.reuseVerdict(id("WRONGID")), { reusable: false, reason: "identity-mismatch" });
+  });
+
+  t("publish refuses a manifest made only of ODL image references", () => {
+    const { store } = harness.make();
+    const imageOnly = [
+      sampleBlock("![image 1](<Scan (1936)_images/imageFile1.png>)"),
+      sampleBlock("|![image 2](Scan (1936)_images/imageFile2.png)<br><br>![image 3](Scan (1936)_images/imageFile3.jpg)|\n|---|"),
+    ];
+    assert.throws(
+      () => store.publish(built("DOC1", { blocks: imageOnly }, "![image 1](<Scan (1936)_images/imageFile1.png>)")),
+      EmptyArtifactError,
+    );
+    assert.deepEqual(store.probe("DOC1"), { hasNormalized: false, hasManifest: false });
+
+    // One block of real text is enough; the image references beside it stay.
+    store.publish(built("DOC2", { blocks: [...imageOnly, sampleBlock("Figure 1. Oil fields")] }));
+    assert.ok(store.reuseVerdict({ docKey: "DOC2", itemKey: "ITEM-DOC2" }).reusable);
   });
 
   t("reuseVerdict vertical expectation, both directions, and omitted", () => {

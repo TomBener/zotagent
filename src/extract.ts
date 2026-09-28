@@ -167,7 +167,10 @@ export function garbledTextRatios(
 }
 
 /** The ODL invocation both PDF tiers share, so the content-safety decision and
- *  the vertical-text rule cannot drift apart between them. */
+ *  the vertical-text rule cannot drift apart between them. Images are never
+ *  written: the index has no use for them, and ODL's default external mode
+ *  renders a PNG per scanned page plus a Markdown link per picture — which
+ *  for an image-only scan is all the "text" there is. */
 export function odlConvertOptions(
   outputDir: string,
   format: string,
@@ -176,6 +179,7 @@ export function odlConvertOptions(
   return {
     outputDir,
     format,
+    imageOutput: "off",
     contentSafetyOff: ODL_CONTENT_SAFETY_OFF,
     ...(vertical ? { readingOrder: "off" } : {}),
   };
