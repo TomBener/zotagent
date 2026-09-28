@@ -762,6 +762,8 @@ test("buildFtsQuery rejects a leading minus instead of silently including the te
   ]) {
     assert.throws(() => buildFtsQuery(query), KeywordQuerySyntaxError, query);
   }
+  // A spaced dash may be a range rather than an exclusion; say how to keep both.
+  assert.throws(() => buildFtsQuery("1990 - 2000"), /drop the "-"/);
   // Hyphens inside words are not operators.
   assert.equal(buildFtsQuery("COVID-19 state-building"), '"COVID-19" "state-building"');
   assert.equal(buildFtsQuery('"anti -China"'), '"anti -China"');

@@ -369,7 +369,8 @@ function assertSupportedKeywordQuery(query: string): void {
   const { masked } = maskQuotedPhrases(query.normalize("NFKC"));
   if (MINUS_EXCLUSION_RE.test(masked)) {
     throw new KeywordQuerySyntaxError(
-      'A "-" before a term does not exclude it in keyword search. Put NOT between terms instead, e.g. `state NOT capacity`.',
+      'A "-" before a term does not exclude it in keyword search. Put NOT between terms instead, e.g. ' +
+        '`state NOT capacity`; to require both terms (as in a range like `1990 - 2000`), drop the "-".',
     );
   }
   if (/\bNEAR\s*\(/iu.test(masked)) {
