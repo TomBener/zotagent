@@ -166,6 +166,13 @@ for (const harness of harnesses) {
     });
     assert.deepEqual(store.reuseVerdict(id("NOTEXT")), { reusable: false, reason: "no-text" });
 
+    // A block with no text field is text-free, not a crash.
+    seedRaw("NOFIELD", {
+      markdown: "content",
+      manifest: sampleManifest("NOFIELD", { blocks: [{ ...sampleBlock(), text: undefined as unknown as string }] }),
+    });
+    assert.deepEqual(store.reuseVerdict(id("NOFIELD")), { reusable: false, reason: "no-text" });
+
     seedRaw("WRONGID", { markdown: "content", manifest: sampleManifest("WRONGID", { itemKey: "OTHER" }) });
     assert.deepEqual(store.reuseVerdict(id("WRONGID")), { reusable: false, reason: "identity-mismatch" });
   });
@@ -181,6 +188,12 @@ for (const harness of harnesses) {
       EmptyArtifactError,
     );
     assert.deepEqual(store.probe("DOC1"), { hasNormalized: false, hasManifest: false });
+
+    // A caption between an ordinary figure link and an ODL reference is text.
+    store.publish(built("DOC3", {
+      blocks: [sampleBlock("![Figure](fig.png) Real caption text ![image 1](<A_images/imageFile1.png>)")],
+    }));
+    assert.ok(store.reuseVerdict({ docKey: "DOC3", itemKey: "ITEM-DOC3" }).reusable);
 
     // One block of real text is enough; the image references beside it stay.
     store.publish(built("DOC2", { blocks: [...imageOnly, sampleBlock("Figure 1. Oil fields")] }));

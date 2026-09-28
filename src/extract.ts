@@ -198,6 +198,10 @@ export function garbledTextRatios(
 const SCATTER_MAX_TOP_SCRIPT_SHARE = 0.6;
 const SCATTER_MIN_ISOLATED_SHARE = 0.5;
 const SCATTER_MIN_LETTERS = 200;
+// Combining marks belong to the word they sit in: in vocalized Arabic or
+// Hebrew, Devanagari, or Thai nearly every letter is followed by one, and
+// counting them as gaps would call every letter isolated.
+const WORD_CHAR_RE = /[\p{L}\p{M}]/u;
 // Classifying every letter of a long book buys nothing over a sample.
 const SCATTER_SCRIPT_SAMPLE = 20_000;
 const SCRIPT_FAMILIES: ReadonlyArray<readonly [string, RegExp]> = [
@@ -236,7 +240,7 @@ export function scatteredGlyphRatios(
     const char = chars[i]!;
     if (!LETTER_RE.test(char)) continue;
     letters += 1;
-    if (!LETTER_RE.test(chars[i - 1] ?? " ") && !LETTER_RE.test(chars[i + 1] ?? " ")) isolated += 1;
+    if (!WORD_CHAR_RE.test(chars[i - 1] ?? " ") && !WORD_CHAR_RE.test(chars[i + 1] ?? " ")) isolated += 1;
     if (classified < SCATTER_SCRIPT_SAMPLE) {
       classified += 1;
       const system = writingSystemOf(char);
@@ -540,7 +544,9 @@ export function groupForOdlBatches(
     // batch — and the default macOS volume compares names case- and
     // normalization-insensitively, so `Paper.pdf` and `paper.pdf` (or NFC and
     // NFD spellings) would write one file and both members would read it.
-    const stem = stemForFile(attachment.filePath).normalize("NFC").toLowerCase();
+    // Upper case, not lower: toLowerCase applies Greek final-sigma rules, so
+    // ΟΔΥΣΣΕΥΣ and οδυσσευσ would compare unequal where APFS folds σ and ς.
+    const stem = stemForFile(attachment.filePath).normalize("NFC").toUpperCase();
     if (current.length >= maxBatchSize || stems.has(stem)) {
       out.push(current);
       current = [];

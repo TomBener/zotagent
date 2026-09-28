@@ -141,6 +141,17 @@ test("scatteredGlyphRatios needs both signals before condemning text", () => {
   // Mixed scripts but in words: a trilingual monograph is legitimate.
   const trilingual = "盛世才与苏联 Советский Союз и Синьцзян the Soviet Union in Xinjiang 1933年 ".repeat(8);
   assert.equal(scatteredGlyphRatios(trilingual), undefined);
+  // Fully vocalized text puts a combining mark after nearly every letter
+  // (Arabic harakat, Hebrew niqqud, Devanagari matras); the marks are part
+  // of the word, so these letters are not isolated.
+  const vocalized = (letters: string, mark: string) => [...letters].map((l) => l + mark).join("");
+  const philology = [
+    vocalized("بتثجحخدذ", "\u064E"),
+    vocalized("בגדהוזחט", "\u05B8"),
+    vocalized("कखगघचछ", "\u093E"),
+    "philology",
+  ].join(" ").concat(" ").repeat(12);
+  assert.equal(scatteredGlyphRatios(philology), undefined);
 });
 
 test("scatteredGlyphRatios holds no opinion on short output", () => {
@@ -162,14 +173,16 @@ test("groupForOdlBatches never batches stems that collide on a case-insensitive 
       pdfAttachment("/lib/C/Caf\u00e9.pdf", "ITEMC001"),
       pdfAttachment("/lib/D/Cafe\u0301.pdf", "ITEMD001"),
       pdfAttachment("/lib/E/Other.pdf", "ITEME001"),
+      pdfAttachment("/lib/F/\u039f\u0394\u03a5\u03a3\u03a3\u0395\u03a5\u03a3.pdf", "ITEMF001"),
+      pdfAttachment("/lib/G/\u03bf\u03b4\u03c5\u03c3\u03c3\u03b5\u03c5\u03c3.pdf", "ITEMG001"),
     ],
     new Set(),
   );
   for (const batch of batches) {
-    const stems = batch.map((a) => a.filePath.split("/").pop()!.replace(/\.pdf$/u, "").normalize("NFC").toLowerCase());
+    const stems = batch.map((a) => a.filePath.split("/").pop()!.replace(/\.pdf$/u, "").normalize("NFC").toUpperCase());
     assert.equal(new Set(stems).size, stems.length, `colliding stems in one batch: ${stems.join(", ")}`);
   }
-  assert.equal(batches.flat().length, 5);
+  assert.equal(batches.flat().length, 7);
 });
 
 test("pdftotextYieldShortfall catches a scan whose only text is a download stamp", () => {

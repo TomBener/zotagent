@@ -208,11 +208,18 @@ export const ARTIFACT_DOC_KEY_RE = /^[0-9a-f]{40}$/;
 // without the angle brackets, sometimes inside a table row joined by `<br>`),
 // so an image-only scan extracts to a well-formed stack of such links: long
 // enough to pass the yield-per-page floor, yet nothing an index can search.
-const IMAGE_REFERENCE_RE = /!\[[^\]\n]*\]\(<?[^\n]*?_images\/imageFile\d+\.(?:png|jpe?g)>?\)/giu;
+// The path may contain parentheses (`Scan (1936)_images/…`), so it is matched
+// lazily up to the ODL file name — but never across the start of another
+// image reference, or a caption between an ordinary figure link and an ODL
+// reference on the same line would be swallowed with them.
+const IMAGE_REFERENCE_RE = /!\[[^\]\n]*\]\(<?(?:(?!!\[)[^\n])*?_images\/imageFile\d+\.(?:png|jpe?g)>?\)/giu;
 const HTML_TAG_RE = /<[^>\n]*>/gu;
 const TEXT_CHAR_RE = /[\p{L}\p{N}]/u;
 
-function blockHasText(text: string): boolean {
+function blockHasText(text: unknown): boolean {
+  // A foreign or hand-edited manifest may lack a block's text; that block is
+  // simply text-free, never a reason to throw out of the reuse verdict.
+  if (typeof text !== "string") return false;
   return TEXT_CHAR_RE.test(text.replace(IMAGE_REFERENCE_RE, " ").replace(HTML_TAG_RE, " "));
 }
 
