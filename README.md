@@ -182,7 +182,8 @@ Search
       Chinese, Japanese, and Korean text is supported with accurate phrase matching.
       --semantic uses qmd vector search with LLM query expansion (slower, heavier).
         --limit <n>                 Return up to n search results. Default: 10 (max 100) for search, 20 for
-                                    metadata.
+                                    metadata. --semantic draws on about 40 candidate documents, so it
+                                    can return fewer.
         --min-score <n>             Keyword search only: drop hits scoring below n (bm25-based; higher
                                     is better). Semantic scores are rank positions (1/rank).
         --tag <tag>                 Restrict keyword search to top-level Zotero items with this tag.

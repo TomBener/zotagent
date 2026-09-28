@@ -636,7 +636,8 @@ export async function searchLiterature(
   // Results are one per item. The indexes return one row per attachment, so
   // an item with several indexed attachments could fill several slots;
   // asking for every such extra attachment on top of `limit` guarantees
-  // `limit` distinct items whenever that many match.
+  // `limit` distinct items whenever that many match. Keyword search only:
+  // qmd fuses a fixed pool of about 40 candidates whatever limit it is given.
   const candidateLimit = limit + (readyEntries.length - itemGroups.size);
   const firstPerItem = <T>(rows: T[], entryOf: (row: T) => CatalogEntry | undefined): Array<[T, CatalogEntry]> => {
     const seen = new Set<string>();
