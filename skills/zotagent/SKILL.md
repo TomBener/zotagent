@@ -24,8 +24,9 @@ Metadata quick rules:
 - `--tag "PhD Thesis"` fetches matching top-level item keys from the Zotero Web API, then filters local results — so put workflow tags on the parent item, not the PDF attachment. Repeat `--tag` to AND tags. Requires Zotero read API config.
 - `--collection-key ABCD1234` filters to top-level items directly in the named Zotero collection (the 8-char key shown at the end of `zotero.org/<user>/collections/<key>`). Repeat `--collection-key` to union across collections; combine with `--tag` for an intersection. Direct members only — sub-collections are not included. Requires Zotero read API config.
 - `--abstract` includes abstract text in the output (omitted by default to keep responses compact). To search abstract text, use a positional query with `--field abstract`.
-- Each result reports `indexed` / `indexedFiles`, read from the shared full-text index: whether `search-in` / `fulltext` can read the item. This is device-independent — it says nothing about whether attachment files exist on the current machine, and a `file` entry in Zotero alone does not make it true; the attachment must have been extracted by a `sync`. `--indexed` keeps only indexed items.
+- Each result reports `indexed` / `indexedFiles`, read from the shared full-text index: whether `search-in` / `fulltext` can read the item. This is device-independent — it says nothing about whether attachment files exist on the current machine, and a `file` entry in Zotero alone does not make it true; the attachment must have been extracted by a `sync`. A scan with no text layer stays `indexed: false` even after a sync: extraction records it as an error until the PDF is OCR'd. `--indexed` keeps only indexed items.
 - `metadata "Pratt 1985"` generally returns empty (year is not OR'd in) — split into `--author "Pratt" --year "1985"`.
+- A CJK author matches written together or spaced: `--author 余泳泽` and `--author "余 泳泽"` both find family 余 + given 泳泽.
 
 Keyword syntax — `search` and `search-in` both run SQLite FTS5 with a porter stemmer over a Trad→Simp folded index:
 
@@ -34,11 +35,11 @@ Keyword syntax — `search` and `search-in` both run SQLite FTS5 with a porter s
 | Exact phrase | `"institutional change"` | Token-adjacent match. Quotes a multi-word phrase. A word with punctuation inside (`COVID-19`, `U.S.`, `Olson's`) is matched as a phrase without quotes. |
 | AND (default) | `alpha beta` | Implicit between bare tokens. |
 | OR | `Acemoglu OR Robinson` | Must be uppercase. Lowercase `or` is a literal term, not an operator. |
-| NOT | `alpha NOT beta` | Excludes the right-hand expression. Same uppercase rule. There is no `-beta` form; a `-` before a term (`-beta`, `- beta`, `-(a OR b)`) fails with `INVALID_ARGUMENT`, as does a dangling `AND` / `OR` / `NOT`. |
+| NOT | `alpha NOT beta` | Excludes the right-hand expression. Same uppercase rule. There is no `-beta` form; a `-` before a term (`-beta`, `- beta`, `-(a OR b)`) fails with `INVALID_ARGUMENT`, as does a dangling `AND` / `OR` / `NOT` or a query of punctuation only. |
 | Proximity | `"土地" NEAR/20 "开发"` | Within N tokens, unordered. Use `NEAR/<n>`, not bare `NEAR` or `NEAR(...)`. |
 | Prefix wildcard | `Pete*` | Matches any token starting with `Pete`: `Peter`, `Petersen`, etc. Wildcard only at the end. |
 
-Both `search` and `search-in` evaluate most queries against per-block FTS. `search-in` returns matching blocks from the targeted document up to `--limit`, and also runs a manifest-level cross-block scan for a single quoted phrase. `search` returns one row per matched item — an item with several indexed attachments appears once, through its best-ranking block (by FTS5 bm25) across all of them. `search --semantic` draws on a fixed pool of about 40 candidate documents, so it can return fewer rows than `--limit` even when more of the library is relevant.
+Both `search` and `search-in` evaluate most queries against per-block FTS. `search-in` returns matching blocks from the targeted document up to `--limit`, and also runs a manifest-level cross-block scan for a single quoted phrase. `search` returns one row per matched item — an item with several indexed attachments appears once, through its best-ranking block (by FTS5 bm25) across all of them. `search --limit` defaults to 10 and is capped at 100 (a larger value fails with `INVALID_ARGUMENT`); narrow the query or scope it with `--tag` / `--collection-key` rather than paging deeper. `search --semantic` draws on a fixed pool of about 40 candidate documents, so it can return fewer rows than `--limit` even when more of the library is relevant.
 
 **`NEAR/<n>` is the best first pass** when you have 2–3 anchor terms that should co-occur but not necessarily adjacent — e.g. `"土地" NEAR/20 "利用"`. It is usually more precise than plain keyword and much faster than `--semantic`.
 
@@ -120,7 +121,7 @@ zotagent blocks --key KG326EEI --limit-blocks 40    # paginated structured view;
 
 ### Add a paper to Zotero
 
-Source priority when adding: a DOI → `--doi` (an arXiv ID works as `--doi 10.48550/arXiv.<id>`; a PMID resolves to a DOI on PubMed); CNKI or other pre-extracted metadata → `--json`; a web page → find the DOI on the page (citation block, meta tags) and use `--doi`, otherwise extract the metadata yourself into `--json` or manual fields; an ISBN → Open Library / Google Books metadata into `--json` or manual fields with `--item-type book`; a paper with no DOI at all → `s2` search, then `add --s2-paper-id`.
+Source priority when adding: a DOI → `--doi` (a bare DOI, `doi:10.…`, or a doi.org link; an arXiv ID works as `--doi 10.48550/arXiv.<id>`; a PMID resolves to a DOI on PubMed); CNKI or other pre-extracted metadata → `--json`; a web page → find the DOI on the page (citation block, meta tags) and use `--doi`, otherwise extract the metadata yourself into `--json` or manual fields; an ISBN → Open Library / Google Books metadata into `--json` or manual fields with `--item-type book`; a paper with no DOI at all → `s2` search, then `add --s2-paper-id`.
 
 ```bash
 # Add by DOI (arXiv IDs have a DOI form)
@@ -155,7 +156,9 @@ zotagent add --title "Paper" --author "Doe, Jane" --attach-file ~/Downloads/foo.
 echo '{"itemType":"journalArticle","title":"...","attachFile":"/path/to/foo.pdf"}' | zotagent add --json -
 ```
 
-`add --json` always returns `data` as an array, even for one input object. Per-item failures are returned in-place as `{ok: false, error: ...}` and do not abort the rest of a batch; parse/config/empty-input failures fail the whole envelope.
+Manual flags given alongside `--doi` (`--title`, `--author`, `--year`, `--publication`, `--item-type`) override the DOI record's fields, and `--title` doubles as a fallback: if the DOI lookup fails, or Zotero refuses the DOI record, the item is created from the manual fields and `data.warnings` says so. Without `--title` a failed DOI lookup fails the command.
+
+`add --json` always returns `data` as an array, even for one input object. Per-item failures are returned in-place as `{ok: false, error: ...}` and do not abort the rest of a batch; parse/config/empty-input failures fail the whole envelope. Per-item codes: `INVALID_ITEM_TYPE` — Zotero does not know that `itemType`; fix the type and resend only that item. `INVALID_ATTACH_FILE` — the item's attach path is bad (see below). `JSON_ITEM_FAILED` — anything else (network, timeout, rate limit, a Zotero error); the message says which, and a transient cause is worth one later retry of that item.
 
 `AddResult.attachmentItemKey` is set when an attachment was created. A bad
 `--attach-file` path fails *before* the parent item is written, so it cannot leave an orphan citation in Zotero (per-item failure code: `INVALID_ATTACH_FILE`). If the parent item creates but the attachment POST fails, the parent itemKey is still returned and the failure is surfaced as a warning. Other `add` flags not shown above: `--url, --url-date` (alias `--access-date`), `--collection-key`.
@@ -225,7 +228,7 @@ zotagent diagnose --limit 20
 
 Sync exclusions are driven by a Zotero tag, not a local file: tag a top-level item `zotagent:exclude` in Zotero and the next `sync` skips it entirely (no extraction, no indexing) and removes it from the local indexes. The tag name can be changed via `excludeTag` in `~/.zotagent/config.json` or the `ZOTAGENT_EXCLUDE_TAG` environment variable; resolving tagged items requires the Zotero read API config (`zoteroLibraryId` + `zoteroApiKey`). Use `diagnose` to find candidates such as OCR-failed scans, vertical-CJK PDFs, or multi-column gazetteers, then tag or re-OCR them before re-syncing.
 
-Two sync refusals stop before anything is touched; report them to the user rather than working around them. `ZOTERO_TAG_LOOKUP_FAILED`: the configured Zotero API could not list the tagged items and no earlier lookup saved a list to fall back on (after one successful lookup, sync runs offline on the saved list) — retry once the API is reachable; never remove the Zotero credentials to get past it, since that re-extracts every vertical-text PDF with the wrong reading order. `MASS_REMOVAL_REFUSED`: the bibliography resolved no attachments, or dropped more than 10% (and at least 50) of the indexed items — usually a truncated bibliography export or a wrong `attachmentsRoot`; the message says how to proceed if the removal is intended.
+Three sync refusals stop before anything is touched; report them to the user rather than working around them. `SYNC_DISABLED`: this host is configured read-only (`syncEnabled: false`) because it shares an index another machine maintains — never flip the setting to get past it. `ZOTERO_TAG_LOOKUP_FAILED`: the configured Zotero API could not list the tagged items and no earlier lookup saved a list to fall back on (after one successful lookup, sync runs offline on the saved list) — retry once the API is reachable; never remove the Zotero credentials to get past it, since that re-extracts every vertical-text PDF with the wrong reading order. `MASS_REMOVAL_REFUSED`: the bibliography resolved no attachments, or dropped more than 10% (and at least 50) of the indexed items — usually a truncated bibliography export or a wrong `attachmentsRoot`; the message says how to proceed if the removal is intended.
 
 ## Output-shape gotchas
 
