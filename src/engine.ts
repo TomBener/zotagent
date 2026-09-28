@@ -7,7 +7,7 @@ import { CJK_CHAR_RE, CJK_CLASS_SOURCE, cjkFlexiblePatternSource } from "./cjk.j
 import { getDataPaths, resolveConfig, type ConfigOverrides } from "./config.js";
 import { findExactPhraseBlockRange, normalizeExactText } from "./exact.js";
 import { isBoilerplateLikeText, isTableOfContentsLikeText } from "./heuristics.js";
-import { maskQuotedPhrases, openKeywordIndex, unmaskQuotedPhrases, type KeywordIndexFactory } from "./keyword-db.js";
+import { keywordIndexIsCurrent, maskQuotedPhrases, openKeywordIndex, unmaskQuotedPhrases, type KeywordIndexFactory } from "./keyword-db.js";
 import { mergeManifestsForItem } from "./manifest.js";
 import { openQmdClient, type QmdFactory } from "./qmd.js";
 import { getReadyEntries, readCatalogFile, summarizeCatalog } from "./state.js";
@@ -573,6 +573,10 @@ function renderManifestMarkdown(manifest: AttachmentManifest): string {
   return cleanText(snippets.join("\n\n"));
 }
 
+const STALE_KEYWORD_INDEX_WARNING =
+  "The keyword index was built by an older zotagent and has not been rebuilt since; it can miss " +
+  "matches (ligatures, full-width forms, CJK phrasing) until the next `zotagent sync` rebuilds it.";
+
 export async function searchLiterature(
   query: string,
   limit: number,
@@ -695,6 +699,7 @@ export async function searchLiterature(
     } finally {
       await keywordIndex.close();
     }
+    if (!keywordIndexIsCurrent(config.dataDir)) warnings.push(STALE_KEYWORD_INDEX_WARNING);
   }
 
   return wrap(mapped.slice(0, limit));
@@ -789,7 +794,9 @@ export async function searchWithinDocuments(
   return {
     query,
     results: ordered.slice(0, limit),
-    warnings: config.warnings,
+    warnings: keywordIndexIsCurrent(config.dataDir)
+      ? config.warnings
+      : [...config.warnings, STALE_KEYWORD_INDEX_WARNING],
   };
 }
 

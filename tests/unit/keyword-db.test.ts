@@ -9,6 +9,7 @@ import { segmentCjk } from "../../src/cjk.js";
 import { getDataPaths } from "../../src/config.js";
 import {
   KeywordQuerySyntaxError,
+  keywordIndexIsCurrent,
   openKeywordIndex,
   buildFtsQuery,
   rewriteInfixNear,
@@ -414,6 +415,28 @@ test("CJK keyword search respects character order and NFKC-folds both sides", as
     assert.deepEqual(await hit("1949年"), [docs[1]!.docKey]);
     assert.deepEqual(await hit("社会\uFF0C国家"), [docs[0]!.docKey]);
     assert.deepEqual(await hit("exempliﬁes"), [docs[1]!.docKey]);
+  } finally {
+    await client.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("keywordIndexIsCurrent reports an index not rebuilt by this indexer version", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-current-"));
+  const dataDir = join(root, "data");
+  mkdirSync(join(dataDir, "manifests"), { recursive: true });
+  // No index yet: nothing stale to warn about.
+  assert.equal(keywordIndexIsCurrent(dataDir), true);
+
+  const client = await openKeywordIndex(createConfig(dataDir));
+  try {
+    // Opened (schema created) but never rebuilt by this version — the state
+    // an index built by an older zotagent is in after an upgrade.
+    assert.equal(keywordIndexIsCurrent(dataDir), false);
+    await client.updateIndex([], []);
+    assert.equal(keywordIndexIsCurrent(dataDir), false, "an incremental update does not refold rows");
+    await client.rebuildIndex([]);
+    assert.equal(keywordIndexIsCurrent(dataDir), true);
   } finally {
     await client.close();
     rmSync(root, { recursive: true, force: true });

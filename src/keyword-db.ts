@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import { existsSync } from "node:fs";
 
 import { openFsArtifactStore, type ArtifactReader } from "./artifact-store.js";
 import { CJK_CLASS_SOURCE, segmentCjk } from "./cjk.js";
@@ -124,6 +125,37 @@ function ensureSchema(db: Database.Database): void {
   }
 }
 
+// The index records which indexer version built it, so a search can tell
+// the user when it is reading rows an older fold produced. Written only by a
+// full rebuild: an incremental update never changes how rows are folded.
+const SCHEMA_VERSION_KEY = "schemaVersion";
+
+function recordSchemaVersion(db: Database.Database): void {
+  db.exec("CREATE TABLE IF NOT EXISTS keyword_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+  db.prepare("INSERT OR REPLACE INTO keyword_meta (key, value) VALUES (?, ?)")
+    .run(SCHEMA_VERSION_KEY, KEYWORD_INDEX_SCHEMA_VERSION);
+}
+
+/** False when the keyword index on disk was built by a different indexer
+ *  version and not rebuilt since (its rows may miss matches the current
+ *  query fold expects); true when it is current or does not exist yet.
+ *  Opens the file read-only, so checking never writes. */
+export function keywordIndexIsCurrent(dataDir: string): boolean {
+  const path = getDataPaths(dataDir).keywordDbPath;
+  if (!existsSync(path)) return true;
+  const db = new Database(path, { readonly: true, fileMustExist: true });
+  try {
+    const hasMeta = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='keyword_meta'").get();
+    if (!hasMeta) return false;
+    const row = db.prepare("SELECT value FROM keyword_meta WHERE key = ?").get(SCHEMA_VERSION_KEY) as
+      | { value: string }
+      | undefined;
+    return row?.value === KEYWORD_INDEX_SCHEMA_VERSION;
+  } finally {
+    db.close();
+  }
+}
+
 function resetFtsTable(db: Database.Database): void {
   db.exec("DROP TABLE IF EXISTS keyword_block_fts");
   createKeywordBlockFts(db);
@@ -238,6 +270,7 @@ function rebuildTable(
       insertBlockFts.run(rowid, b.indexed);
     }
   }
+  recordSchemaVersion(db);
   return skippedDocKeys;
 }
 
