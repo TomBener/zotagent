@@ -457,6 +457,84 @@ test("addS2PaperToZotero imports via DOI and allows manual overrides", async () 
   assert.equal(body[0]?.abstractNote, "Imported from S2");
 });
 
+function s2DoiFetchMock(doiResponse: () => Response) {
+  const creates: Array<Record<string, unknown>> = [];
+  const fetchMock: typeof fetch = async (input, init) => {
+    const url = String(input);
+    if (url.startsWith("https://api.semanticscholar.org/graph/v1/paper/paper-456?")) {
+      return jsonResponse({
+        paperId: "paper-456",
+        title: "S2 Title: Lowercased Differently",
+        authors: [{ name: "Ludwig van Beethoven" }],
+        year: 2019,
+        externalIds: { DOI: "10.1000/doi-wins" },
+        publicationTypes: ["JournalArticle"],
+        venue: "ArXiv",
+        publicationDate: "2019-01-01",
+        abstract: "Abstract only Semantic Scholar has",
+      });
+    }
+    if (url === "https://doi.org/10.1000/doi-wins") return doiResponse();
+    if (url.startsWith("https://api.zotero.org/items/new?itemType=")) {
+      return jsonResponse({
+        itemType: url.split("=")[1], title: "", creators: [], date: "", publicationTitle: "",
+        abstractNote: "", url: "", accessDate: "", DOI: "", shortTitle: "", tags: [], collections: [], relations: {},
+      });
+    }
+    if (url === "https://api.zotero.org/users/123456/items") {
+      creates.push(JSON.parse(String(init?.body))[0]);
+      return jsonResponse({ success: { "0": "S2KEY456" } });
+    }
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+  return { fetchMock, creates };
+}
+
+const S2_WRITE_OVERRIDES = {
+  semanticScholarApiKey: "s2-secret",
+  zoteroLibraryId: "123456",
+  zoteroLibraryType: "user",
+  zoteroApiKey: "secret",
+  translationServerUrl: "",
+};
+
+test("addS2PaperToZotero keeps the DOI record and fills only its gaps from S2", async () => {
+  const { fetchMock, creates } = s2DoiFetchMock(() =>
+    jsonResponse({
+      type: "article-journal",
+      title: "DOI Title: A Subtitle",
+      "container-title": ["Journal of Real Things"],
+      issued: { "date-parts": [[2021, 3]] },
+      author: [{ family: "van Beethoven", given: "Ludwig" }],
+    }),
+  );
+
+  const result = await addS2PaperToZotero("paper-456", {}, S2_WRITE_OVERRIDES, fetchMock);
+
+  assert.equal(result.source, "doi");
+  const [created] = creates;
+  assert.equal(created?.title, "DOI Title: A Subtitle");
+  assert.equal(created?.shortTitle, "DOI Title");
+  assert.deepEqual(created?.creators, [{ creatorType: "author", firstName: "Ludwig", lastName: "van Beethoven" }]);
+  assert.equal(created?.date, "2021-03");
+  assert.equal(created?.publicationTitle, "Journal of Real Things");
+  // The DOI record has no abstract, so Semantic Scholar's fills the gap.
+  assert.equal(created?.abstractNote, "Abstract only Semantic Scholar has");
+});
+
+test("addS2PaperToZotero falls back to the S2 fields when the DOI import fails", async () => {
+  const { fetchMock, creates } = s2DoiFetchMock(() => new Response("Not found", { status: 404 }));
+
+  const result = await addS2PaperToZotero("paper-456", {}, S2_WRITE_OVERRIDES, fetchMock);
+
+  assert.equal(result.source, "manual-fallback");
+  assert.equal(result.doi, "10.1000/doi-wins");
+  const [created] = creates;
+  assert.equal(created?.title, "S2 Title: Lowercased Differently");
+  assert.equal(created?.publicationTitle, "ArXiv");
+  assert.equal(created?.DOI, "10.1000/doi-wins");
+});
+
 test("addS2PaperToZotero creates a manual item when no DOI is available", async () => {
   const requests: Array<{ url: string; init?: RequestInit }> = [];
   const fetchMock: typeof fetch = async (input, init) => {

@@ -490,6 +490,45 @@ function applyManualOverrides(
   applyCollectionKey(payload, input.collectionKey || undefined);
 }
 
+/** Metadata a secondary source (Semantic Scholar) holds for a DOI'd paper.
+ *  It never overrides the DOI record: it fills only the fields the DOI
+ *  metadata left blank, and stands in for the whole record when the DOI
+ *  import fails. Explicit input still wins over both. */
+export type AddFallbackFields = Pick<AddInput, "title" | "authors" | "year" | "publication" | "abstract">;
+
+function isBlankField(value: unknown): boolean {
+  return value === undefined || value === null || value === "" || (Array.isArray(value) && value.length === 0);
+}
+
+function fillBlankFields(
+  payload: EditableZoteroItem,
+  fallback: ReturnType<typeof normalizeInput>,
+): void {
+  const hasPublication = PUBLICATION_FIELDS.some((field) => field in payload && !isBlankField(payload[field]));
+  applyManualOverrides(payload, {
+    ...normalizeInput({}),
+    title: isBlankField(payload.title) ? fallback.title : "",
+    authors: isBlankField(payload.creators) ? fallback.authors : [],
+    year: isBlankField(payload.date) ? fallback.year : "",
+    publication: hasPublication ? "" : fallback.publication,
+    abstract: isBlankField(payload.abstractNote) ? fallback.abstract : "",
+  });
+}
+
+function withFallbackFields(
+  input: ReturnType<typeof normalizeInput>,
+  fallback: ReturnType<typeof normalizeInput>,
+): ReturnType<typeof normalizeInput> {
+  return {
+    ...input,
+    title: input.title || fallback.title,
+    authors: input.authors.length > 0 ? input.authors : fallback.authors,
+    year: input.year || fallback.year,
+    publication: input.publication || fallback.publication,
+    abstract: input.abstract || fallback.abstract,
+  };
+}
+
 function buildItemFromCsl(
   template: EditableZoteroItem,
   cslJson: Record<string, unknown>,
@@ -815,17 +854,20 @@ export async function addToZotero(
   input: AddInput,
   overrides: ConfigOverrides = {},
   fetchImpl: FetchLike = fetch,
+  fallbackFields: AddFallbackFields = {},
 ): Promise<AddResult> {
   const { ctx } = prepareWrite(input, overrides);
+  const fallback = normalizeInput(fallbackFields);
+  const manualInput = withFallbackFields(ctx.input, fallback);
 
-  if (!ctx.input.doi && !ctx.input.title) {
+  if (!ctx.input.doi && !manualInput.title) {
     throw new Error("Provide --doi <doi> or --title <text>.");
   }
 
   const manualItemType = inferManualItemType({
-    itemType: ctx.input.itemType,
-    publication: ctx.input.publication,
-    url: ctx.input.url,
+    itemType: manualInput.itemType,
+    publication: manualInput.publication,
+    url: manualInput.url,
   });
 
   if (ctx.input.doi) {
@@ -843,24 +885,27 @@ export async function addToZotero(
         const items = await searchByIdentifier(ctx.config.translationServerUrl, cleanedDoi, fetchImpl);
         const picked = pickSingleTranslationItem(items, `DOI ${cleanedDoi}`, ctx.warnings);
         prepared = await prepareFromTranslation(ctx, picked, "doi", fetchImpl, cleanedDoi);
+        fillBlankFields(prepared.payload, fallback);
+        ensureShortTitle(prepared.payload);
       } else {
         const cslJson = await fetchCslJsonForDoi(cleanedDoi, fetchImpl);
         const itemType = ctx.input.itemType || determineDoiItemType(cslJson);
         const template = await fetchTemplate(itemType, fetchImpl);
         const payload = buildItemFromCsl(template, cslJson, cleanedDoi);
         applyManualOverrides(payload, ctx.input);
+        fillBlankFields(payload, fallback);
         ensureShortTitle(payload);
         prepared = { payload, meta: { source: "doi", doi: cleanedDoi } };
       }
     } catch (error) {
-      if (!ctx.input.title) {
+      if (!manualInput.title) {
         throw error;
       }
       ctx.warnings.push(
         `DOI import failed; created item from manual fields instead. ${error instanceof Error ? error.message : String(error)}`,
       );
       const template = await fetchTemplate(manualItemType, fetchImpl);
-      const payload = buildManualItem(template, ctx.input);
+      const payload = buildManualItem(template, manualInput);
       if ("DOI" in payload) payload.DOI = cleanedDoi;
       prepared = { payload, meta: { source: "manual-fallback", doi: cleanedDoi } };
     }
@@ -871,7 +916,7 @@ export async function addToZotero(
   }
 
   const template = await fetchTemplate(manualItemType, fetchImpl);
-  const payload = buildManualItem(template, ctx.input);
+  const payload = buildManualItem(template, manualInput);
   return await createWithChildren(ctx, payload, { source: "manual" }, fetchImpl);
 }
 
@@ -936,21 +981,27 @@ export async function addS2PaperToZotero(
   fetchImpl: FetchLike = fetch,
 ): Promise<AddResult> {
   const { paper } = await getSemanticScholarPaper(paperId, overrides, fetchImpl);
-  const result = await addToZotero(
-    {
-      ...(paper.doi ? { doi: paper.doi } : {}),
-      title: paper.title,
-      authors: paper.authors,
-      year: paper.publicationDate || paper.year,
-      publication: paper.journal || paper.venue,
-      url: paper.doi ? undefined : paper.url || paper.openAccessPdfUrl,
-      abstract: paper.abstract,
-      itemType: paper.doi ? undefined : inferSemanticScholarItemType(paper),
-      ...inputOverrides,
-    },
-    overrides,
-    fetchImpl,
-  );
+  const s2Fields: AddFallbackFields = {
+    title: paper.title,
+    authors: paper.authors,
+    year: paper.publicationDate || paper.year,
+    publication: paper.journal || paper.venue,
+    abstract: paper.abstract,
+  };
+  // With a DOI the DOI record is authoritative: Semantic Scholar's fields
+  // only fill its gaps (typically the abstract) or serve the manual fallback.
+  const result = paper.doi
+    ? await addToZotero({ doi: paper.doi, ...inputOverrides }, overrides, fetchImpl, s2Fields)
+    : await addToZotero(
+        {
+          ...s2Fields,
+          url: paper.url || paper.openAccessPdfUrl,
+          itemType: inferSemanticScholarItemType(paper),
+          ...inputOverrides,
+        },
+        overrides,
+        fetchImpl,
+      );
 
   return {
     ...result,
