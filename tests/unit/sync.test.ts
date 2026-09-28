@@ -1687,8 +1687,9 @@ test("runSync retries embeddings that stalled instead of short-circuiting past t
 
   let needsEmbedding = 2;
   let embedCalls = 0;
+  let updateCalls = 0;
   const qmdFactory = async () => ({
-    search: async () => [], searchLex: async () => [], update: async () => ({}),
+    search: async () => [], searchLex: async () => [], update: async () => { updateCalls += 1; return {}; },
     embed: async () => { embedCalls += 1; return {}; },
     getStatus: async () => ({ totalDocuments: 1, needsEmbedding, hasVectorIndex: true, collections: [] }),
     listContexts: async () => [], addContext: async () => true, removeContext: async () => true,
@@ -1720,6 +1721,7 @@ test("runSync retries embeddings that stalled instead of short-circuiting past t
   writeCatalogFile(catalogPath, { ...readCatalogFile(catalogPath), pendingEmbeddings: 2 });
   await sync();
   assert.equal(embedCalls, 1);
+  assert.equal(updateCalls, 0, "a retry embeds only; it does not rescan the corpus");
   assert.equal(readCatalogFile(catalogPath).pendingEmbeddings, 2);
   assert.ok(readCatalogFile(catalogPath).indexesCompletedAt, "the keyword side still completed");
   await sync();

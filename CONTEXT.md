@@ -42,7 +42,8 @@ tests, commits, and reviews — one name per concept.
   extraction lifecycle (`extractStatus`: ready / missing / unsupported /
   error) plus the index-completion markers (`indexesCompletedAt`,
   `indexerSignature`, `indexedQmdEmbedModel`, and `pendingEmbeddings` when
-  embedding stalled — which keeps the next run from short-circuiting).
+  embedding stalled — which makes the next otherwise-quiet run retry the
+  embedding pass alone instead of short-circuiting).
 - **Triage** — the per-attachment decision phase of a sync run: reuse the
   existing artifact, migrate it from a renamed attachment, re-extract, skip a
   known error, or record the attachment as missing/unsupported. The decision

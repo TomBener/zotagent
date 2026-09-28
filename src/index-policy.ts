@@ -90,6 +90,11 @@ export interface IndexUpdateDecision {
    *  the previous sync never completed, or the indexer implementation
    *  changed out from under the stored rows. */
   keywordRebuild: boolean;
+  /** Nothing changed except that the last run left documents unembedded:
+   *  retry the embedding pass alone. Rescanning the corpus and updating the
+   *  keyword index would be no-ops, and on every run a permanently
+   *  unembeddable document would otherwise cost a full qmd rescan. */
+  embedOnly: boolean;
 }
 
 export function decideIndexUpdate(
@@ -97,14 +102,17 @@ export function decideIndexUpdate(
   facts: IndexUpdateFacts,
 ): IndexUpdateDecision {
   const keywordRebuild = !facts.previousCompleted || comparison.indexerSignatureChanged;
-  const shortCircuit =
+  const nothingChanged =
     facts.previousCompleted &&
     !comparison.qmdEmbedModelChanged &&
     !comparison.indexerSignatureChanged &&
     facts.changedAttachments === 0 &&
     facts.staleDocKeys === 0 &&
     facts.orphanDocKeys === 0 &&
-    facts.allEntriesMatchPrevious &&
-    !facts.previousPendingEmbeddings;
-  return { shortCircuit, keywordRebuild };
+    facts.allEntriesMatchPrevious;
+  return {
+    shortCircuit: nothingChanged && !facts.previousPendingEmbeddings,
+    keywordRebuild,
+    embedOnly: nothingChanged && facts.previousPendingEmbeddings,
+  };
 }

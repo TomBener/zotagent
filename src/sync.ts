@@ -1509,6 +1509,17 @@ export async function runSync(
         "No catalog changes since last completed sync; keyword and semantic indexes are up to date.",
         { console: true },
       );
+    } else if (indexUpdate.embedOnly) {
+      logger.info(
+        `No catalog changes since last completed sync; retrying the ${previousCatalog.pendingEmbeddings} document(s) left unembedded.`,
+        { console: true },
+      );
+      const qmd = await qmdFactory(config);
+      try {
+        pendingEmbeddings = await embedQmdUntilSettled(qmd, logger);
+      } finally {
+        await qmd.close();
+      }
     } else {
       const keywordIndex = await keywordFactory(config);
       try {

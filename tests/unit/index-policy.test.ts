@@ -87,7 +87,7 @@ const updateRows: Array<{
   name: string;
   cmp?: Partial<IndexerComparison>;
   facts?: Partial<IndexUpdateFacts>;
-  want: { shortCircuit: boolean; keywordRebuild: boolean };
+  want: { shortCircuit: boolean; keywordRebuild: boolean; embedOnly?: boolean };
 }> = [
   {
     name: "quiet sync after a completed run short-circuits everything",
@@ -129,9 +129,14 @@ const updateRows: Array<{
     want: { shortCircuit: false, keywordRebuild: false },
   },
   {
-    name: "unsettled embeddings from the last run retry the semantic pass, not a keyword rebuild",
+    name: "unsettled embeddings from the last run retry the embedding pass alone",
     facts: { previousPendingEmbeddings: true },
-    want: { shortCircuit: false, keywordRebuild: false },
+    want: { shortCircuit: false, keywordRebuild: false, embedOnly: true },
+  },
+  {
+    name: "unsettled embeddings plus a real change run the full pass",
+    facts: { previousPendingEmbeddings: true, changedAttachments: 1 },
+    want: { shortCircuit: false, keywordRebuild: false, embedOnly: false },
   },
 ];
 
@@ -139,7 +144,7 @@ for (const row of updateRows) {
   test(`decideIndexUpdate: ${row.name}`, () => {
     assert.deepEqual(
       decideIndexUpdate({ ...UNCHANGED_CMP, ...row.cmp }, { ...QUIET_FACTS, ...row.facts }),
-      row.want,
+      { embedOnly: false, ...row.want },
     );
   });
 }
