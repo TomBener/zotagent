@@ -42,6 +42,9 @@ Ordered by leverage. Each was confirmed against the code at `9b80ba6`.
 - **CORRECTNESS-02** — Zotero item creation is non-idempotent: `createWriteToken()`
   (`src/add.ts:125`) returns a fresh token per call, so a post-commit timeout
   (8s, `src/add.ts:42`) followed by a retry duplicates items. Effort M.
+  *Partly addressed 2026-09-28 (c1f34b9): the DOI path no longer re-POSTs a
+  failed create as a manual-fallback item. A caller that retries `add` after
+  a timeout can still duplicate.*
 - **PERF-01** — `add --json` batch is serial and re-fetches the identical item
   template per item (`src/add.ts:1284,1292`); Zotero accepts 50 items per POST.
   Effort M. Interacts with CORRECTNESS-02 — plan them together.
@@ -49,12 +52,15 @@ Ordered by leverage. Each was confirmed against the code at `9b80ba6`.
   `fetchWithTimeout` ×3 (`add.ts:666`, `s2.ts:100`, `zotero-read.ts:31`),
   `readJsonResponse` ×2, timeout constants diverged (8s vs 30s). Effort M.
   Natural prerequisite for the CORRECTNESS-02/PERF-01 work.
+  *Done (a0a1312): one transport in `src/http.ts`.*
 - **SECURITY-01** — planned as 006.
 - **CORRECTNESS-04** — exclude-tag fetch fails open: on a network/auth error
   `fetchTaggedItemKeys` (`src/sync.ts:802-828`) returns an empty set with only
   a log warning, so excluded items get indexed until the next successful sync.
   Partially acknowledged in the code comment at `sync.ts:795-801`; the fix is
   to abort or reuse the previous exclusion set on genuine fetch errors. Effort S.
+  *Done 2026-09-28 (c771cee): a failed lookup of either tag stops the sync
+  before anything is touched (`ZOTERO_TAG_LOOKUP_FAILED`).*
 - **DEPS-01/DEBT-03** — `@types/better-sqlite3` sits in `dependencies`
   (package.json:28); move to `devDependencies`. Trivial.
 - **SECURITY-03** — planned as 007.
