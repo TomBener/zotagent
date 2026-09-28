@@ -80,6 +80,7 @@ const QUIET_FACTS: IndexUpdateFacts = {
   staleDocKeys: 0,
   orphanDocKeys: 0,
   allEntriesMatchPrevious: true,
+  previousPendingEmbeddings: false,
 };
 
 const updateRows: Array<{
@@ -125,6 +126,11 @@ const updateRows: Array<{
   {
     name: "any entry-content drift blocks the short-circuit",
     facts: { allEntriesMatchPrevious: false },
+    want: { shortCircuit: false, keywordRebuild: false },
+  },
+  {
+    name: "unsettled embeddings from the last run retry the semantic pass, not a keyword rebuild",
+    facts: { previousPendingEmbeddings: true },
     want: { shortCircuit: false, keywordRebuild: false },
   },
 ];

@@ -146,6 +146,10 @@ export interface CatalogFile {
   // Stable signature of the zotagent/qmd/keyword indexer implementation used
   // to build the indexes. Any mismatch forces a rebuild even if files match.
   indexerSignature?: string;
+  // Documents qmd still had to embed when the run completed, because
+  // embedding stopped making progress. Present only when non-zero; it keeps
+  // the next sync from short-circuiting so the embedding pass is retried.
+  pendingEmbeddings?: number;
 }
 
 export interface CatalogCounts {

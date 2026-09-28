@@ -567,15 +567,17 @@ function readyDocKeys(entries: CatalogEntry[]): Set<string> {
   );
 }
 
+/** Embed until qmd reports nothing left or a pass makes no progress, and
+ *  return how many documents still need embeddings (0 when settled). */
 async function embedQmdUntilSettled(
   qmd: Awaited<ReturnType<QmdFactory>>,
   logger: SyncLogger,
-): Promise<void> {
+): Promise<number> {
   let pass = 0;
 
   while (true) {
     const before = await qmd.getStatus();
-    if (before.needsEmbedding <= 0) return;
+    if (before.needsEmbedding <= 0) return 0;
 
     pass += 1;
     logger.info(
@@ -592,14 +594,15 @@ async function embedQmdUntilSettled(
       if (pass > 1) {
         logger.info(`Embedding complete after ${pass} pass(es).`, { console: true });
       }
-      return;
+      return 0;
     }
 
     if (after.needsEmbedding >= before.needsEmbedding) {
       logger.warn(
-        `Embedding made no further progress; ${after.needsEmbedding} document(s) still need embeddings.`,
+        `Embedding made no further progress; ${after.needsEmbedding} document(s) still need embeddings. ` +
+          `The next sync will retry them.`,
       );
-      return;
+      return after.needsEmbedding;
     }
 
     logger.info(
@@ -1447,7 +1450,9 @@ export async function runSync(
         const prev = previousByDocKey.get(entry.docKey);
         return prev !== undefined && isEntryContentUnchanged(prev, entry);
       }),
+      previousPendingEmbeddings: (previousCatalog.pendingEmbeddings ?? 0) > 0,
     });
+    let pendingEmbeddings = 0;
 
     if (indexUpdate.shortCircuit) {
       logger.info(
@@ -1525,7 +1530,7 @@ export async function runSync(
           writeProgressCatalog(paths.catalogPath, nextEntries, progressIndexerState);
         }
         if (readyEntries.length > 0) {
-          await embedQmdUntilSettled(qmd, logger);
+          pendingEmbeddings = await embedQmdUntilSettled(qmd, logger);
         }
         // Reap the tombstones and stray vectors qmd.update leaves behind.
         // Without this every removed or content-changed doc leaks vector
@@ -1566,6 +1571,7 @@ export async function runSync(
       indexesCompletedAt: completionTimestamp,
       indexedQmdEmbedModel: indexerComparison.current.indexedQmdEmbedModel,
       indexerSignature: indexerComparison.current.indexerSignature,
+      ...(pendingEmbeddings > 0 ? { pendingEmbeddings } : {}),
     });
 
     const finalCounts = summarizeCatalog(nextCatalog);

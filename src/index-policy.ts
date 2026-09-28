@@ -77,6 +77,9 @@ export interface IndexUpdateFacts {
   orphanDocKeys: number;
   /** Every next-catalog entry content-matches its previous counterpart. */
   allEntriesMatchPrevious: boolean;
+  /** The previous run completed with documents qmd could not finish
+   *  embedding; the semantic pass must run again even with nothing changed. */
+  previousPendingEmbeddings: boolean;
 }
 
 export interface IndexUpdateDecision {
@@ -101,6 +104,7 @@ export function decideIndexUpdate(
     facts.changedAttachments === 0 &&
     facts.staleDocKeys === 0 &&
     facts.orphanDocKeys === 0 &&
-    facts.allEntriesMatchPrevious;
+    facts.allEntriesMatchPrevious &&
+    !facts.previousPendingEmbeddings;
   return { shortCircuit, keywordRebuild };
 }

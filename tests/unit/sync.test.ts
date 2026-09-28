@@ -1656,6 +1656,83 @@ test("runSync short-circuits both index rebuilds when the catalog is identical t
   assert.equal(persisted.indexerSignature, buildIndexerSignature("fake-embed-model"));
 });
 
+test("runSync retries embeddings that stalled instead of short-circuiting past them", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-pending-embed-"));
+  const attachmentsRoot = join(root, "attachments");
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  mkdirSync(join(attachmentsRoot, "papers"), { recursive: true });
+  mkdirSync(indexDir, { recursive: true });
+  const pdfPath = join(attachmentsRoot, "papers", "paper.pdf");
+  writeFileSync(pdfPath, "pdf");
+  const pdfStat = statSync(pdfPath);
+  const docKey = sha1("papers/paper.pdf");
+  openFsArtifactStore({ normalizedDir: join(dataDir, "normalized"), manifestsDir: join(dataDir, "manifests") })
+    .publish({ markdown: "Body", manifest: { docKey, itemKey: "ITEM1", title: "Paper", authors: [], filePath: pdfPath, blocks: [trivialBlock()] } });
+  const bibliographyPath = join(root, "bibliography.json");
+  writeFileSync(bibliographyPath, JSON.stringify([{ id: "cite", title: "Paper", file: pdfPath, "zotero-item-key": "ITEM1" }]));
+  const catalogPath = join(indexDir, "catalog.json");
+  writeCatalogFile(catalogPath, {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    indexesCompletedAt: new Date().toISOString(),
+    indexedQmdEmbedModel: "fake-embed-model",
+    indexerSignature: buildIndexerSignature("fake-embed-model"),
+    entries: [{
+      docKey, itemKey: "ITEM1", citationKey: "cite", title: "Paper", authors: [], filePath: pdfPath,
+      fileExt: "pdf", exists: true, supported: true, extractStatus: "ready", size: pdfStat.size,
+      mtimeMs: Math.trunc(pdfStat.mtimeMs), sourceHash: "existinghash", lastIndexedAt: new Date().toISOString(),
+    }],
+  });
+
+  let needsEmbedding = 2;
+  let embedCalls = 0;
+  const qmdFactory = async () => ({
+    search: async () => [], searchLex: async () => [], update: async () => ({}),
+    embed: async () => { embedCalls += 1; return {}; },
+    getStatus: async () => ({ totalDocuments: 1, needsEmbedding, hasVectorIndex: true, collections: [] }),
+    listContexts: async () => [], addContext: async () => true, removeContext: async () => true,
+    clearEmbeddings: async () => {},
+    cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
+    migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
+    adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    compactDatabase: async () => ({ ran: false, reason: "" }),
+    close: async () => {},
+  });
+  const keywordFactory = async () => ({
+    rebuildIndex: async () => ({ skippedDocKeys: [] }),
+    updateIndex: async () => ({ skippedDocKeys: [] }),
+    vacuum: async () => {},
+    searchDocs: async () => [], searchBlocks: async () => [], isEmpty: async () => false, close: async () => {},
+  });
+  const sync = () => runSync(
+    { bibliographyJsonPath: bibliographyPath, attachmentsRoot, dataDir, qmdEmbedModel: "fake-embed-model" },
+    qmdFactory as never,
+    keywordFactory as never,
+  );
+
+  // A quiet library short-circuits; nothing asks qmd about the stalled docs.
+  await sync();
+  assert.equal(embedCalls, 0);
+
+  // Once a run records stalled embeddings, the next quiet run retries them
+  // and keeps recording them while qmd makes no progress.
+  writeCatalogFile(catalogPath, { ...readCatalogFile(catalogPath), pendingEmbeddings: 2 });
+  await sync();
+  assert.equal(embedCalls, 1);
+  assert.equal(readCatalogFile(catalogPath).pendingEmbeddings, 2);
+  assert.ok(readCatalogFile(catalogPath).indexesCompletedAt, "the keyword side still completed");
+  await sync();
+  assert.equal(embedCalls, 2);
+
+  // When qmd catches up, the marker clears and quiet runs short-circuit again.
+  needsEmbedding = 0;
+  await sync();
+  assert.equal(readCatalogFile(catalogPath).pendingEmbeddings, undefined);
+  await sync();
+  assert.equal(embedCalls, 2);
+});
+
 test("runSync incrementally updates the keyword index after a completed sync", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-sync-keyword-incremental-"));
   const attachmentsRoot = join(root, "attachments");
