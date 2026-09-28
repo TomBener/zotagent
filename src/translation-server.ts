@@ -4,7 +4,7 @@
 // This module is transport-only: it returns raw Zotero-API-JSON items and
 // leaves template gating / item creation to add.ts.
 
-type FetchLike = typeof fetch;
+import { bufferResponse, type FetchLike } from "./http.js";
 
 // Translation is slower than a plain API call: the server fetches the remote
 // page and runs translators against it. 30s mirrors the connector's patience.
@@ -51,12 +51,13 @@ async function postToServer(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TRANSLATION_TIMEOUT_MS);
   try {
-    return await fetchImpl(url, {
+    const response = await fetchImpl(url, {
       method: "POST",
       headers: { "Content-Type": contentType },
       body,
       signal: controller.signal,
     });
+    return await bufferResponse(response);
   } catch (error) {
     if (error instanceof TranslationServerError) throw error;
     if (error instanceof Error && error.name === "AbortError") {
