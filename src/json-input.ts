@@ -82,9 +82,13 @@ function pickString(raw: Record<string, unknown>, keys: string[]): string {
   return "";
 }
 
-function pickFiniteNumber(raw: Record<string, unknown>, keys: string[]): string {
+// Like pickString, but a finite number counts too: agents routinely send the
+// year as a number (`"year": 2020`). Keys are tried in order whatever the type,
+// so an earlier key wins over a later one of the other type.
+function pickStringOrNumber(raw: Record<string, unknown>, keys: string[]): string {
   for (const key of keys) {
     const value = raw[key];
+    if (typeof value === "string" && value.trim().length > 0) return value.trim();
     if (typeof value === "number" && Number.isFinite(value)) return String(value);
   }
   return "";
@@ -211,8 +215,7 @@ export function mapLenientItem(raw: unknown): AddJsonInput {
   const accessDate = pickString(raw, ["accessDate", "access-date", "accessedAt"]);
   if (accessDate) fields.accessDate = accessDate;
 
-  // Agents routinely send the year as a number (`"year": 2020`).
-  const date = pickString(raw, ["date", "year"]) || pickFiniteNumber(raw, ["date", "year"]);
+  const date = pickStringOrNumber(raw, ["date", "year"]);
   if (date) fields.date = date;
 
   let collections: string[] | undefined;

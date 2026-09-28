@@ -1034,6 +1034,11 @@ test("mapLenientItem aliases the year field to Zotero's date", () => {
 
   // Agents often send the year as a JSON number.
   assert.equal(mapLenientItem({ title: "N", year: 2020 }).fields.date, "2020");
+  assert.equal(
+    mapLenientItem({ title: "M", date: 2021, year: "2020" }).fields.date,
+    "2021",
+    "a numeric date should still win over a string year",
+  );
 });
 
 test("addJsonItemsToZotero normalizes the authors[] alias into creators", () => {
