@@ -750,7 +750,16 @@ test("search handles malformed FTS5 queries gracefully", async () => {
 test("buildFtsQuery rejects a leading minus instead of silently including the term", () => {
   // FTS5 has no "-term" exclusion; the old fallback stripped the minus and
   // searched for the very term the user meant to exclude.
-  for (const query of ["aging -China", "-China", 'aging -"in China"']) {
+  for (const query of [
+    "aging -China",
+    "-China",
+    'aging -"in China"',
+    "aging -(China OR Japan)",
+    "aging (-China)",
+    "aging - China",
+    "aging －China",
+    "老龄化 －中国",
+  ]) {
     assert.throws(() => buildFtsQuery(query), KeywordQuerySyntaxError, query);
   }
   // Hyphens inside words are not operators.

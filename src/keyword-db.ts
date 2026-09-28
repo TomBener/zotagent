@@ -359,13 +359,17 @@ const CJK_RUN_RE = new RegExp(`${CJK_CLASS_SOURCE}{2,}`, "u");
 // A leading "-" reads as "exclude" in web search engines, but FTS5 has no
 // such operator; the query used to fall back to punctuation-stripped text,
 // silently turning `state -capacity` into a search that requires capacity.
-const MINUS_EXCLUSION_RE = /(?:^|\s)-(?=[\p{L}\p{N}\uE000])/u;
+// The same goes for a "-" before a group or phrase, or set apart by a space.
+const MINUS_EXCLUSION_RE = /(?:^|[\s(])-\s*(?=[\p{L}\p{N}\uE000(])/u;
 
+// Takes the query before foldKeywordText, which turns full-width punctuation
+// into spaces and would hide a full-width "－term" from the minus check; NFKC
+// here maps it to the ASCII form the checks look for.
 function assertSupportedKeywordQuery(query: string): void {
-  const { masked } = maskQuotedPhrases(query);
+  const { masked } = maskQuotedPhrases(query.normalize("NFKC"));
   if (MINUS_EXCLUSION_RE.test(masked)) {
     throw new KeywordQuerySyntaxError(
-      'A leading "-" does not exclude a term in keyword search. Put NOT between terms instead, e.g. `state NOT capacity`.',
+      'A "-" before a term does not exclude it in keyword search. Put NOT between terms instead, e.g. `state NOT capacity`.',
     );
   }
   if (/\bNEAR\s*\(/iu.test(masked)) {
@@ -398,8 +402,8 @@ export function rewriteInfixNear(query: string): string {
 }
 
 export function buildFtsQuery(query: string): string {
-  query = foldKeywordText(query);
   assertSupportedKeywordQuery(query);
+  query = foldKeywordText(query);
   query = rewriteInfixNear(query);
   const parts: string[] = [];
   let inQuote = false;
