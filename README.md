@@ -179,7 +179,8 @@ Search
       term NEAR/<n> term, prefix*. Use NEAR/50 for proximity; NEAR(...) is not accepted.
       Chinese, Japanese, and Korean text is supported with accurate phrase matching.
       --semantic uses qmd vector search with LLM query expansion (slower, heavier).
-        --limit <n>                 Return up to n search results. Default: 10 for search, 20 for metadata.
+        --limit <n>                 Return up to n search results. Default: 10 (max 100) for search, 20 for
+                                    metadata.
         --min-score <n>             Drop lower-scoring search hits before mapping.
         --tag <tag>                 Restrict keyword search to top-level Zotero items with this tag.
                                     Repeatable; requires Zotero read API config.

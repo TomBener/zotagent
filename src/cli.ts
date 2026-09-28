@@ -179,12 +179,15 @@ function parseCollectionFilters(
   return { collectionKeys: keys };
 }
 
+const SEARCH_LIMIT_MAX = 100;
+
 interface NumericFlagOptions {
   requirement: string;
   constraint: string;
   integer?: boolean;
   positive?: boolean;
   min?: number;
+  max?: number;
 }
 
 function parseNumericFlag(
@@ -213,6 +216,9 @@ function parseNumericFlag(
     return { error: `\`--${key}\` must be ${options.constraint}.` };
   }
   if (options.min !== undefined && value < options.min) {
+    return { error: `\`--${key}\` must be ${options.constraint}.` };
+  }
+  if (options.max !== undefined && value > options.max) {
     return { error: `\`--${key}\` must be ${options.constraint}.` };
   }
   return { value };
@@ -732,11 +738,14 @@ async function main(): Promise<void> {
           emitError("UNEXPECTED_ARGUMENT", "`--collection-key` cannot be combined with `--semantic`; collection filtering currently works with keyword search.");
           return;
         }
+        // Each hit renders its item's whole document to cut the passage from,
+        // so memory grows with the limit; --limit 2000 exhausted the V8 heap.
         const limitInput = parseNumericFlag(parsed.flags, "limit", {
           requirement: "a positive integer",
-          constraint: "a positive integer",
+          constraint: `a positive integer between 1 and ${SEARCH_LIMIT_MAX}`,
           integer: true,
           min: 1,
+          max: SEARCH_LIMIT_MAX,
         });
         if (limitInput.error) {
           emitError("INVALID_ARGUMENT", limitInput.error);

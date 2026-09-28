@@ -321,7 +321,7 @@ test("help summarizes current commands and keeps config-only overrides out of th
   assert.match(result.stdout, /--item-type <type>\s+Override the Zotero item type\./);
   assert.match(
     result.stdout,
-    /--limit <n>\s+Return up to n search results\. Default: 10 for search, 20 for metadata\./,
+    /--limit <n>\s+Return up to n search results\. Default: 10 \(max 100\) for search, 20 for\s+metadata\./,
   );
   assert.match(result.stdout, /Default is keyword search/);
   assert.match(result.stdout, /--field <field>\s+Limit the positional query to/);
@@ -651,7 +651,12 @@ test("search rejects invalid limit and min-score values", () => {
 
   assert.equal(invalidLimit.status, 1);
   assert.match(invalidLimit.stdout, /"code": "INVALID_ARGUMENT"/);
-  assert.match(invalidLimit.stdout, /`--limit` must be a positive integer\./);
+  assert.match(invalidLimit.stdout, /`--limit` must be a positive integer between 1 and 100\./);
+
+  // Each hit renders its item's whole document, so the limit is capped.
+  const tooLarge = runCli(["search", "dangwei shuji", "--limit", "101"]);
+  assert.equal(tooLarge.status, 1);
+  assert.match(tooLarge.stdout, /`--limit` must be a positive integer between 1 and 100\./);
 
   const invalidScore = runCli(["search", "dangwei shuji", "--min-score", "nope"]);
 
