@@ -50,6 +50,9 @@ async function postToServer(
   const url = `${serverUrl}${path}`;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TRANSLATION_TIMEOUT_MS);
+  // Once headers arrive the server was reached; a failure after that is a
+  // broken response, not an unreachable server.
+  let reached = false;
   try {
     const response = await fetchImpl(url, {
       method: "POST",
@@ -57,6 +60,7 @@ async function postToServer(
       body,
       signal: controller.signal,
     });
+    reached = true;
     return await bufferResponse(response);
   } catch (error) {
     if (error instanceof TranslationServerError) throw error;
@@ -64,6 +68,12 @@ async function postToServer(
       throw new TranslationServerError(
         "TRANSLATION_TIMEOUT",
         `Translation request timed out after ${TRANSLATION_TIMEOUT_MS}ms for ${url}.`,
+      );
+    }
+    if (reached) {
+      throw new TranslationServerError(
+        "TRANSLATION_FAILED",
+        `Translation server response from ${url} was cut off: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
     throw new TranslationServerError(

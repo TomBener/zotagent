@@ -202,6 +202,29 @@ test("network failures surface as TRANSLATION_SERVER_UNREACHABLE with a docker h
   );
 });
 
+test("a response cut off mid-body is a failed translation, not an unreachable server", async () => {
+  const fetchMock: typeof fetch = async () =>
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('[{"itemType":'));
+          controller.error(new TypeError("terminated"));
+        },
+      }),
+      { status: 200 },
+    );
+
+  await assert.rejects(
+    translateWebUrl(SERVER, "https://example.com", undefined, fetchMock),
+    (error: unknown) => {
+      assert.ok(error instanceof TranslationServerError);
+      assert.equal(error.code, "TRANSLATION_FAILED");
+      assert.match(error.message, /was cut off: terminated/u);
+      return true;
+    },
+  );
+});
+
 test("searchByIdentifier posts the identifier as text/plain and returns items", async () => {
   const item = { itemType: "book", title: "A Book", ISBN: "9780000000000" };
   const { fetchMock, requests } = recordingFetch(() => jsonResponse([item]));
