@@ -401,10 +401,29 @@ export function rewriteInfixNear(query: string): string {
   return unmaskQuotedPhrases(result, phrases);
 }
 
+// FTS5 barewords hold only letters, digits, and "_", so an unquoted word with
+// punctuation inside it — COVID-19, Olson's, U.S., 10.1080/x, a:b — is a
+// syntax error, and the query used to fall through to the punctuation-stripped
+// retry, which also drops `*`, quotes, and NEAR distances (so
+// `COVID-19 NEAR/5 vaccine` was refused as a bare NEAR). Quoted, such a word is
+// a phrase of exactly the adjacent tokens the index holds for it. A trailing
+// period stays with the word, so an abbreviation like U.S. is one phrase.
+const PUNCTUATED_WORD_RE = /[\p{L}\p{N}_]+(?:[-.'/:&+][\p{L}\p{N}_]+)+\.?/gu;
+const NEAR_DISTANCE_RE = /^NEAR\/\d+$/iu;
+
+function quotePunctuatedWords(query: string): string {
+  const { masked, phrases } = maskQuotedPhrases(query);
+  const quoted = masked.replace(PUNCTUATED_WORD_RE, (word) =>
+    NEAR_DISTANCE_RE.test(word) ? word : `"${word}"`,
+  );
+  return unmaskQuotedPhrases(quoted, phrases);
+}
+
 export function buildFtsQuery(query: string): string {
   assertSupportedKeywordQuery(query);
   query = foldKeywordText(query);
   query = rewriteInfixNear(query);
+  query = quotePunctuatedWords(query);
   const parts: string[] = [];
   let inQuote = false;
   let current = "";

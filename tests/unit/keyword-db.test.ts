@@ -763,8 +763,39 @@ test("buildFtsQuery rejects a leading minus instead of silently including the te
     assert.throws(() => buildFtsQuery(query), KeywordQuerySyntaxError, query);
   }
   // Hyphens inside words are not operators.
-  assert.equal(buildFtsQuery("COVID-19 state-building"), "COVID-19 state-building");
+  assert.equal(buildFtsQuery("COVID-19 state-building"), '"COVID-19" "state-building"');
   assert.equal(buildFtsQuery('"anti -China"'), '"anti -China"');
+});
+
+test("buildFtsQuery quotes words with punctuation inside, which FTS5 barewords cannot hold", () => {
+  assert.equal(buildFtsQuery("Olson's logic"), '"Olson\'s" logic');
+  assert.equal(buildFtsQuery("U.S. policy"), '"U.S." policy');
+  assert.equal(buildFtsQuery("10.1080/00220388"), '"10.1080/00220388"');
+  assert.equal(buildFtsQuery("COVID-19 NEAR/5 vaccine"), 'NEAR( "COVID-19" vaccine, 5)');
+  assert.equal(buildFtsQuery("state-build*"), '"state-build" *');
+  // Already-quoted phrases and the NEAR distance are left alone.
+  assert.equal(buildFtsQuery('"COVID-19 vaccine"'), '"COVID-19 vaccine"');
+  assert.equal(buildFtsQuery("NEAR/5 foo"), "NEAR/5 foo");
+});
+
+test("search keeps operators on a query with hyphenated words", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-db-hyphen-"));
+  const dataDir = join(root, "data");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(manifestsDir, { recursive: true });
+  const docKey = "e".repeat(40);
+  writeValidManifest(manifestsDir, docKey, "COVID-19 vaccine rollout in the state-building era");
+  const client = await openKeywordIndex(createConfig(dataDir));
+  try {
+    await client.rebuildIndex([readyEntry(docKey, `ITEM-${docKey}`, "Test", `/tmp/${docKey}.pdf`)]);
+    // Unquoted, COVID-19 used to fail FTS5 and fall back to a stripped query
+    // that loses the NEAR distance and the prefix operator.
+    assert.equal((await client.searchDocs("COVID-19 NEAR/5 vaccine", 10)).length, 1);
+    assert.equal((await client.searchDocs("COVID-19 roll*", 10)).length, 1);
+    assert.equal((await client.searchDocs("state-building NOT COVID-19", 10)).length, 0);
+  } finally {
+    await client.close();
+  }
 });
 
 function writeValidManifest(manifestsDir: string, docKey: string, text: string): string {
