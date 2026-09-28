@@ -4399,6 +4399,61 @@ test("runSync stops before touching the index when a configured tag lookup fails
   assertLibraryUntouched(seed);
 });
 
+test("runSync falls back to the saved tag list when a later lookup fails", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-tag-saved-"));
+  const seed = seedIndexedLibrary(root, "papers", 2);
+  const bibliographyPath = join(root, "bibliography.json");
+  writeFileSync(
+    bibliographyPath,
+    JSON.stringify(["ITEM0000", "ITEM0001"].map((itemKey) => ({
+      id: itemKey, title: itemKey, file: join(seed.attachmentsRoot, "papers", `${itemKey}.pdf`), "zotero-item-key": itemKey,
+    }))),
+  );
+  const overrides = {
+    bibliographyJsonPath: bibliographyPath,
+    attachmentsRoot: seed.attachmentsRoot,
+    dataDir: seed.dataDir,
+    zoteroLibraryId: "123",
+    zoteroLibraryType: "user",
+    zoteroApiKey: "test-key",
+  };
+  const quietQmd = async () => ({
+    search: async () => [], searchLex: async () => [], update: async () => ({}), embed: async () => ({}),
+    getStatus: async () => ({ totalDocuments: 0, needsEmbedding: 0, hasVectorIndex: true, collections: [] }),
+    listContexts: async () => [], addContext: async () => true, removeContext: async () => true,
+    clearEmbeddings: async () => {},
+    cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
+    migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
+    adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    compactDatabase: async () => ({ ran: false, reason: "" }),
+    close: async () => {},
+  });
+  const onlineFetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    const keys = url.includes("tag=zotagent%3Avertical") ? "ITEM0000\n" : "";
+    return new Response(keys, { status: 200, headers: { "Total-Results": keys ? "1" : "0" } });
+  }) as typeof fetch;
+  const offlineFetch = (async () => {
+    throw new TypeError("fetch failed");
+  }) as typeof fetch;
+
+  await runSync(overrides, quietQmd as never, undefined, undefined, () => {}, { fetchImpl: onlineFetch });
+  const saved = JSON.parse(readFileSync(join(seed.dataDir, "index", "zotero-tags.json"), "utf-8"));
+  assert.deepEqual(saved.verticalTextTag.itemKeys, ["ITEM0000"]);
+  assert.equal(saved.verticalTextTag.tag, "zotagent:vertical");
+  assert.deepEqual(saved.excludeTag.itemKeys, []);
+
+  const offline = await runSync(overrides, quietQmd as never, undefined, undefined, () => {}, { fetchImpl: offlineFetch });
+  const log = readFileSync(offline.logPath, "utf-8");
+  assert.match(log, /Using the 1 item\(s\) saved by the last successful lookup/u);
+
+  // A renamed tag has no saved list, so the run stops as before.
+  await assert.rejects(
+    runSync({ ...overrides, verticalTextTag: "renamed:vertical" }, quietQmd as never, undefined, undefined, () => {}, { fetchImpl: offlineFetch }),
+    (error: unknown) => error instanceof SyncRefusedError && error.code === "ZOTERO_TAG_LOOKUP_FAILED",
+  );
+});
+
 test("runSync reuses cached outputs after an attachment temporarily disappears", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-sync-resume-missing-"));
   const attachmentsRoot = join(root, "attachments");

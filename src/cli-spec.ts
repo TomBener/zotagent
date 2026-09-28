@@ -151,9 +151,9 @@ Index
           no keyword/qmd indexing). Use \`zotagent diagnose\` to find candidates.
         - \`zotagent:vertical\`: items extracted with --reading-order=off so
           vertical CJK columns don't get scrambled by xycut block ordering.
-      Both tags are silently ignored if Zotero API credentials aren't configured; when a
-      configured tag lookup fails, sync stops with ZOTERO_TAG_LOOKUP_FAILED before touching
-      the index.
+      Both tags are silently ignored if Zotero API credentials aren't configured. When a
+      configured tag lookup fails (e.g. offline), sync uses the list saved by the last
+      successful lookup, and stops with ZOTERO_TAG_LOOKUP_FAILED only if there is none.
       sync refuses with MASS_REMOVAL_REFUSED when the bibliography resolves no attachments,
       or when more than 10% (and at least 50) of the indexed items vanished from it, because
       the run would delete their artifacts.

@@ -1,6 +1,8 @@
 import {
   appendFileSync,
   copyFileSync,
+  readFileSync,
+  renameSync,
   statSync,
   writeFileSync,
   type Stats,
@@ -388,21 +390,46 @@ export type SyncRunOptions = {
   storeFactory?: ArtifactStoreFactory;
 };
 
+// The last successful answer for each tag lookup, so a sync without network
+// can still honour the tags instead of stopping. Keyed by the config knob and
+// guarded by the tag name: renaming a tag invalidates its saved list.
+type TagKnob = "verticalTextTag" | "excludeTag";
+type SavedTagLists = Partial<Record<TagKnob, { tag: string; itemKeys: string[]; fetchedAt: string }>>;
+
+function readSavedTagLists(path: string): SavedTagLists {
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf-8")) as unknown;
+    return parsed && typeof parsed === "object" ? (parsed as SavedTagLists) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveTagList(path: string, knob: TagKnob, tag: string, itemKeys: string[]): void {
+  const saved = readSavedTagLists(path);
+  saved[knob] = { tag, itemKeys: [...itemKeys].sort(), fetchedAt: new Date().toISOString() };
+  const tmp = `${path}.tmp`;
+  writeFileSync(tmp, JSON.stringify(saved, null, 2), "utf-8");
+  renameSync(tmp, path);
+}
+
 // Look up all top-level Zotero items carrying the given tag. Returns an empty
 // set when the tag is unset or credentials are missing — silently, because
 // the tag knobs ship with defaults (zotagent:vertical / zotagent:exclude) and
 // users who haven't set up Zotero API access aren't using an opt-in feature.
-// A configured lookup that fails stops the sync instead: an empty set is
-// not "no tagged items", and acting on it would re-extract every vertical PDF
-// with the wrong reading order (then again once the API is back) and index
-// every excluded item.
+// A configured lookup that fails never counts as "no tagged items": acting on
+// an empty set would re-extract every vertical PDF with the wrong reading
+// order (then again once the API is back) and index every excluded item. It
+// falls back to the list saved by the last successful lookup, and stops the
+// sync only when there is none.
 async function fetchTaggedItemKeys(
+  knob: TagKnob,
   tag: string | undefined,
   config: ReturnType<typeof resolveConfig>,
+  savedListsPath: string,
   fetchImpl: FetchLike,
   logger: SyncLogger,
   onSuccess: (count: number) => string,
-  failureContext: string,
 ): Promise<ReadonlySet<string>> {
   if (!tag) return new Set();
   let readConfig;
@@ -413,17 +440,28 @@ async function fetchTaggedItemKeys(
   }
   try {
     const keys = await fetchTopLevelItemKeysByTags([tag], readConfig, fetchImpl);
+    saveTagList(savedListsPath, knob, tag, keys);
     if (keys.length > 0) {
       logger.info(onSuccess(keys.length), { console: true });
     }
     return new Set(keys);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    const saved = readSavedTagLists(savedListsPath)[knob];
+    if (saved && saved.tag === tag && Array.isArray(saved.itemKeys)) {
+      logger.warn(
+        `Could not fetch Zotero items tagged "${tag}" (${knob}): ${message}. Using the ${saved.itemKeys.length} ` +
+          `item(s) saved by the last successful lookup (${saved.fetchedAt}); items tagged since then are not ` +
+          `reflected until the Zotero API is reachable.`,
+      );
+      return new Set(saved.itemKeys);
+    }
     throw new SyncRefusedError(
       "ZOTERO_TAG_LOOKUP_FAILED",
-      `${failureContext} "${tag}": ${message}. Sync stopped before touching the index: without ` +
-        `the tag list, vertical-text PDFs would be re-extracted with the wrong reading order and ` +
-        `excluded items would be indexed. Retry once the Zotero API is reachable.`,
+      `Could not fetch Zotero items tagged "${tag}" (${knob}): ${message}. Sync stopped before touching ` +
+        `the index: no earlier lookup saved a list to fall back on, and without it vertical-text PDFs ` +
+        `would be re-extracted with the wrong reading order and excluded items would be indexed. Retry ` +
+        `once the Zotero API is reachable; after one successful lookup, sync can run offline.`,
     );
   }
 }
@@ -438,34 +476,38 @@ function warnSkippedManifests(logger: SyncLogger, skippedDocKeys: string[]): voi
 
 function resolveVerticalItemKeys(
   config: ReturnType<typeof resolveConfig>,
+  savedListsPath: string,
   fetchImpl: FetchLike,
   logger: SyncLogger,
 ): Promise<ReadonlySet<string>> {
   const tag = config.verticalTextTag;
   return fetchTaggedItemKeys(
+    "verticalTextTag",
     tag,
     config,
+    savedListsPath,
     fetchImpl,
     logger,
     (n) =>
       `Loaded ${n} attachment(s) tagged "${tag}" from Zotero; their PDFs will be extracted with --reading-order=off.`,
-    "Failed to fetch Zotero items for verticalTextTag",
   );
 }
 
 function resolveExcludedItemKeys(
   config: ReturnType<typeof resolveConfig>,
+  savedListsPath: string,
   fetchImpl: FetchLike,
   logger: SyncLogger,
 ): Promise<ReadonlySet<string>> {
   const tag = config.excludeTag;
   return fetchTaggedItemKeys(
+    "excludeTag",
     tag,
     config,
+    savedListsPath,
     fetchImpl,
     logger,
     (n) => `Loaded ${n} item(s) tagged "${tag}" from Zotero; these will be skipped by sync.`,
-    "Failed to fetch Zotero items for excludeTag",
   );
 }
 
@@ -705,10 +747,11 @@ export async function runSync(
     // top-level items carry each tag, then treat their PDFs as vertical /
     // skip them entirely. Test injections bypass the API call.
     const fetchImpl = options.fetchImpl ?? fetch;
+    const savedTagListsPath = resolve(paths.indexDir, "zotero-tags.json");
     const verticalItemKeys: ReadonlySet<string> =
-      options.verticalItemKeys ?? (await resolveVerticalItemKeys(config, fetchImpl, logger));
+      options.verticalItemKeys ?? (await resolveVerticalItemKeys(config, savedTagListsPath, fetchImpl, logger));
     const excludedItemKeys: ReadonlySet<string> =
-      options.excludeItemKeys ?? (await resolveExcludedItemKeys(config, fetchImpl, logger));
+      options.excludeItemKeys ?? (await resolveExcludedItemKeys(config, savedTagListsPath, fetchImpl, logger));
 
     const rawCatalogData = loadCatalog(config);
     logger.info(
