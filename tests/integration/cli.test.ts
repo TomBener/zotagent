@@ -667,6 +667,12 @@ test("search rejects invalid limit and min-score values", () => {
   assert.equal(invalidScore.status, 1);
   assert.match(invalidScore.stdout, /"code": "INVALID_ARGUMENT"/);
   assert.match(invalidScore.stdout, /`--min-score` must be a finite number\./);
+
+  // Semantic scores are rank positions, so a threshold would only truncate.
+  const semanticScore = runCli(["search", "dangwei shuji", "--semantic", "--min-score", "0.4"]);
+  assert.equal(semanticScore.status, 1);
+  assert.match(semanticScore.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
+  assert.match(semanticScore.stdout, /`--min-score` cannot be combined with `--semantic`/);
 });
 
 test("search-in requires --key and rejects invalid limit values", () => {

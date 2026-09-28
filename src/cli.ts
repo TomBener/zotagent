@@ -766,6 +766,13 @@ async function main(): Promise<void> {
           emitError("INVALID_ARGUMENT", minScoreInput.error);
           return;
         }
+        if (semantic && minScoreInput.value !== undefined) {
+          emitError(
+            "UNEXPECTED_ARGUMENT",
+            "`--min-score` cannot be combined with `--semantic`: semantic scores are rank positions (1/rank), not relevance, so a threshold would only truncate the list. Use --limit instead.",
+          );
+          return;
+        }
         const limit = limitInput.value ?? 10;
         const minScore = minScoreInput.value;
         const itemKeys =

@@ -635,12 +635,10 @@ export async function searchLiterature(
     const qmd = await qmdFactory(config);
     try {
       behavior.progress?.("qmd search: running semantic query");
-      const results = await qmd.search({
-        query,
-        limit,
-        rerank: false,
-        ...(behavior.minScore !== undefined ? { minScore: behavior.minScore } : {}),
-      });
+      // Without reranking, qmd scores results by fused rank alone (1/rank),
+      // so there is no relevance threshold to pass along; --min-score is
+      // keyword-only for that reason.
+      const results = await qmd.search({ query, limit, rerank: false });
       mapped = results
         .map((result) => {
           const docKey =

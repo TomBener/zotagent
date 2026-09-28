@@ -21,7 +21,7 @@
 ### Search
 
 - `search` — FTS5 keyword search (default) over indexed attachment text, with porter stemming and per-block ranking. Supports `"exact phrase"`, `OR`, `NOT`, `term NEAR/<n> term`, and `prefix*`. `--tag` restricts keyword search to top-level Zotero items with matching tags; `--collection-key` restricts to top-level items in a Zotero collection. Both flags are repeatable, combinable (intersection), and require a Zotero read API config.
-- `search --semantic` — vector search over [QMD](https://github.com/tobi/qmd) embeddings with LLM query expansion; slower and heavier than keyword search. `--min-score` can filter both keyword and semantic results before mapping.
+- `search --semantic` — vector search over [QMD](https://github.com/tobi/qmd) embeddings with LLM query expansion; slower and heavier than keyword search. Results are not reranked, so each semantic `score` is its fused rank position (1/rank) rather than a relevance value, and `--min-score` applies to keyword search only.
 - CJK search is handled explicitly: Chinese, Japanese, and Korean text is segmented for FTS, Traditional Chinese is folded to Simplified at index and query time for keyword search, and exact CJK phrase matching remains accurate while returned text preserves the source form.
 - `search-in` — scope a text query to one indexed item, addressed by `itemKey` or `citationKey` (auto-detected). It uses the same FTS5 syntax as `search` and adds a manifest-level cross-block scan for a single quoted phrase.
 - `metadata` — search the Zotero bibliography (Better CSL JSON) across `title`, `author`, `year`, `abstract`, `journal`, and `publisher`. `--field` narrows the positional query; per-field filters (`--author`, `--year`, `--title`, `--journal`, `--publisher`) AND together and can replace the positional query entirely; `--tag` and `--collection-key` fetch matching top-level item keys from the Zotero Web API and filter locally (combinable with each other; intersection); `--indexed` keeps only items whose full text is in the shared index (readable via `search-in`/`fulltext`) and `--abstract` opts into bulkier abstract output. Each result reports `indexed`/`indexedFiles` from that index — independent of whether attachment files exist on the current device. When the index catalog is missing or has no ready entries, a warning is emitted and every result reports `indexed: false`.
@@ -182,7 +182,8 @@ Search
       --semantic uses qmd vector search with LLM query expansion (slower, heavier).
         --limit <n>                 Return up to n search results. Default: 10 (max 100) for search, 20 for
                                     metadata.
-        --min-score <n>             Drop lower-scoring search hits before mapping.
+        --min-score <n>             Keyword search only: drop hits scoring below n (bm25-based; higher
+                                    is better). Semantic scores are rank positions (1/rank).
         --tag <tag>                 Restrict keyword search to top-level Zotero items with this tag.
                                     Repeatable; requires Zotero read API config.
         --collection-key <key>      Restrict keyword search to top-level items directly in this Zotero
