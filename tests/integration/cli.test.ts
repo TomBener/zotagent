@@ -16,10 +16,14 @@ const expectedVersion = JSON.parse(
   readFileSync(new URL("../../package.json", import.meta.url), "utf-8"),
 ) as { version: string };
 
-function runCli(args: string[]): { status: number | null; stdout: string; stderr: string } {
+function runCli(
+  args: string[],
+  env: NodeJS.ProcessEnv = process.env,
+): { status: number | null; stdout: string; stderr: string } {
   const result = spawnSync(process.execPath, ["--import", "tsx", cliPath, ...args], {
     encoding: "utf-8",
     cwd: repoRoot.pathname,
+    env,
   });
 
   return {
@@ -1308,6 +1312,41 @@ test("fulltext strips a leading @ from --key so Pandoc-style citations resolve",
   assert.equal(parsed.ok, true);
   assert.equal(parsed.data.itemKey, "ITEM9000");
   assert.ok(!("citationKey" in parsed.data), "citationKey must not be emitted");
+});
+
+// Flag validation runs before the syncEnabled guard, so these sync
+// invocations still reach the check under test; if validation ever
+// regressed, the guard stops a real sync against the developer's library.
+const SYNC_DISABLED_ENV = { ...process.env, ZOTAGENT_SYNC_ENABLED: "false" };
+
+test("every command accepts the global --help and --version switches", () => {
+  const help = runCli(["search", "anything", "--help"]);
+  assert.equal(help.status, 0);
+  assert.match(help.stdout, /^zotagent — Zotero CLI for AI agents\./u);
+
+  const version = runCli(["metadata", "--version"]);
+  assert.equal(version.status, 0);
+  assert.match(version.stdout.trim(), /^\d{4}\.\d{1,2}\.\d{1,2}$/u);
+});
+
+test("a switch given a value is rejected instead of silently read as off", () => {
+  const semantic = runCli(["search", "dangwei", "--semantic=true"]);
+  assert.equal(semantic.status, 1);
+  assert.match(semantic.stdout, /"code": "UNEXPECTED_ARGUMENT"/);
+  assert.match(semantic.stdout, /--semantic is a switch and takes no value/);
+
+  const retry = runCli(["sync", "--retry-errors=yes"], SYNC_DISABLED_ENV);
+  assert.equal(retry.status, 1);
+  assert.match(retry.stdout, /--retry-errors is a switch and takes no value/);
+});
+
+test("sync validates its numeric flags like every other command", () => {
+  for (const [flag, value] of [["--pdf-timeout-ms", "abc"], ["--pdf-concurrency", "Infinity"], ["--pdf-batch-size", "2.5"]]) {
+    const result = runCli(["sync", flag!, value!], SYNC_DISABLED_ENV);
+    assert.equal(result.status, 1, `${flag} ${value}`);
+    assert.match(result.stdout, /"code": "INVALID_ARGUMENT"/);
+    assert.match(result.stdout, new RegExp(`\`${flag}\` must be a positive integer\\.`, "u"));
+  }
 });
 
 test("unknown flags are rejected with UNEXPECTED_ARGUMENT rather than silently ignored", () => {

@@ -85,7 +85,7 @@ export const COMMAND_FLAGS: Record<string, ReadonlyArray<FlagSpec>> = {
 };
 
 /** Booleans every command accepts regardless of its own flag rows. */
-const GLOBAL_BOOLEAN_FLAGS: ReadonlyArray<string> = ["help", "version"];
+export const GLOBAL_BOOLEAN_FLAGS: ReadonlyArray<string> = ["help", "version"];
 
 export const BOOLEAN_FLAGS = new Set<string>([
   ...GLOBAL_BOOLEAN_FLAGS,
@@ -163,6 +163,7 @@ Index
 
   version, --version            Print the current zotagent version.
   help, --help                  Show this help. Also shown when no command is given.
+                                --help and --version also work after any command.
 
   config
       Interactively set ~/.zotagent/config.json.

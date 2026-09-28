@@ -11,7 +11,8 @@ interface RawConfig {
   dataDir?: string;
   qmdEmbedModel?: string;
   semanticScholarApiKey?: string;
-  zoteroLibraryId?: string;
+  // Numeric by nature, so hand-edited configs often write it as a JSON number.
+  zoteroLibraryId?: string | number;
   zoteroLibraryType?: string;
   zoteroCollectionKey?: string;
   zoteroApiKey?: string;
@@ -58,20 +59,36 @@ function firstDefined(...values: Array<string | undefined>): string | undefined 
   return values.find((value) => typeof value === "string" && value.length > 0);
 }
 
+const TRUE_WORDS = new Set(["true", "1", "yes", "on"]);
+const FALSE_WORDS = new Set(["false", "0", "no", "off"]);
+
+// syncEnabled is the guard README tells read-only hosts to rely on, so a
+// value that cannot be read fails closed: someone who set it was most likely
+// trying to turn sync off, and running sync on such a host would see every
+// attachment as missing.
 function resolveSyncEnabled(raw: unknown, envValue: string | undefined, warnings: string[]): boolean | undefined {
+  const parse = (value: string): boolean | undefined => {
+    const normalized = value.trim().toLowerCase();
+    if (TRUE_WORDS.has(normalized)) return true;
+    if (FALSE_WORDS.has(normalized)) return false;
+    return undefined;
+  };
   if (envValue !== undefined && envValue !== "") {
-    const normalized = envValue.trim().toLowerCase();
-    if (normalized === "true" || normalized === "1" || normalized === "yes") return true;
-    if (normalized === "false" || normalized === "0" || normalized === "no") return false;
+    const parsed = parse(envValue);
+    if (parsed !== undefined) return parsed;
     warnings.push(
-      `Environment variable 'ZOTAGENT_SYNC_ENABLED' must be a boolean-like string (true/false/1/0/yes/no); got '${envValue}'.`,
+      `Environment variable 'ZOTAGENT_SYNC_ENABLED' must be true/false (or 1/0, yes/no, on/off); got '${envValue}'. Treating sync as disabled.`,
     );
+    return false;
   }
+  if (raw === undefined) return undefined;
   if (typeof raw === "boolean") return raw;
-  if (raw !== undefined) {
-    warnings.push(`Config field 'syncEnabled' must be a boolean; ignoring value of type ${typeof raw}.`);
-  }
-  return undefined;
+  const parsed = typeof raw === "string" ? parse(raw) : undefined;
+  if (parsed !== undefined) return parsed;
+  warnings.push(
+    `Config field 'syncEnabled' must be true or false; got ${JSON.stringify(raw)}. Treating sync as disabled.`,
+  );
+  return false;
 }
 
 // Trailing slashes are stripped so endpoint paths can be appended verbatim.
@@ -164,7 +181,7 @@ export function resolveConfig(overrides: ConfigOverrides = {}): AppConfig {
       overrides.zoteroLibraryId,
       process.env.ZOTAGENT_ZOTERO_LIBRARY_ID,
       process.env.ZOTERO_LIBRARY_ID,
-      fileConfig.zoteroLibraryId,
+      typeof fileConfig.zoteroLibraryId === "number" ? String(fileConfig.zoteroLibraryId) : fileConfig.zoteroLibraryId,
     ),
     zoteroLibraryType: resolveLibraryType(
       firstDefined(

@@ -120,7 +120,7 @@ Any of these can also come from environment variables (`ZOTAGENT_*` or unprefixe
 > ```
 
 > [!TIP]
-> **Read-only hosts:** If you share `dataDir` across machines (e.g. via iCloud) but keep the attachment files only on the machine that runs `sync`, set `"syncEnabled": false` in the other hosts' `~/.zotagent/config.json` (or export `ZOTAGENT_SYNC_ENABLED=false`). `sync` on those hosts fails fast with `SYNC_DISABLED` before touching the index — without this guard, a misfired `sync` would see every attachment as missing and wipe the keyword / semantic indexes. All local lookup commands (`search`, `blocks`, `expand`, `fulltext`, `metadata`) still work.
+> **Read-only hosts:** If you share `dataDir` across machines (e.g. via iCloud) but keep the attachment files only on the machine that runs `sync`, set `"syncEnabled": false` in the other hosts' `~/.zotagent/config.json` (or export `ZOTAGENT_SYNC_ENABLED=false`; `0`, `no`, and `off` work too, and a value that cannot be read also disables sync). `sync` on those hosts fails fast with `SYNC_DISABLED` before touching the index — without this guard, a misfired `sync` would see every attachment as missing and wipe the keyword / semantic indexes. All local lookup commands (`search`, `blocks`, `expand`, `fulltext`, `metadata`) still work.
 
 ## Usage
 
@@ -168,6 +168,7 @@ Index
 
   version, --version            Print the current zotagent version.
   help, --help                  Show this help. Also shown when no command is given.
+                                --help and --version also work after any command.
 
   config
       Interactively set ~/.zotagent/config.json.

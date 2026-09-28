@@ -3,7 +3,7 @@
 import { readFileSync } from "node:fs";
 
 import { runAdd, runAddJson, type AddRequest } from "./add.js";
-import { BOOLEAN_FLAGS, COMMAND_FLAG_ALLOWLIST, GLOBAL_OVERRIDE_FLAGS, helpText } from "./cli-spec.js";
+import { BOOLEAN_FLAGS, COMMAND_FLAG_ALLOWLIST, GLOBAL_BOOLEAN_FLAGS, GLOBAL_OVERRIDE_FLAGS, helpText } from "./cli-spec.js";
 import { ConfigCommandError, runConfigCommand } from "./config-command.js";
 import { getDataPaths, resolveConfig, type ConfigOverrides } from "./config.js";
 import { diagnoseExtraction } from "./diagnose.js";
@@ -46,7 +46,7 @@ const METADATA_FIELDS: MetadataField[] = ["title", "author", "year", "abstract",
 function rejectUnknownFlags(command: string, flags: Record<string, FlagValue>): string | undefined {
   const commandAllowlist = COMMAND_FLAG_ALLOWLIST[command];
   if (commandAllowlist === undefined) return undefined;
-  const allowed = new Set<string>([...commandAllowlist, ...GLOBAL_OVERRIDE_FLAGS]);
+  const allowed = new Set<string>([...commandAllowlist, ...GLOBAL_OVERRIDE_FLAGS, ...GLOBAL_BOOLEAN_FLAGS]);
   const unknown = Object.keys(flags).filter((flag) => !allowed.has(flag)).sort();
   if (unknown.length === 0) return undefined;
   const unknownList = unknown.map((flag) => `--${flag}`).join(", ");
@@ -55,6 +55,16 @@ function rejectUnknownFlags(command: string, flags: Record<string, FlagValue>): 
   }
   const validList = commandAllowlist.map((flag) => `--${flag}`).join(", ");
   return `${command} only supports ${validList}. Remove: ${unknownList}`;
+}
+
+// A switch given a value (`--semantic=true`) would otherwise be read as off,
+// since only a bare switch parses to `true`, and silently change the command.
+function rejectValuedSwitches(flags: Record<string, FlagValue>): string | undefined {
+  const valued = Object.keys(flags)
+    .filter((flag) => BOOLEAN_FLAGS.has(flag) && flags[flag] !== true)
+    .sort();
+  if (valued.length === 0) return undefined;
+  return `${valued.map((flag) => `--${flag}`).join(", ")} ${valued.length === 1 ? "is a switch and takes" : "are switches and take"} no value; pass the bare flag.`;
 }
 
 function getCliVersion(): string {
@@ -141,14 +151,6 @@ function getStringListFlag(flags: Record<string, FlagValue>, ...keys: string[]):
     }
   }
   return [];
-}
-
-function getNumberFlag(flags: Record<string, FlagValue>, ...keys: string[]): number | undefined {
-  const raw = getStringFlag(flags, ...keys);
-  if (!raw) return undefined;
-  const value = Number(raw);
-  if (!Number.isFinite(value)) return undefined;
-  return value;
 }
 
 function getBooleanFlag(flags: Record<string, FlagValue>, key: string): boolean {
@@ -280,8 +282,19 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
+  // Every command accepts the global switches (cli-spec's GLOBAL_BOOLEAN_FLAGS):
+  // `zotagent search --help` is a request for help, not an unknown flag.
+  if (getBooleanFlag(parsed.flags, "help")) {
+    printHelp();
+    process.exit(0);
+  }
+  if (getBooleanFlag(parsed.flags, "version")) {
+    console.log(getCliVersion());
+    process.exit(0);
+  }
+
   try {
-    const flagError = rejectUnknownFlags(command, parsed.flags);
+    const flagError = rejectUnknownFlags(command, parsed.flags) ?? rejectValuedSwitches(parsed.flags);
     if (flagError) {
       emitError("UNEXPECTED_ARGUMENT", flagError);
       return;
@@ -296,33 +309,27 @@ async function main(): Promise<void> {
           );
           return;
         }
-        if (parsed.flags["pdf-timeout-ms"] === true) {
-          emitError("INVALID_ARGUMENT", "`--pdf-timeout-ms` requires a positive number.");
-          return;
+        const syncNumbers: Record<"pdf-timeout-ms" | "pdf-batch-size" | "pdf-concurrency", number | undefined> = {
+          "pdf-timeout-ms": undefined,
+          "pdf-batch-size": undefined,
+          "pdf-concurrency": undefined,
+        };
+        for (const key of Object.keys(syncNumbers) as Array<keyof typeof syncNumbers>) {
+          const input = parseNumericFlag(parsed.flags, key, {
+            requirement: "a positive integer",
+            constraint: "a positive integer",
+            integer: true,
+            min: 1,
+          });
+          if (input.error) {
+            emitError("INVALID_ARGUMENT", input.error);
+            return;
+          }
+          syncNumbers[key] = input.value;
         }
-        if (parsed.flags["pdf-batch-size"] === true) {
-          emitError("INVALID_ARGUMENT", "`--pdf-batch-size` requires a positive number.");
-          return;
-        }
-        if (parsed.flags["pdf-concurrency"] === true) {
-          emitError("INVALID_ARGUMENT", "`--pdf-concurrency` requires a positive number.");
-          return;
-        }
-        const pdfTimeoutMs = getNumberFlag(parsed.flags, "pdf-timeout-ms");
-        if (pdfTimeoutMs !== undefined && (!Number.isInteger(pdfTimeoutMs) || pdfTimeoutMs <= 0)) {
-          emitError("INVALID_ARGUMENT", "`--pdf-timeout-ms` must be a positive integer.");
-          return;
-        }
-        const pdfBatchSize = getNumberFlag(parsed.flags, "pdf-batch-size");
-        if (pdfBatchSize !== undefined && (!Number.isInteger(pdfBatchSize) || pdfBatchSize <= 0)) {
-          emitError("INVALID_ARGUMENT", "`--pdf-batch-size` must be a positive integer.");
-          return;
-        }
-        const pdfConcurrency = getNumberFlag(parsed.flags, "pdf-concurrency");
-        if (pdfConcurrency !== undefined && (!Number.isInteger(pdfConcurrency) || pdfConcurrency <= 0)) {
-          emitError("INVALID_ARGUMENT", "`--pdf-concurrency` must be a positive integer.");
-          return;
-        }
+        const pdfTimeoutMs = syncNumbers["pdf-timeout-ms"];
+        const pdfBatchSize = syncNumbers["pdf-batch-size"];
+        const pdfConcurrency = syncNumbers["pdf-concurrency"];
         const syncConfig = resolveConfig(overrides);
         if (syncConfig.syncEnabled === false) {
           emitError(
