@@ -21,7 +21,7 @@ import {
   searchSemanticScholar,
   SemanticScholarError,
 } from "./s2.js";
-import { runSync } from "./sync.js";
+import { runSync, SyncRefusedError } from "./sync.js";
 import { TranslationServerError } from "./translation-server.js";
 import type { MetadataField } from "./types.js";
 import { compactHomePath } from "./utils.js";
@@ -1063,6 +1063,10 @@ async function main(): Promise<void> {
     }
     if (error instanceof SemanticScholarError) {
       emitError(error.code, error.message, error.details);
+      return;
+    }
+    if (error instanceof SyncRefusedError) {
+      emitError(error.code, error.message);
       return;
     }
     emitError(

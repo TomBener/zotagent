@@ -143,7 +143,8 @@ Index
        [--pdf-concurrency <n>]
       Build or refresh the local index of PDF, EPUB, HTML, and TXT attachments.
       Unchanged extraction errors are skipped by default; pass --retry-errors to retry them.
-        --attachments-root <path>   Index only a Zotero subfolder.
+        --attachments-root <path>   Override attachmentsRoot for this run. docKeys are relative
+                                    to it, so index a subfolder into a separate dataDir.
         --retry-errors              Retry unchanged files that failed extraction earlier.
         --pdf-timeout-ms <n>        Override the OpenDataLoader timeout for each PDF extraction call.
         --pdf-batch-size <n>        Override the maximum number of PDFs per extraction batch.
@@ -155,7 +156,12 @@ Index
           no keyword/qmd indexing). Use `zotagent diagnose` to find candidates.
         - `zotagent:vertical`: items extracted with --reading-order=off so
           vertical CJK columns don't get scrambled by xycut block ordering.
-      Both tags are silently ignored if Zotero API credentials aren't configured.
+      Both tags are silently ignored if Zotero API credentials aren't configured; when a
+      configured tag lookup fails, sync stops with ZOTERO_TAG_LOOKUP_FAILED before touching
+      the index.
+      sync refuses with MASS_REMOVAL_REFUSED when the bibliography resolves no attachments,
+      or when more than 10% (and at least 50) of the indexed items vanished from it, because
+      the run would delete their artifacts.
 
   status
       Show attachment counts, local index paths, and qmd status.

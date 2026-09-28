@@ -18,6 +18,7 @@ import {
   buildIndexerSignature,
   isEntryContentUnchanged,
   runSync,
+  SyncRefusedError,
 } from "../../src/sync.js";
 import { openFsArtifactStore, type ArtifactStore } from "../../src/artifact-store.js";
 import { readCatalogFile, writeCatalogFile } from "../../src/state.js";
@@ -4067,7 +4068,14 @@ test("runSync prunes cached outputs when attachment disappears from the current 
   const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
   writeFileSync(normalizedPath, "Body");
   writeFileSync(manifestPath, "{}");
-  writeFileSync(join(root, "bibliography.json"), "[]");
+  // Another item survives, so this is an ordinary one-item removal rather than
+  // the empty-bibliography shape the mass-removal guard refuses.
+  const keepPath = join(attachmentsRoot, "keep.txt");
+  writeFileSync(keepPath, "Kept body", "utf-8");
+  writeFileSync(
+    join(root, "bibliography.json"),
+    JSON.stringify([{ id: "keep", title: "Keep", file: keepPath, "zotero-item-key": "ITEM2" }]),
+  );
 
   writeCatalogFile(join(indexDir, "catalog.json"), {
     version: 1,
@@ -4121,6 +4129,135 @@ test("runSync prunes cached outputs when attachment disappears from the current 
   assert.equal(statSync(indexDir).isDirectory(), true);
   assert.equal(existsSync(normalizedPath), false);
   assert.equal(existsSync(manifestPath), false);
+});
+
+// A previous catalog of `count` ready items with real artifact pairs on disk,
+// all under attachmentsRoot/<folder>/ — the state the mass-removal guard and
+// the tag-lookup abort must leave untouched.
+function seedIndexedLibrary(
+  root: string,
+  folder: string,
+  count: number,
+): { attachmentsRoot: string; dataDir: string; catalogPath: string; docKeys: string[]; catalogBefore: string } {
+  const attachmentsRoot = join(root, "attachments");
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  mkdirSync(join(attachmentsRoot, folder), { recursive: true });
+  mkdirSync(indexDir, { recursive: true });
+  const store = openFsArtifactStore({
+    normalizedDir: join(dataDir, "normalized"),
+    manifestsDir: join(dataDir, "manifests"),
+  });
+  const entries: CatalogFile["entries"] = [];
+  for (let i = 0; i < count; i += 1) {
+    const itemKey = `ITEM${String(i).padStart(4, "0")}`;
+    const filePath = join(attachmentsRoot, folder, `${itemKey}.pdf`);
+    const docKey = sha1(`${folder}/${itemKey}.pdf`);
+    store.publish({
+      markdown: "Body",
+      manifest: { docKey, itemKey, title: itemKey, authors: [], filePath, blocks: [trivialBlock()] },
+    });
+    entries.push({
+      docKey, itemKey, title: itemKey, authors: [], filePath, fileExt: "pdf", exists: true,
+      supported: true, extractStatus: "ready", size: 1, mtimeMs: 1, sourceHash: "hash",
+      lastIndexedAt: new Date().toISOString(),
+    });
+  }
+  const catalogPath = join(indexDir, "catalog.json");
+  writeCatalogFile(catalogPath, { version: 1, generatedAt: new Date().toISOString(), entries });
+  return { attachmentsRoot, dataDir, catalogPath, docKeys: entries.map((e) => e.docKey), catalogBefore: readFileSync(catalogPath, "utf-8") };
+}
+
+function assertLibraryUntouched(seed: ReturnType<typeof seedIndexedLibrary>): void {
+  assert.equal(readFileSync(seed.catalogPath, "utf-8"), seed.catalogBefore);
+  for (const docKey of seed.docKeys) {
+    assert.ok(existsSync(join(seed.dataDir, "normalized", `${docKey}.md`)), `normalized kept for ${docKey}`);
+    assert.ok(existsSync(join(seed.dataDir, "manifests", `${docKey}${MANIFEST_EXT}`)), `manifest kept for ${docKey}`);
+  }
+}
+
+test("runSync refuses an empty bibliography instead of sweeping the index", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-empty-bib-"));
+  const seed = seedIndexedLibrary(root, "papers", 3);
+  const bibliographyPath = join(root, "bibliography.json");
+  writeFileSync(bibliographyPath, "[]");
+
+  await assert.rejects(
+    runSync({ bibliographyJsonPath: bibliographyPath, attachmentsRoot: seed.attachmentsRoot, dataDir: seed.dataDir }),
+    (error: unknown) =>
+      error instanceof SyncRefusedError &&
+      error.code === "MASS_REMOVAL_REFUSED" &&
+      /lists no attachments/u.test(error.message),
+  );
+  assertLibraryUntouched(seed);
+});
+
+test("runSync refuses a run re-rooted at a subfolder of an existing index", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-subfolder-"));
+  const seed = seedIndexedLibrary(root, "archive", 60);
+  mkdirSync(join(seed.attachmentsRoot, "inbox"), { recursive: true });
+  const bibliographyPath = join(root, "bibliography.json");
+  writeFileSync(
+    bibliographyPath,
+    JSON.stringify([
+      ...Array.from({ length: 60 }, (_, i) => {
+        const itemKey = `ITEM${String(i).padStart(4, "0")}`;
+        return { id: itemKey, title: itemKey, file: join(seed.attachmentsRoot, "archive", `${itemKey}.pdf`), "zotero-item-key": itemKey };
+      }),
+      { id: "new", title: "New", file: join(seed.attachmentsRoot, "inbox", "new.pdf"), "zotero-item-key": "NEWITEM1" },
+    ]),
+  );
+
+  await assert.rejects(
+    runSync({
+      bibliographyJsonPath: bibliographyPath,
+      attachmentsRoot: join(seed.attachmentsRoot, "inbox"),
+      dataDir: seed.dataDir,
+    }),
+    (error: unknown) =>
+      error instanceof SyncRefusedError &&
+      error.code === "MASS_REMOVAL_REFUSED" &&
+      /60 of 60 indexed items/u.test(error.message) &&
+      /separate --data-dir/u.test(error.message),
+  );
+  assertLibraryUntouched(seed);
+});
+
+test("runSync stops before touching the index when a configured tag lookup fails", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-tag-fail-"));
+  const seed = seedIndexedLibrary(root, "papers", 2);
+  const bibliographyPath = join(root, "bibliography.json");
+  writeFileSync(bibliographyPath, "[]");
+  let requests = 0;
+  const failingFetch = (async () => {
+    requests += 1;
+    return new Response("upstream unavailable", { status: 503 });
+  }) as typeof fetch;
+
+  await assert.rejects(
+    runSync(
+      {
+        bibliographyJsonPath: bibliographyPath,
+        attachmentsRoot: seed.attachmentsRoot,
+        dataDir: seed.dataDir,
+        zoteroLibraryId: "123",
+        zoteroLibraryType: "user",
+        zoteroApiKey: "test-key",
+      },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { fetchImpl: failingFetch },
+    ),
+    (error: unknown) =>
+      error instanceof SyncRefusedError &&
+      error.code === "ZOTERO_TAG_LOOKUP_FAILED" &&
+      /zotagent:vertical/u.test(error.message) &&
+      /Retry once the Zotero API is reachable/u.test(error.message),
+  );
+  assert.equal(requests, 1);
+  assertLibraryUntouched(seed);
 });
 
 test("runSync reuses cached outputs after an attachment temporarily disappears", async () => {

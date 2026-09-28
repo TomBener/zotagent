@@ -30,6 +30,7 @@ import { compareIndexerState, decideIndexUpdate, type IndexerState } from "./ind
 import { fetchTopLevelItemKeysByTags, getReadConfig } from "./zotero-http.js";
 import { KEYWORD_INDEX_SCHEMA_VERSION, openKeywordIndex, type KeywordIndexFactory } from "./keyword-db.js";
 import { QMD_PACKAGE_VERSION, openQmdClient, resolveQmdEmbedModel, type QmdFactory } from "./qmd.js";
+import { decideRemoval } from "./removal-guard.js";
 import { OPENCC_PACKAGE_VERSION } from "./zh-convert.js";
 import { mapEntriesByDocKey, readCatalogFile, summarizeCatalog, writeCatalogFile } from "./state.js";
 import { artifactsAcceptable, decideTriage } from "./triage.js";
@@ -38,6 +39,18 @@ import {
   compactHomePath,
   ensureDir,
 } from "./utils.js";
+
+/** A sync that stopped on purpose before touching the index. `code` is the
+ *  CLI error code; the message says what to do next. */
+export class SyncRefusedError extends Error {
+  constructor(
+    readonly code: "ZOTERO_TAG_LOOKUP_FAILED" | "MASS_REMOVAL_REFUSED",
+    message: string,
+  ) {
+    super(message);
+    this.name = "SyncRefusedError";
+  }
+}
 
 // Bump this when the sync pipeline's indexing logic changes in a way that
 // invalidates previously stored embeddings or keyword rows. Do NOT tie it to
@@ -376,12 +389,13 @@ export type SyncRunOptions = {
 };
 
 // Look up all top-level Zotero items carrying the given tag. Returns an empty
-// set when the tag is unset, credentials are missing, or the request fails.
-// Silent on the credential-missing path because the tag knobs ship with
-// defaults (zotagent:vertical / zotagent:exclude) — users who haven't set up
-// Zotero API access shouldn't see a per-sync warning about an opt-in feature
-// they aren't using. Real network/auth failures still surface as warnings so
-// configured users notice when their tag list went stale.
+// set when the tag is unset or credentials are missing — silently, because
+// the tag knobs ship with defaults (zotagent:vertical / zotagent:exclude) and
+// users who haven't set up Zotero API access aren't using an opt-in feature.
+// A configured lookup that fails stops the sync instead: an empty set is
+// not "no tagged items", and acting on it would re-extract every vertical PDF
+// with the wrong reading order (then again once the API is back) and index
+// every excluded item.
 async function fetchTaggedItemKeys(
   tag: string | undefined,
   config: ReturnType<typeof resolveConfig>,
@@ -405,8 +419,12 @@ async function fetchTaggedItemKeys(
     return new Set(keys);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    logger.warn(`${failureContext} "${tag}": ${message}`);
-    return new Set();
+    throw new SyncRefusedError(
+      "ZOTERO_TAG_LOOKUP_FAILED",
+      `${failureContext} "${tag}": ${message}. Sync stopped before touching the index: without ` +
+        `the tag list, vertical-text PDFs would be re-extracted with the wrong reading order and ` +
+        `excluded items would be indexed. Retry once the Zotero API is reachable.`,
+    );
   }
 }
 
@@ -711,6 +729,27 @@ export async function runSync(
       );
     }
     const previousCatalog = readCatalogFile(paths.catalogPath);
+    const removal = decideRemoval({
+      previousItemKeys: new Set(previousCatalog.entries.map((entry) => entry.itemKey)),
+      currentItemKeys: new Set(catalogData.attachments.map((attachment) => attachment.itemKey)),
+      excludedItemKeys,
+    });
+    if (removal.refuse) {
+      const cause =
+        removal.reason === "no-attachments" && rawCatalogData.filePathCount === 0
+          ? `the bibliography (${compactHomePath(config.bibliographyJsonPath)}) lists no attachments`
+          : removal.reason === "no-attachments" && rawCatalogData.attachments.length === 0
+            ? `none of the bibliography's ${rawCatalogData.filePathCount} attachment path(s) resolved under attachmentsRoot (${compactHomePath(config.attachmentsRoot)})`
+            : `${removal.vanishedItems} of ${removal.previousItems} indexed items are no longer in the bibliography under attachmentsRoot (${compactHomePath(config.attachmentsRoot)})`;
+      throw new SyncRefusedError(
+        "MASS_REMOVAL_REFUSED",
+        `Sync refused: ${cause}, so this run would delete their indexed artifacts. ` +
+          `Check that the bibliography export is complete and attachmentsRoot is right; ` +
+          `to index a subfolder, use a separate --data-dir (docKeys are relative to attachmentsRoot). ` +
+          `If the removal is intended, delete ${compactHomePath(paths.catalogPath)} and re-run sync: ` +
+          `artifacts still in the bibliography are reused and the rest are removed.`,
+      );
+    }
     const previousCatalogCompleted = previousCatalog.indexesCompletedAt !== undefined;
     const previousByDocKey = mapEntriesByDocKey(previousCatalog);
     // Paths the current bibliography still references. Used when building the

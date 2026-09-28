@@ -225,6 +225,8 @@ zotagent diagnose --limit 20
 
 Sync exclusions are driven by a Zotero tag, not a local file: tag a top-level item `zotagent:exclude` in Zotero and the next `sync` skips it entirely (no extraction, no indexing) and removes it from the local indexes. The tag name can be changed via `excludeTag` in `~/.zotagent/config.json` or the `ZOTAGENT_EXCLUDE_TAG` environment variable; resolving tagged items requires the Zotero read API config (`zoteroLibraryId` + `zoteroApiKey`). Use `diagnose` to find candidates such as OCR-failed scans, vertical-CJK PDFs, or multi-column gazetteers, then tag or re-OCR them before re-syncing.
 
+Two sync refusals stop before anything is touched; report them to the user rather than working around them. `ZOTERO_TAG_LOOKUP_FAILED`: the configured Zotero API could not list the tagged items — retry later; never remove the tag settings to get past it, since that re-extracts every vertical-text PDF with the wrong reading order. `MASS_REMOVAL_REFUSED`: the bibliography resolved no attachments, or dropped more than 10% (and at least 50) of the indexed items — usually a truncated bibliography export or a wrong `attachmentsRoot`; the message says how to proceed if the removal is intended.
+
 ## Output-shape gotchas
 
 - **`passage` is a compact character window centered on the hit**, capped at ~500 tokens. A leading/trailing `…` means there is more text outside the returned slice or the token cap was hit; call `expand --key <k> --offset <charOffset>` (with a bigger `--radius`) to fetch a longer slice.
