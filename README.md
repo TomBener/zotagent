@@ -418,7 +418,7 @@ Every key below is optional except `title`. `itemType` defaults to `journalArtic
 
 | Input field | Maps to | Notes |
 |---|---|---|
-| `itemType` | `itemType` | Defaults to `"journalArticle"`. Validated by Zotero `/items/new`; an unknown type fails the single item with `INVALID_ITEM_TYPE`. |
+| `itemType` | `itemType` | Defaults to `"journalArticle"`. Validated by Zotero `/items/new`; an unknown type fails the single item with `INVALID_ITEM_TYPE` (an outage or timeout on that lookup is `JSON_ITEM_FAILED`). |
 | `title` | `title` | **Required.** |
 | `creators` | `creators` (pass-through) | Array of `{creatorType, firstName?, lastName?, name?}`. |
 | `authors` | `creators` | Array of strings. `"Last, First"` and `"First Last"` are split; single tokens (incl. CJK like `"李华"`) become `{creatorType: "author", name: "<token>"}`. If both `creators` and `authors` are present, `creators` wins and a warning is added. |
@@ -428,7 +428,7 @@ Every key below is optional except `title`. `itemType` defaults to `journalArtic
 | `DOI` / `doi` | `DOI` | Run through the same DOI cleaner the manual path uses. Invalid DOIs are dropped with a warning; the item is still created. |
 | `publicationTitle` / `publication` / `journal` | container field | Routed through `applyPublicationField` so book / conference / website item types pick the right container (`bookTitle`, `proceedingsTitle`, `websiteTitle`). |
 | `accessDate` / `access-date` / `accessedAt` | `accessDate` | First non-empty wins. |
-| `date` / `year` | `date` | First non-empty wins. Zotero stores the publication date in `date` (free-form string), not `year`; passing only `year` would be silently dropped without this alias. |
+| `date` / `year` | `date` | First non-empty wins; a JSON number (`"year": 2020`) is accepted too. Zotero stores the publication date in `date` (free-form string), not `year`; passing only `year` would be silently dropped without this alias. |
 | `university` | `university` | Pass-through (relevant for `itemType: "thesis"`). |
 | `collections` / `collectionKey` | `collections` | A string or string array. **Multi-collection arrays pass through unchanged**, so an item can land in several collections at once. CLI `--collection-key` overrides per-item collections (forces a single key for the whole batch); when CLI is unset and no per-item value is provided, the configured `zoteroCollectionKey` default is used. |
 | `attachFile` / `attach-file` | linked_file child item | Path to a local file to attach as a `linkMode: "linked_file"` child of the new parent. See `--attach-file` below. Bad paths fail the single item with code `INVALID_ATTACH_FILE` *before* the parent is created (no orphans). |

@@ -1017,10 +1017,11 @@ function classifyJsonAddError(error: unknown): string {
   if (/^attach-file /u.test(message)) {
     return "INVALID_ATTACH_FILE";
   }
-  // Zotero rejects an unknown itemType from /items/new with HTTP 4xx; the
-  // resulting error message includes the items/new URL and is the most useful
-  // signal for an agent caller to retry with a different itemType.
-  if (/items\/new\?itemType=/u.test(message)) {
+  // Zotero rejects an unknown itemType from /items/new with HTTP 4xx — the
+  // signal for an agent to retry with a different itemType. Only that
+  // response counts: a timeout or 5xx on the same URL is a transient failure,
+  // and calling it INVALID_ITEM_TYPE would send the agent after the wrong fix.
+  if (/^Request failed \(4\d\d\) for https:\/\/api\.zotero\.org\/items\/new\?itemType=/u.test(message)) {
     return "INVALID_ITEM_TYPE";
   }
   return "JSON_ITEM_FAILED";

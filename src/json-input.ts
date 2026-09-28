@@ -82,6 +82,14 @@ function pickString(raw: Record<string, unknown>, keys: string[]): string {
   return "";
 }
 
+function pickFiniteNumber(raw: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const value = raw[key];
+    if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  }
+  return "";
+}
+
 function normalizeTags(raw: unknown): { tags: { tag: string }[]; dropped: number } {
   if (!Array.isArray(raw)) return { tags: [], dropped: 0 };
   const tags: { tag: string }[] = [];
@@ -203,7 +211,8 @@ export function mapLenientItem(raw: unknown): AddJsonInput {
   const accessDate = pickString(raw, ["accessDate", "access-date", "accessedAt"]);
   if (accessDate) fields.accessDate = accessDate;
 
-  const date = pickString(raw, ["date", "year"]);
+  // Agents routinely send the year as a number (`"year": 2020`).
+  const date = pickString(raw, ["date", "year"]) || pickFiniteNumber(raw, ["date", "year"]);
   if (date) fields.date = date;
 
   let collections: string[] | undefined;

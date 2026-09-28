@@ -54,12 +54,23 @@ test("cleanDoi strips doi: and doi.org prefixes and trailing slashes", () => {
   assert.equal(cleanDoi("https://doi.org/10.1000/xyz123"), "10.1000/xyz123");
   assert.equal(cleanDoi("https://dx.doi.org/10.1000/xyz123/"), "10.1000/xyz123");
   assert.equal(cleanDoi("10.1000%2Fxyz123"), "10.1000/xyz123");
+  assert.equal(cleanDoi("https://www.doi.org/10.1000/xyz123"), "10.1000/xyz123");
+  assert.equal(cleanDoi("doi.org/10.1000/xyz123"), "10.1000/xyz123");
+});
+
+test("cleanDoi drops a doi.org link's query string and fragment, never a bare DOI's", () => {
+  assert.equal(cleanDoi("https://doi.org/10.1000/xyz123?download=true"), "10.1000/xyz123");
+  assert.equal(cleanDoi("https://doi.org/10.1000/xyz123#section-2"), "10.1000/xyz123");
+  // DOIs may contain any printable character; a bare one is taken as given.
+  assert.equal(cleanDoi("10.1000/a#b"), "10.1000/a#b");
 });
 
 test("cleanDoi rejects strings that are not DOIs", () => {
   assert.throws(() => cleanDoi(""), /Invalid DOI/);
   assert.throws(() => cleanDoi("not-a-doi"), /Invalid DOI/);
   assert.throws(() => cleanDoi("https://example.com/10"), /Invalid DOI/);
+  // A stray % is not valid percent-encoding: an Invalid DOI, not a URIError.
+  assert.throws(() => cleanDoi("10.1000/50%off"), /Invalid DOI: 10\.1000\/50%off/);
 });
 
 test("extractTitle joins subtitle and derives the short title", () => {

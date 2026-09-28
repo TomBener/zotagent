@@ -5,7 +5,8 @@
 
 export type ZoteroCreator = Record<string, string>;
 
-const DOI_URL_PREFIX_RE = /^(?:doi:\s*|https?:\/\/(?:dx\.)?doi\.org\/)/iu;
+const DOI_HOST_PREFIX_RE = /^(?:https?:\/\/)?(?:dx\.|www\.)?doi\.org\//iu;
+const DOI_URL_PREFIX_RE = /^(?:doi:\s*|(?:https?:\/\/)?(?:dx\.|www\.)?doi\.org\/)/iu;
 const DOI_VALID_RE = /^10\.\S+\/\S+$/iu;
 const TAG_RE = /<[^>]+>/gu;
 
@@ -14,7 +15,18 @@ export function normalizeSpace(value: string): string {
 }
 
 export function cleanDoi(rawDoi: string): string {
-  const cleaned = decodeURIComponent(rawDoi || "")
+  let value = (rawDoi || "").trim();
+  // A doi.org link can carry browser junk (?download=true, #section) that
+  // would 404 the lookup and then be written to the item. Only the link form
+  // is trimmed: a bare DOI may legitimately contain any printable character.
+  if (DOI_HOST_PREFIX_RE.test(value)) value = value.replace(/[?#].*$/u, "");
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(value);
+  } catch {
+    throw new Error(`Invalid DOI: ${rawDoi}`);
+  }
+  const cleaned = decoded
     .trim()
     .replace(DOI_URL_PREFIX_RE, "")
     .replace(/\/+$/u, "");

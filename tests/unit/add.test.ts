@@ -968,6 +968,9 @@ test("mapLenientItem aliases the year field to Zotero's date", () => {
 
   const both = mapLenientItem({ title: "B", date: "2024-07-15", year: "2024" });
   assert.equal(both.fields.date, "2024-07-15", "explicit date should win over year alias");
+
+  // Agents often send the year as a JSON number.
+  assert.equal(mapLenientItem({ title: "N", year: 2020 }).fields.date, "2020");
 });
 
 test("addJsonItemsToZotero normalizes the authors[] alias into creators", () => {
@@ -1071,6 +1074,18 @@ test("addJsonItemsToZotero returns a per-item error when Zotero rejects the item
   assert.equal(failure.error.code, "INVALID_ITEM_TYPE");
   assert.equal(failure.title, "Bad Item");
   assert.equal(failure.itemType, "bogus");
+});
+
+test("addJsonItemsToZotero does not call a template-fetch outage an invalid itemType", async () => {
+  const { fetchMock } = stubZotero({ templateStatus: { journalArticle: 503 } });
+  const [failure] = await addJsonItemsToZotero(
+    [mapLenientItem({ itemType: "journalArticle", title: "Unlucky" })],
+    { zoteroLibraryId: "123456", zoteroLibraryType: "user", zoteroApiKey: "secret", translationServerUrl: "" },
+    undefined,
+    fetchMock,
+  );
+  assert.ok(failure && "ok" in failure && failure.ok === false);
+  assert.equal(failure.error.code, "JSON_ITEM_FAILED");
 });
 
 test("addJsonItemsToZotero CLI collection key overrides per-item collections", async () => {
