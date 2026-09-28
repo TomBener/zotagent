@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { buildArgs } from "@opendataloader/pdf";
 
-import { garbledTextRatios, odlConvertOptions, odlYieldShortfall } from "../../src/extract.js";
+import { garbledTextRatios, odlConvertOptions, odlYieldShortfall, scatteredGlyphRatios } from "../../src/extract.js";
 
 function odlJson(pages: number): string {
   return JSON.stringify({ "file name": "x.pdf", "number of pages": pages, kids: [] });
@@ -103,4 +103,45 @@ test("garbledTextRatios needs both signals before condemning text", () => {
 
 test("garbledTextRatios holds no opinion on short output", () => {
   assert.equal(garbledTextRatios("!\"#$%&'()*+"), undefined);
+});
+
+// Real pdftotext output from a 1958 newspaper scan with a broken font map:
+// single glyphs from unrelated scripts, each wrapped in control characters.
+const SCATTERED_GLYPHS = [
+  "ᒪ", "ᴾ", "ᰛ", "ȼ", "᱕", "ᵕ", "ޣ", "ॷ", "п", "Ѡ",
+  "ᰅ", "ᘶ", "ᗹ", "ѱ", "Ր", "ཝ", "ѿ", "䗾", "䚉", "䘑",
+  "୧", "᯦", "ޡ", "ᶛ", "ᔰ", "䇴", "ᡆ", "ቧ", "㤧", "䳺",
+  "Ԣ", "䑅", "䚃", "߼", "ಬ", "ቊ", "਺", "亯", "Ӂ", "ѐ",
+].map((glyph) => `\u0003${glyph}\u0003   `).join("").repeat(6);
+
+test("scatteredGlyphRatios catches letters strewn across unrelated scripts", () => {
+  // Every glyph is a letter, so the letter/symbol pair passes it as prose.
+  assert.equal(garbledTextRatios(SCATTERED_GLYPHS), undefined);
+  const ratios = scatteredGlyphRatios(SCATTERED_GLYPHS);
+  assert.ok(ratios, "expected the scatter to be judged garbled");
+  assert.ok(ratios.topScriptShare < 0.6);
+  assert.ok(ratios.isolatedShare > 0.99);
+});
+
+test("scatteredGlyphRatios passes prose in one or two writing systems", () => {
+  const english = "The worst thing one can do with words is to surrender to them. ".repeat(8);
+  const chinese = "外嫁女参与集体收益分配纠纷的实质是作为政治自由的村民自治与外嫁女的平等权冲突。".repeat(8);
+  // Kanji, hiragana, and katakana are one writing system, not three scripts.
+  const japanese = "近代日本のナショナリズムとアジア主義についての研究ノートである。".repeat(8);
+  assert.equal(scatteredGlyphRatios(english), undefined);
+  assert.equal(scatteredGlyphRatios(chinese), undefined);
+  assert.equal(scatteredGlyphRatios(japanese), undefined);
+});
+
+test("scatteredGlyphRatios needs both signals before condemning text", () => {
+  // Fully isolated but concentrated: per-character-spaced Chinese is legitimate.
+  const spaced = [..."党委书记是干部体系中的关键岗位新疆省政府主席盛世才"].join(" ").repeat(12);
+  assert.equal(scatteredGlyphRatios(spaced), undefined);
+  // Mixed scripts but in words: a trilingual monograph is legitimate.
+  const trilingual = "盛世才与苏联 Советский Союз и Синьцзян the Soviet Union in Xinjiang 1933年 ".repeat(8);
+  assert.equal(scatteredGlyphRatios(trilingual), undefined);
+});
+
+test("scatteredGlyphRatios holds no opinion on short output", () => {
+  assert.equal(scatteredGlyphRatios("ᒪ ᴾ ᰛ ȼ ᱕"), undefined);
 });

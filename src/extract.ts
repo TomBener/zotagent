@@ -134,10 +134,10 @@ const LETTER_RE = /\p{L}/u;
  *  tier remains to do better, so the attachment fails honestly rather than
  *  publishing noise into the keyword and embedding indexes. */
 export class GarbledExtractionError extends Error {
-  constructor(filePath: string, letterRatio: number, symbolRatio: number) {
+  /** `finding` names the measurement that condemned the text. */
+  constructor(filePath: string, finding: string) {
     super(
-      `Extracted text is illegible for ${filePath}: ${Math.round(letterRatio * 100)}% letters, ` +
-        `${Math.round(symbolRatio * 100)}% rare symbols — the PDF's fonts carry no usable ` +
+      `Extracted text is illegible for ${filePath}: ${finding} — the PDF's fonts carry no usable ` +
         `character map, so it needs OCR (e.g. ocrmypdf --force-ocr) before it can be indexed`,
     );
     this.name = "GarbledExtractionError";
@@ -163,6 +163,77 @@ export function garbledTextRatios(
   const symbolRatio = symbols / total;
   return letterRatio < GARBLED_MAX_LETTER_RATIO && symbolRatio > GARBLED_MIN_SYMBOL_RATIO
     ? { letterRatio, symbolRatio }
+    : undefined;
+}
+
+// The other shape character-map noise takes is all letters: a font whose
+// codes map onto arbitrary code points yields isolated glyphs from a dozen
+// unrelated scripts (Canadian syllabics, Balinese, Cyrillic, phonetic
+// extensions, …) floating in layout whitespace, which the letter/symbol pair
+// above scores as prose. Real text is the opposite on both counts: its letters
+// come from one or two writing systems and sit in words. Measured on real
+// pdftotext output, 24 healthy English and Chinese documents kept ≥ 99.8% of
+// their letters in the top two writing systems with at most 37% isolated (a
+// per-character-spaced Chinese text), while a broken-font newspaper scan
+// spread its letters over 17 scripts (top two: 40%) with every one isolated.
+// Han, kana, Hangul, and bopomofo count as one writing system so Japanese and
+// Korean are not mistaken for a scatter. Both signals must agree: spaced CJK
+// is fully isolated but concentrated, a trilingual monograph mixes scripts
+// but keeps them in words.
+const SCATTER_MAX_TOP_SCRIPT_SHARE = 0.6;
+const SCATTER_MIN_ISOLATED_SHARE = 0.5;
+const SCATTER_MIN_LETTERS = 200;
+// Classifying every letter of a long book buys nothing over a sample.
+const SCATTER_SCRIPT_SAMPLE = 20_000;
+const SCRIPT_FAMILIES: ReadonlyArray<readonly [string, RegExp]> = [
+  ["Latin", /\p{Script=Latin}/u],
+  ["CJK", /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\p{Script=Bopomofo}]/u],
+  ...[
+    "Cyrillic", "Greek", "Arabic", "Hebrew", "Thai", "Devanagari", "Canadian_Aboriginal", "Balinese",
+    "Ethiopic", "Georgian", "Armenian", "Tibetan", "Mongolian", "Cherokee", "Yi", "Syriac", "Thaana",
+    "Myanmar", "Khmer", "Lao", "Sinhala", "Tamil", "Bengali", "Gujarati", "Gurmukhi", "Kannada",
+    "Malayalam", "Telugu", "Oriya", "Javanese", "Sundanese", "Batak", "Buginese", "Tai_Le",
+    "New_Tai_Lue", "Tai_Tham", "Tai_Viet", "Lepcha", "Limbu", "Ol_Chiki", "Vai", "Bamum", "Tifinagh",
+    "Runic", "Ogham", "Coptic", "Glagolitic", "Nko", "Samaritan", "Mandaic", "Tagalog", "Cham",
+    "Kayah_Li", "Rejang", "Saurashtra", "Meetei_Mayek", "Lisu",
+  ].map((name) => [name, new RegExp(`\\p{Script=${name}}`, "u")] as const),
+];
+
+function writingSystemOf(letter: string): string {
+  for (const [name, re] of SCRIPT_FAMILIES) {
+    if (re.test(letter)) return name;
+  }
+  return "Other";
+}
+
+/** The measured shares when text reads as glyphs scattered across unrelated
+ *  scripts rather than words, or undefined when it passes or is too short to
+ *  judge. */
+export function scatteredGlyphRatios(
+  text: string,
+): { topScriptShare: number; isolatedShare: number; scripts: number } | undefined {
+  const chars = [...text];
+  const perSystem = new Map<string, number>();
+  let letters = 0;
+  let isolated = 0;
+  let classified = 0;
+  for (let i = 0; i < chars.length; i += 1) {
+    const char = chars[i]!;
+    if (!LETTER_RE.test(char)) continue;
+    letters += 1;
+    if (!LETTER_RE.test(chars[i - 1] ?? " ") && !LETTER_RE.test(chars[i + 1] ?? " ")) isolated += 1;
+    if (classified < SCATTER_SCRIPT_SAMPLE) {
+      classified += 1;
+      const system = writingSystemOf(char);
+      perSystem.set(system, (perSystem.get(system) ?? 0) + 1);
+    }
+  }
+  if (letters < SCATTER_MIN_LETTERS) return undefined;
+  const counts = [...perSystem.values()].sort((a, b) => b - a);
+  const topScriptShare = ((counts[0] ?? 0) + (counts[1] ?? 0)) / classified;
+  const isolatedShare = isolated / letters;
+  return topScriptShare < SCATTER_MAX_TOP_SCRIPT_SHARE && isolatedShare > SCATTER_MIN_ISOLATED_SHARE
+    ? { topScriptShare, isolatedShare, scripts: counts.length }
     : undefined;
 }
 
@@ -565,8 +636,17 @@ async function extractBatchPdftotext(
       if (garbled) {
         throw new GarbledExtractionError(
           attachment.filePath,
-          garbled.letterRatio,
-          garbled.symbolRatio,
+          `${Math.round(garbled.letterRatio * 100)}% letters, ` +
+            `${Math.round(garbled.symbolRatio * 100)}% rare symbols`,
+        );
+      }
+      const scattered = scatteredGlyphRatios(text);
+      if (scattered) {
+        throw new GarbledExtractionError(
+          attachment.filePath,
+          `letters scattered across ${scattered.scripts} scripts ` +
+            `(top two ${Math.round(scattered.topScriptShare * 100)}%, ` +
+            `${Math.round(scattered.isolatedShare * 100)}% isolated)`,
         );
       }
 
