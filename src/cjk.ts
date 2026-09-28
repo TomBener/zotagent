@@ -1,5 +1,5 @@
 // The single home for CJK script knowledge. Index-time normalization
-// (keyword-db segmentation), query-time rewriting (FTS NEAR expansion), and
+// (keyword-db segmentation), query-time rewriting (FTS phrase assembly), and
 // passage handling (reflow joins, anchor patterns, the exact-phrase scanner)
 // must all agree on what counts as a CJK character — a drift between any two
 // of them produces search misses that only surface on a real index.

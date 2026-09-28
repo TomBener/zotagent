@@ -235,30 +235,38 @@ test("segmentCjk inserts spaces between CJK characters", () => {
   assert.equal(segmentCjk("abc"), "abc");
 });
 
-test("buildFtsQuery converts CJK runs to NEAR queries", () => {
-  assert.equal(buildFtsQuery("盛世才"), "NEAR(盛 世 才, 2)");
-  // Traditional input is folded to simplified before proximity rewriting.
-  assert.equal(buildFtsQuery("韜奮 抗戰"), "NEAR(韬 奋, 1) NEAR(抗 战, 1)");
+test("buildFtsQuery converts CJK runs to ordered phrases", () => {
+  assert.equal(buildFtsQuery("盛世才"), '"盛 世 才"');
+  // Traditional input is folded to simplified before phrase assembly.
+  assert.equal(buildFtsQuery("韜奮 抗戰"), '"韬 奋" "抗 战"');
   assert.equal(buildFtsQuery("hello"), "hello");
   assert.equal(buildFtsQuery("新 疆"), "新 疆");
-  assert.equal(buildFtsQuery("独山子油矿"), "NEAR(独 山 子 油 矿, 4)");
-  assert.equal(buildFtsQuery("is边疆"), "is NEAR(边 疆, 1)");
+  assert.equal(buildFtsQuery("独山子油矿"), '"独 山 子 油 矿"');
+  assert.equal(buildFtsQuery("is边疆"), 'is "边 疆"');
   assert.equal(buildFtsQuery('"盛世才"'), '"盛 世 才"');
   assert.equal(buildFtsQuery('hello "盛世才" world'), 'hello "盛 世 才" world');
 });
 
 test("buildFtsQuery folds traditional Chinese to simplified", () => {
-  // Unquoted traditional run becomes a simplified NEAR() query.
-  assert.equal(buildFtsQuery("繁體"), "NEAR(繁 体, 1)");
+  // Unquoted traditional run becomes a simplified phrase.
+  assert.equal(buildFtsQuery("繁體"), '"繁 体"');
   // Quoted traditional phrase is converted character-by-character.
   assert.equal(buildFtsQuery('"繁體中文"'), '"繁 体 中 文"');
   // Mixed traditional + simplified in one query collapses to simplified.
-  assert.equal(buildFtsQuery("韜奋"), "NEAR(韬 奋, 1)");
+  assert.equal(buildFtsQuery("韜奋"), '"韬 奋"');
   // NEAR/N infix with traditional CJK phrases still produces simplified phrases.
   assert.match(
     buildFtsQuery('"開發新疆" NEAR/5 "人力財力"'),
     /^NEAR\(\s*"开 发 新 疆"\s+"人 力 财 力"\s*,\s*5\s*\)$/u,
   );
+});
+
+test("buildFtsQuery applies NFKC before folding", () => {
+  // Ligatures and full-width forms reach the index as their plain letters.
+  assert.equal(buildFtsQuery("exempli\uFB01es"), "exemplifies");
+  assert.equal(buildFtsQuery("\uFF11\uFF19\uFF14\uFF19年以后"), '1949 "年 以 后"');
+  // Full-width quotes become the ASCII phrase operator.
+  assert.equal(buildFtsQuery("\uFF02institutional change\uFF02"), '"institutional change"');
 });
 
 test("rewriteInfixNear rewrites infix NEAR to function form", () => {
@@ -327,7 +335,7 @@ test("buildFtsQuery produces FTS5-compatible output for canonical NEAR/N with CJ
   );
 });
 
-test("CJK keyword search matches Chinese content via NEAR", async () => {
+test("CJK keyword search matches Chinese content via ordered phrases", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-cjk-"));
   const dataDir = join(root, "data");
   const manifestsDir = join(dataDir, "manifests");
@@ -358,6 +366,49 @@ test("CJK keyword search matches Chinese content via NEAR", async () => {
     assert.equal(quoted[0]!.docKey, docKey);
   } finally {
     await client.close();
+  }
+});
+
+test("CJK keyword search respects character order and NFKC-folds both sides", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-order-nfkc-"));
+  const dataDir = join(root, "data");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const block = (text: string) => ({
+    blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"],
+    text, charStart: 0, charEnd: text.length, lineStart: 1, lineEnd: 1, isReferenceLike: false,
+  });
+  const docs = [
+    { docKey: "1".repeat(40), itemKey: "SHEHUI01", text: "社会结构与\n国家能力" },
+    { docKey: "2".repeat(40), itemKey: "LIGATURE", text: "This case exempliﬁes the ﬂow of １９４９年以后 reforms." },
+  ];
+  for (const doc of docs) {
+    writeManifestFile(join(manifestsDir, `${doc.docKey}${MANIFEST_EXT}`), {
+      docKey: doc.docKey, itemKey: doc.itemKey, title: doc.itemKey, authors: ["A"],
+      filePath: `/tmp/${doc.itemKey}.pdf`, blocks: [block(doc.text)],
+    });
+  }
+
+  const client = await openKeywordIndex(createConfig(dataDir));
+  try {
+    await client.rebuildIndex(docs.map((doc) => readyEntry(doc.docKey, doc.itemKey, doc.itemKey, `/tmp/${doc.itemKey}.pdf`)));
+    const hit = async (query: string) => (await client.searchDocs(query, 10)).map((row) => row.docKey);
+
+    // Reversed characters are a different word, not a looser match.
+    assert.deepEqual(await hit("社会"), [docs[0]!.docKey]);
+    assert.deepEqual(await hit("会社"), []);
+    // A line break inside a word is not a token, so the phrase still matches.
+    assert.deepEqual(await hit("与国家"), [docs[0]!.docKey]);
+
+    // Plain queries find ligature and full-width source text, and vice versa.
+    assert.deepEqual(await hit("exemplifies"), [docs[1]!.docKey]);
+    assert.deepEqual(await hit("flow"), [docs[1]!.docKey]);
+    assert.deepEqual(await hit("1949年以后"), [docs[1]!.docKey]);
+    assert.deepEqual(await hit("exempliﬁes"), [docs[1]!.docKey]);
+  } finally {
+    await client.close();
+    rmSync(root, { recursive: true, force: true });
   }
 });
 

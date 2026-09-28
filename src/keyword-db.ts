@@ -41,7 +41,18 @@ export interface KeywordIndexClient {
 }
 
 export type KeywordIndexFactory = (config: AppConfig) => Promise<KeywordIndexClient>;
-export const KEYWORD_INDEX_SCHEMA_VERSION = "keyword-fts5-porter-unicode61-contentless-delete-tradsimp-v6-rowid-encoded";
+export const KEYWORD_INDEX_SCHEMA_VERSION = "keyword-fts5-porter-unicode61-contentless-delete-tradsimp-v7-nfkc";
+
+// The one text fold shared by index time and query time; any asymmetry
+// between the two is a silent miss. NFKC runs first so compatibility forms
+// (the ﬁ/ﬂ ligatures PDFs are full of, full-width digits and Latin,
+// compatibility ideographs) reach opencc as the ordinary characters it
+// knows — the same order normalizeExactText uses for the phrase scanner.
+// On the query side this also turns full-width quotes and asterisks into
+// the ASCII operators FTS5 reads.
+function foldKeywordText(text: string): string {
+  return toSimplified(text.normalize("NFKC"));
+}
 
 // Pack (docId, blockIndex) into the FTS5 rowid: docId * 2^24 + blockIndex.
 // 24 bits for blockIndex covers the largest doc observed in the wild
@@ -118,7 +129,7 @@ function indexedBlocksForEntry(
   if (result.status === "missing") return [];
   if (result.status === "unreadable") return null;
   return result.manifest.blocks
-    .map((block) => ({ blockIndex: block.blockIndex, indexed: segmentCjk(toSimplified(block.text)) }))
+    .map((block) => ({ blockIndex: block.blockIndex, indexed: segmentCjk(foldKeywordText(block.text)) }))
     .filter((b) => b.indexed.length > 0);
 }
 
@@ -239,21 +250,22 @@ function updateTable(
   return skippedDocKeys;
 }
 
-function cjkRunToNear(run: string): string {
-  const chars = [...run];
-  if (chars.length === 1) return chars[0]!;
-  const distance = Math.max(1, chars.length - 1);
-  return `NEAR(${chars.join(" ")}, ${distance})`;
+// The index holds one token per CJK character (segmentCjk), so an unquoted
+// run must be reassembled into an ordered phrase: FTS5 NEAR ignores order,
+// which made 会社 match 社会 and 事故 match 故事. Punctuation and whitespace
+// are not tokens, so line breaks and OCR spacing inside a word still match.
+function cjkRunToPhrase(run: string): string {
+  return `"${[...run].join(" ")}"`;
 }
 
 function rewriteUnquotedCjk(text: string): string {
   const CJK_RUN = new RegExp(`${CJK_CLASS_SOURCE}{2,}`, "gu");
   return text.replace(CJK_RUN, (m, offset) => {
-    const near = cjkRunToNear(m);
+    const phrase = cjkRunToPhrase(m);
     const before = offset > 0 && text[offset - 1] !== " " ? " " : "";
     const afterIdx = offset + m.length;
     const after = afterIdx < text.length && text[afterIdx] !== " " ? " " : "";
-    return `${before}${near}${after}`;
+    return `${before}${phrase}${after}`;
   });
 }
 
@@ -325,7 +337,7 @@ export function rewriteInfixNear(query: string): string {
 }
 
 export function buildFtsQuery(query: string): string {
-  query = toSimplified(query);
+  query = foldKeywordText(query);
   assertSupportedKeywordQuery(query);
   query = rewriteInfixNear(query);
   const parts: string[] = [];

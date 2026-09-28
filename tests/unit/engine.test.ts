@@ -800,7 +800,7 @@ test("searchLiterature keyword mode maps stemmed hits to the matching block", as
   assert.match(result.results[0]!.passage, /governs recruitment/i);
 });
 
-test("searchLiterature keyword mode matches spaced CJK content via NEAR rewriting", async () => {
+test("searchLiterature keyword mode matches spaced CJK content via phrase rewriting", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-cjk-spacing-"));
   const dataDir = join(root, "data");
   const indexDir = join(dataDir, "index");

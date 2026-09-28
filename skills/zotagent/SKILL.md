@@ -44,7 +44,7 @@ Both `search` and `search-in` evaluate most queries against per-block FTS. `sear
 
 Keyword vs semantic heuristic: start with keyword (exact phrases, `OR`, `NEAR`) for names, anchor terms, quotations, or `--tag` / `--collection-key` scoping; switch to `--semantic` when phrasing is fuzzy or you want conceptual neighbors. `--tag` and `--collection-key` cannot be combined with `--semantic`. `NEAR/<n>` is especially useful on OCR'd or scanned materials (Republican China vertical-layout texts, old gazetteers, etc.), where one keyword often drowns in noise.
 
-Chinese trad/simp folding: keyword `search`, `search-in`, and `metadata` match across 繁 ↔ 简 both ways (汉字 ≡ 漢字), so one form is enough. `search --semantic` does NOT fold because it uses qmd embeddings over the source text. Returned text (`passage`, `blocks`, `fulltext`, `expand`) preserves the original form as stored in the attachment.
+Chinese trad/simp folding: keyword `search`, `search-in`, and `metadata` match across 繁 ↔ 简 both ways (汉字 ≡ 漢字), so one form is enough. An unquoted CJK run is an ordered phrase: `会社` matches only 会社, never 社会; separate words with spaces (`国家 能力`) to require both anywhere in a block. Keyword search also folds ligatures and full-width forms (NFKC), so `exemplifies` finds `exempliﬁes` and `1949年` finds `１９４９年`. `search --semantic` does NOT fold because it uses qmd embeddings over the source text. Returned text (`passage`, `blocks`, `fulltext`, `expand`) preserves the original form as stored in the attachment.
 
 ## Citing passages
 
