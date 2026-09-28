@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 
+import { CJK_CHAR_RE } from "./cjk.js";
 import type { AppConfig, AttachmentCatalogEntry, BibliographyRecord } from "./types.js";
 import { formatAuthors, normalizePathForLookup, sha1, toSupportedFileType } from "./utils.js";
 
@@ -79,6 +80,11 @@ function parsePeople(people?: RawBibliographyAuthor[]): { names: string[]; searc
       names.push(displayName);
       searchTexts.add(displayName);
       searchTexts.add(`${given} ${family}`);
+      // A CJK name is written family-first with no space (余泳泽), which is
+      // how anyone searches for it; the spaced display form never matches.
+      if (CJK_CHAR_RE.test(family) && CJK_CHAR_RE.test(given)) {
+        searchTexts.add(`${family}${given}`);
+      }
       continue;
     }
 

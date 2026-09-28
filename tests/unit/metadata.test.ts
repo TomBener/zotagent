@@ -331,6 +331,39 @@ test("searchMetadata supports author variants and field filtering", async () => 
   assert.equal(thesisTitle.results[0]?.publisher, "East University");
 });
 
+test("searchMetadata finds a family/given CJK author written the usual unspaced way", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-metadata-cjk-author-"));
+  const { attachmentsRoot } = createFixturePaths(root);
+  const { bibliographyPath, dataDir } = writeBibliography(root, [
+    {
+      id: "yu2020",
+      title: "中国经济增长研究",
+      author: [{ family: "余", given: "泳泽" }],
+      issued: { "date-parts": [[2020]] },
+      type: "article-journal",
+      "zotero-item-key": "ITEMYU01",
+    },
+    {
+      id: "wang1993",
+      title: "中国国家能力报告",
+      author: [{ family: "王", given: "绍光" }],
+      issued: { "date-parts": [[1993]] },
+      type: "book",
+      "zotero-item-key": "ITEMWG01",
+    },
+  ]);
+  const overrides = { bibliographyJsonPath: bibliographyPath, attachmentsRoot, dataDir };
+
+  for (const query of ["余泳泽", "余 泳泽", "餘泳澤"]) {
+    const byFilter = await searchMetadata("", 10, overrides, { filters: { author: query } });
+    assert.deepEqual(byFilter.results.map((row) => row.itemKey), ["ITEMYU01"], `--author ${query}`);
+  }
+  const positional = await searchMetadata("余泳泽", 10, overrides);
+  assert.deepEqual(positional.results.map((row) => row.itemKey), ["ITEMYU01"]);
+  // The displayed name keeps its catalog form.
+  assert.deepEqual(positional.results[0]?.authors, ["余 泳泽"]);
+});
+
 test("searchMetadata field-filter flags AND across fields and allow empty query", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-metadata-filter-"));
   const { attachmentsRoot } = createFixturePaths(root);
