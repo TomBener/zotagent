@@ -273,6 +273,37 @@ test("addToZotero falls back to manual fields when DOI lookup fails", async () =
   ]);
 });
 
+test("addToZotero never re-sends a failed DOI create as a manual item", async () => {
+  // The create request may have committed on Zotero's side before it failed
+  // (a timeout after the write), so a manual-fallback POST would duplicate it.
+  const creates: string[] = [];
+  const fetchMock: typeof fetch = async (input, init) => {
+    const url = String(input);
+    if (url === "https://doi.org/10.1000/slow") {
+      return jsonResponse({ type: "article-journal", title: "Imported by DOI", "container-title": ["J"] });
+    }
+    if (url.startsWith("https://api.zotero.org/items/new?itemType=")) {
+      return jsonResponse({ itemType: url.split("=")[1], title: "", creators: [], date: "", publicationTitle: "", url: "", accessDate: "", DOI: "", tags: [], collections: [], relations: {} });
+    }
+    if (url === "https://api.zotero.org/users/123456/items") {
+      creates.push(String(init?.body));
+      throw new Error("Request timed out after 8000ms for https://api.zotero.org/users/123456/items");
+    }
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+
+  await assert.rejects(
+    addToZotero(
+      { doi: "10.1000/slow", title: "Manual Title" },
+      { zoteroLibraryId: "123456", zoteroLibraryType: "user", zoteroApiKey: "secret", translationServerUrl: "" },
+      fetchMock,
+    ),
+    /timed out/u,
+  );
+  assert.equal(creates.length, 1, "exactly one create request");
+  assert.equal(JSON.parse(creates[0]!)[0].DOI, "10.1000/slow");
+});
+
 test("addToZotero omits publisher for journal articles imported from DOI", async () => {
   const requests: Array<{ url: string; init?: RequestInit }> = [];
   const fetchMock: typeof fetch = async (input, init) => {

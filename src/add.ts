@@ -763,20 +763,26 @@ async function createWithChildren(
   };
 }
 
+/** A payload ready for the create tail, plus the result metadata it carries. */
+interface PreparedItem {
+  payload: EditableZoteroItem;
+  meta: { source: AddResult["source"]; doi?: string; childNotes?: string[] };
+}
+
 /**
- * Shared tail of the translation-server add paths: fetch the template for
- * the translated item, apply manual override flags, then run the create
- * tail with the translator's child notes. The DOI on the result is the one
- * actually written to the item (translators may normalize the requested
- * form); `ensureDoi` only fills in when the schema's DOI field is blank.
+ * Build half of the translation-server add paths: fetch the template for the
+ * translated item and apply manual override flags. The DOI on the result is
+ * the one actually written to the item (translators may normalize the
+ * requested form); `ensureDoi` only fills in when the schema's DOI field is
+ * blank.
  */
-async function createFromTranslation(
+async function prepareFromTranslation(
   ctx: WriteContext,
   picked: PickedTranslation,
   source: "doi" | "url" | "identifier",
   fetchImpl: FetchLike,
   ensureDoi?: string,
-): Promise<AddResult> {
+): Promise<PreparedItem> {
   const itemType = ctx.input.itemType || String(picked.item.itemType);
   const template = await fetchTemplate(itemType, fetchImpl);
   const payload = buildItemFromTranslation(template, picked.item);
@@ -786,12 +792,23 @@ async function createFromTranslation(
   applyManualOverrides(payload, ctx.input);
   ensureShortTitle(payload);
   const writtenDoi = typeof payload.DOI === "string" && payload.DOI ? payload.DOI : undefined;
-  return await createWithChildren(
-    ctx,
+  return {
     payload,
-    { source, ...(writtenDoi ? { doi: writtenDoi } : {}), childNotes: picked.childNotes },
-    fetchImpl,
-  );
+    meta: { source, ...(writtenDoi ? { doi: writtenDoi } : {}), childNotes: picked.childNotes },
+  };
+}
+
+/** Shared tail of the translation-server add paths: build, then create with
+ *  the translator's child notes. */
+async function createFromTranslation(
+  ctx: WriteContext,
+  picked: PickedTranslation,
+  source: "doi" | "url" | "identifier",
+  fetchImpl: FetchLike,
+  ensureDoi?: string,
+): Promise<AddResult> {
+  const prepared = await prepareFromTranslation(ctx, picked, source, fetchImpl, ensureDoi);
+  return await createWithChildren(ctx, prepared.payload, prepared.meta, fetchImpl);
 }
 
 export async function addToZotero(
@@ -813,6 +830,11 @@ export async function addToZotero(
 
   if (ctx.input.doi) {
     const cleanedDoi = cleanDoi(ctx.input.doi);
+    // Only building the payload may fall back to the manual fields. The
+    // create request stays outside the try: one that timed out may still have
+    // committed on Zotero's side, and re-sending it as a manual item would
+    // leave a duplicate.
+    let prepared: PreparedItem;
     try {
       if (ctx.config.translationServerUrl) {
         // Same translator chain the browser connector uses for identifiers
@@ -820,19 +842,16 @@ export async function addToZotero(
         // richer than the raw CSL JSON mapping below.
         const items = await searchByIdentifier(ctx.config.translationServerUrl, cleanedDoi, fetchImpl);
         const picked = pickSingleTranslationItem(items, `DOI ${cleanedDoi}`, ctx.warnings);
-        // Spread order matters: the translation result reports the DOI
-        // actually written to the item (translators may normalize the
-        // requested form); cleanedDoi only fills in when the item type has
-        // no DOI field.
-        return { doi: cleanedDoi, ...(await createFromTranslation(ctx, picked, "doi", fetchImpl, cleanedDoi)) };
+        prepared = await prepareFromTranslation(ctx, picked, "doi", fetchImpl, cleanedDoi);
+      } else {
+        const cslJson = await fetchCslJsonForDoi(cleanedDoi, fetchImpl);
+        const itemType = ctx.input.itemType || determineDoiItemType(cslJson);
+        const template = await fetchTemplate(itemType, fetchImpl);
+        const payload = buildItemFromCsl(template, cslJson, cleanedDoi);
+        applyManualOverrides(payload, ctx.input);
+        ensureShortTitle(payload);
+        prepared = { payload, meta: { source: "doi", doi: cleanedDoi } };
       }
-      const cslJson = await fetchCslJsonForDoi(cleanedDoi, fetchImpl);
-      const itemType = ctx.input.itemType || determineDoiItemType(cslJson);
-      const template = await fetchTemplate(itemType, fetchImpl);
-      const payload = buildItemFromCsl(template, cslJson, cleanedDoi);
-      applyManualOverrides(payload, ctx.input);
-      ensureShortTitle(payload);
-      return await createWithChildren(ctx, payload, { source: "doi", doi: cleanedDoi }, fetchImpl);
     } catch (error) {
       if (!ctx.input.title) {
         throw error;
@@ -843,8 +862,12 @@ export async function addToZotero(
       const template = await fetchTemplate(manualItemType, fetchImpl);
       const payload = buildManualItem(template, ctx.input);
       if ("DOI" in payload) payload.DOI = cleanedDoi;
-      return await createWithChildren(ctx, payload, { source: "manual-fallback", doi: cleanedDoi }, fetchImpl);
+      prepared = { payload, meta: { source: "manual-fallback", doi: cleanedDoi } };
     }
+    // Spread order matters: the result reports the DOI actually written to
+    // the item (translators may normalize the requested form); cleanedDoi
+    // only fills in when the item type has no DOI field.
+    return { doi: cleanedDoi, ...(await createWithChildren(ctx, prepared.payload, prepared.meta, fetchImpl)) };
   }
 
   const template = await fetchTemplate(manualItemType, fetchImpl);
