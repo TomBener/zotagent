@@ -1733,6 +1733,68 @@ test("runSync retries embeddings that stalled instead of short-circuiting past t
   assert.equal(embedCalls, 2);
 });
 
+test("runSync drops the completion marker before publishing any re-extraction", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-marker-before-publish-"));
+  const attachmentsRoot = join(root, "attachments");
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  mkdirSync(join(attachmentsRoot, "papers"), { recursive: true });
+  mkdirSync(indexDir, { recursive: true });
+  const pdfPath = join(attachmentsRoot, "papers", "paper.pdf");
+  writeFileSync(pdfPath, "pdf v2");
+  const docKey = sha1("papers/paper.pdf");
+  const bibliographyPath = join(root, "bibliography.json");
+  writeFileSync(bibliographyPath, JSON.stringify([{ id: "cite", title: "Paper", file: pdfPath, "zotero-item-key": "ITEM1" }]));
+  const catalogPath = join(indexDir, "catalog.json");
+  writeCatalogFile(catalogPath, {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    indexesCompletedAt: new Date().toISOString(),
+    indexedQmdEmbedModel: "fake-embed-model",
+    indexerSignature: buildIndexerSignature("fake-embed-model"),
+    entries: [{
+      docKey, itemKey: "ITEM1", citationKey: "cite", title: "Paper", authors: [], filePath: pdfPath,
+      fileExt: "pdf", exists: true, supported: true, extractStatus: "ready", size: 1, mtimeMs: 1,
+      sourceHash: "stale-hash", lastIndexedAt: new Date().toISOString(),
+    }],
+  });
+
+  let markerAtFirstPublish: string | undefined | null = null;
+  const extractBatchFn = async (batch: AttachmentCatalogEntry[], _tempRoot: string, store: ArtifactStore) => {
+    // What a crash right here would leave on disk.
+    markerAtFirstPublish ??= readCatalogFile(catalogPath).indexesCompletedAt;
+    for (const attachment of batch) {
+      store.publish({
+        markdown: "New body",
+        manifest: { docKey: attachment.docKey, itemKey: attachment.itemKey, title: "Paper", authors: [], filePath: attachment.filePath, blocks: [trivialBlock()] },
+      });
+    }
+    return new Set(batch.map((attachment) => attachment.docKey));
+  };
+  const quietQmd = async () => ({
+    search: async () => [], searchLex: async () => [], update: async () => ({}), embed: async () => ({}),
+    getStatus: async () => ({ totalDocuments: 1, needsEmbedding: 0, hasVectorIndex: true, collections: [] }),
+    listContexts: async () => [], addContext: async () => true, removeContext: async () => true,
+    clearEmbeddings: async () => {},
+    cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
+    migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
+    adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    compactDatabase: async () => ({ ran: false, reason: "" }),
+    close: async () => {},
+  });
+
+  await runSync(
+    { bibliographyJsonPath: bibliographyPath, attachmentsRoot, dataDir, qmdEmbedModel: "fake-embed-model" },
+    quietQmd as never,
+    undefined,
+    extractBatchFn as never,
+    () => {},
+  );
+
+  assert.equal(markerAtFirstPublish, undefined, "the on-disk catalog must not claim completion while extraction runs");
+  assert.ok(readCatalogFile(catalogPath).indexesCompletedAt, "the finished run restores the marker");
+});
+
 test("runSync incrementally updates the keyword index after a completed sync", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-sync-keyword-incremental-"));
   const attachmentsRoot = join(root, "attachments");

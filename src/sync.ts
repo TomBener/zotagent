@@ -1080,6 +1080,13 @@ export async function runSync(
       if (nonPdfAttachments.length > 0) parts.push(`${nonPdfAttachments.length} non-PDF(s)`);
       logger.info(`Preparing to extract ${parts.join(" and ")}.`, { console: true });
       if (pdfAttachments.length > 0) requireJavaFn();
+      // Drop the completion marker before the first publish. Until the first
+      // batch finishes, the catalog on disk would otherwise still be the last
+      // completed one: a crash after re-extracting an attachment whose stat
+      // did not change would leave its new artifacts behind an entry that
+      // still claims the old ones are indexed, and the next run would
+      // short-circuit past them.
+      writeProgressCatalog(paths.catalogPath, progressEntries(), progressIndexerState);
     } else {
       logger.info("No extraction needed; reusing existing indexed files where possible.", { console: true });
     }
