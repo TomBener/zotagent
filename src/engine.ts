@@ -629,6 +629,24 @@ export async function searchLiterature(
   const manifestCache = new Map<string, AttachmentManifest>();
   const markdownCache = new Map<string, string>();
 
+  // Results are one per item. The indexes return one row per attachment, so
+  // an item with several indexed attachments could fill several slots;
+  // asking for every such extra attachment on top of `limit` guarantees
+  // `limit` distinct items whenever that many match.
+  const candidateLimit = limit + (readyEntries.length - itemGroups.size);
+  const firstPerItem = <T>(rows: T[], entryOf: (row: T) => CatalogEntry | undefined): Array<[T, CatalogEntry]> => {
+    const seen = new Set<string>();
+    const kept: Array<[T, CatalogEntry]> = [];
+    for (const row of rows) {
+      const entry = entryOf(row);
+      if (!entry || seen.has(entry.itemKey)) continue;
+      seen.add(entry.itemKey);
+      kept.push([row, entry]);
+      if (kept.length === limit) break;
+    }
+    return kept;
+  };
+
   let mapped: SearchResultRow[];
 
   if (behavior.semantic) {
@@ -638,18 +656,16 @@ export async function searchLiterature(
       // Without reranking, qmd scores results by fused rank alone (1/rank),
       // so there is no relevance threshold to pass along; --min-score is
       // keyword-only for that reason.
-      const results = await qmd.search({ query, limit, rerank: false });
-      mapped = results
-        .map((result) => {
-          const docKey =
-            docKeyFromSearchResultPath(result.file) ?? docKeyFromSearchResultPath(result.displayPath);
-          if (!docKey) return null;
-          const entry = entryByDocKey.get(docKey);
-          if (!entry) return null;
+      const results = await qmd.search({ query, limit: candidateLimit, rerank: false });
+      mapped = firstPerItem(results, (result) => {
+        const docKey =
+          docKeyFromSearchResultPath(result.file) ?? docKeyFromSearchResultPath(result.displayPath);
+        return docKey ? entryByDocKey.get(docKey) : undefined;
+      })
+        .map(([result, entry]) => {
           const itemGroup = itemGroups.get(entry.itemKey) ?? [entry];
           return buildHybridSearchRow(reader, entry, itemGroup, manifestCache, markdownCache, result);
         })
-        .filter((value): value is ReturnType<typeof buildHybridSearchRow> => value !== null)
         .sort((a, b) => b.score - a.score);
     } finally {
       await qmd.close();
@@ -662,20 +678,19 @@ export async function searchLiterature(
     try {
       // Bootstrap the keyword index lazily if it is empty (e.g. first search after upgrade).
       const ftsOptions = itemKeyFilter ? { docKeys: readyEntries.map((entry) => entry.docKey) } : undefined;
-      let results = await keywordIndex.searchDocs(query, limit, ftsOptions);
+      let results = await keywordIndex.searchDocs(query, candidateLimit, ftsOptions);
       if (results.length === 0 && allReadyEntries.length > 0 && (await keywordIndex.isEmpty())) {
         await keywordIndex.rebuildIndex(allReadyEntries);
-        results = await keywordIndex.searchDocs(query, limit, ftsOptions);
+        results = await keywordIndex.searchDocs(query, candidateLimit, ftsOptions);
       }
-      mapped = results
-        .filter((result) => behavior.minScore === undefined || result.score >= behavior.minScore)
-        .map((result) => {
-          const entry = entryByDocKey.get(result.docKey);
-          if (!entry) return null;
+      mapped = firstPerItem(
+        results.filter((result) => behavior.minScore === undefined || result.score >= behavior.minScore),
+        (result) => entryByDocKey.get(result.docKey),
+      )
+        .map(([result, entry]) => {
           const itemGroup = itemGroups.get(entry.itemKey) ?? [entry];
           return buildKeywordSearchRow(reader, entry, itemGroup, manifestCache, markdownCache, result.blockIndex, result.score, query);
         })
-        .filter((value): value is SearchResultRow => value !== null)
         .sort((a, b) => b.score - a.score);
     } finally {
       await keywordIndex.close();

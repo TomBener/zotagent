@@ -1458,6 +1458,64 @@ test("searchWithinDocuments searches across multiple attachments for the same ke
   );
 });
 
+test("searchLiterature returns one row per item, not per attachment", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-search-per-item-"));
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+
+  // ITEMMULT has two indexed attachments that both match; ITEMSOLO has one.
+  const docs = [
+    { docKey: "p".repeat(40), itemKey: "ITEMMULT", filePath: "/tmp/mult-a.pdf", score: 3 },
+    { docKey: "q".repeat(40), itemKey: "ITEMMULT", filePath: "/tmp/mult-b.pdf", score: 2 },
+    { docKey: "r".repeat(40), itemKey: "ITEMSOLO", filePath: "/tmp/solo.pdf", score: 1 },
+  ];
+  for (const doc of docs) {
+    writeManifest(join(manifestsDir, `${doc.docKey}${MANIFEST_EXT}`), {
+      docKey: doc.docKey, itemKey: doc.itemKey, title: doc.itemKey, authors: ["A"], filePath: doc.filePath,
+      blocks: [{ blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"], text: "governing the commons",
+        charStart: 0, charEnd: 21, lineStart: 1, lineEnd: 1, isReferenceLike: false }],
+    });
+  }
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: docs.map((doc) => ({
+      docKey: doc.docKey, itemKey: doc.itemKey, title: doc.itemKey, authors: ["A"], filePath: doc.filePath,
+      fileExt: "pdf" as const, exists: true, supported: true, extractStatus: "ready" as const,
+      size: 1, mtimeMs: 1, sourceHash: `hash-${doc.docKey}`, lastIndexedAt: new Date().toISOString(),
+    })),
+  });
+
+  const requestedLimits: number[] = [];
+  const keywordFactory = async () => ({
+    rebuildIndex: async () => ({ skippedDocKeys: [] }),
+    searchDocs: async (_query: string, limit: number) => {
+      requestedLimits.push(limit);
+      return docs.slice(0, limit).map((doc) => ({ docKey: doc.docKey, blockIndex: 0, score: doc.score }));
+    },
+    searchBlocks: async () => [],
+    isEmpty: async () => false,
+    close: async () => {},
+  });
+
+  const result = await searchLiterature(
+    "governing the commons",
+    2,
+    { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir },
+    undefined,
+    {},
+    keywordFactory as never,
+  );
+
+  assert.deepEqual(result.results.map((row) => row.itemKey), ["ITEMMULT", "ITEMSOLO"]);
+  assert.equal(result.results[0]!.score, 3, "the item's best-scoring attachment stands for it");
+  // One extra attachment exists, so one extra candidate is enough for 2 items.
+  assert.deepEqual(requestedLimits, [3]);
+});
+
 test("searchWithinDocuments honors NEAR/AND/OR operators via FTS", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-search-in-near-"));
   const dataDir = join(root, "data");

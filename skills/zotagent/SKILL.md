@@ -38,7 +38,7 @@ Keyword syntax — `search` and `search-in` both run SQLite FTS5 with a porter s
 | Proximity | `"土地" NEAR/20 "开发"` | Within N tokens, unordered. Use `NEAR/<n>`, not bare `NEAR` or `NEAR(...)`. |
 | Prefix wildcard | `Pete*` | Matches any token starting with `Pete`: `Peter`, `Petersen`, etc. Wildcard only at the end. |
 
-Both `search` and `search-in` evaluate most queries against per-block FTS. `search-in` returns matching blocks from the targeted document up to `--limit`, and also runs a manifest-level cross-block scan for a single quoted phrase. `search` returns one row per matched document — each doc's best-ranking block (by FTS5 bm25) is the surfaced passage.
+Both `search` and `search-in` evaluate most queries against per-block FTS. `search-in` returns matching blocks from the targeted document up to `--limit`, and also runs a manifest-level cross-block scan for a single quoted phrase. `search` returns one row per matched item — an item with several indexed attachments appears once, through its best-ranking block (by FTS5 bm25) across all of them.
 
 **`NEAR/<n>` is the best first pass** when you have 2–3 anchor terms that should co-occur but not necessarily adjacent — e.g. `"土地" NEAR/20 "利用"`. It is usually more precise than plain keyword and much faster than `--semantic`.
 
