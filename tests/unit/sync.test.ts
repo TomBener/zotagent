@@ -24,6 +24,12 @@ import { readCatalogFile, writeCatalogFile } from "../../src/state.js";
 import type { AttachmentCatalogEntry, CatalogFile, ManifestBlock } from "../../src/types.js";
 import { MANIFEST_EXT, readManifestFile, sha1, writeManifestFile } from "../../src/utils.js";
 
+// Keep the developer's real ~/.zotagent/config.json out of every runSync: with
+// Zotero credentials there, each run would query the live API for the tag
+// lists with the real key, and fail outright offline. Tests that exercise the
+// tags inject them (verticalItemKeys / excludeItemKeys / fetchImpl).
+process.env.HOME = mkdtempSync(join(tmpdir(), "zotagent-sync-home-"));
+
 function trivialBlock(): ManifestBlock {
   return {
     blockIndex: 0,
@@ -1383,7 +1389,7 @@ test("runSync re-extracts a renamed vertical PDF whose old manifest predates ver
     qmdFactory,
     undefined,
     extractBatchFn as never,
-    undefined,
+    () => {},
     { verticalItemKeys: new Set(["ITEM1"]) },
   );
 
@@ -5019,7 +5025,7 @@ test("runSync falls back to re-extraction in the same run when adoption fails mi
     s.quietQmdFactory,
     undefined,
     s.publishingExtractBatchFn as never,
-    undefined,
+    () => {},
     {
       storeFactory: (dirs) =>
         openFsArtifactStore(dirs, {
@@ -5064,6 +5070,7 @@ test("runSync re-extracts after a crash between adoption move and identity rewri
     s.quietQmdFactory,
     undefined,
     s.publishingExtractBatchFn as never,
+    () => {},
   );
 
   // The stale-identity pair fails the reuse verdict (identity-mismatch) and
