@@ -11,6 +11,11 @@ import { writeCatalogFile } from "../../src/state.js";
 import type { AttachmentManifest, CatalogFile } from "../../src/types.js";
 import { MANIFEST_EXT, writeManifestFile } from "../../src/utils.js";
 
+// Keep the developer's real ~/.zotagent/config.json out of these tests: its
+// syncEnabled and tag names change the warnings under test, so a host set to
+// syncEnabled: false failed them. Tests that need a setting pass it in.
+process.env.HOME = mkdtempSync(join(tmpdir(), "zotagent-engine-home-"));
+
 function writeManifest(path: string, manifest: AttachmentManifest): void {
   mkdirSync(dirname(path), { recursive: true });
   writeManifestFile(path, manifest);
