@@ -614,8 +614,9 @@ test("searchLiterature says why tag-matched items have no searchable text", asyn
     writeSavedExcludes("zotagent:exclude");
     assert.equal(
       await warningFor(),
-      '6 of 7 matched items have no searchable text here: 1 tagged "zotagent:exclude", which sync skips; ' +
-        "2 failed extraction (see the sync log); 1 whose attachment file was missing at the last sync; " +
+      '6 of 7 matched items have no searchable text here: 1 tagged "zotagent:exclude" at the last sync, which ' +
+        "skips them; 2 failed extraction (the sync log says why; `zotagent sync --retry-errors` retries them); " +
+        "1 whose attachment file was missing at the last sync; " +
         "1 with an unsupported attachment type; 1 not in the local index (no attachment file, or added " +
         "since the last sync; `zotagent sync` picks up new ones).",
     );
@@ -630,7 +631,8 @@ test("searchLiterature says why tag-matched items have no searchable text", asyn
     process.env.ZOTAGENT_SYNC_ENABLED = "false";
     const readOnly = await warningFor();
     assert.match(readOnly, /they appear once the host that syncs this dataDir indexes them/u);
-    assert.doesNotMatch(readOnly, /`zotagent sync`/u);
+    assert.match(readOnly, /2 failed extraction \(the sync log on the host that syncs this dataDir says why\)/u);
+    assert.doesNotMatch(readOnly, /`zotagent sync/u);
   } finally {
     if (previous === undefined) delete process.env.ZOTAGENT_SYNC_ENABLED;
     else process.env.ZOTAGENT_SYNC_ENABLED = previous;

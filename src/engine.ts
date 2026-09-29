@@ -616,13 +616,19 @@ function unindexedItemsWarning(
     else if (seen?.has("unsupported")) counts.unsupported += 1;
     else counts.unseen += 1;
   }
-  const unseenAdvice =
-    config.syncEnabled === false
-      ? "they appear once the host that syncs this dataDir indexes them"
-      : "`zotagent sync` picks up new ones";
+  // The exclude list is the one saved by the last successful lookup, so the
+  // tag is stated as of then. Unchanged failures are skipped by a plain sync,
+  // so the syncing host is pointed at --retry-errors.
+  const readOnly = config.syncEnabled === false;
+  const unseenAdvice = readOnly
+    ? "they appear once the host that syncs this dataDir indexes them"
+    : "`zotagent sync` picks up new ones";
+  const errorAdvice = readOnly
+    ? "the sync log on the host that syncs this dataDir says why"
+    : "the sync log says why; `zotagent sync --retry-errors` retries them";
   const parts = [
-    counts.excluded > 0 ? `${counts.excluded} tagged "${config.excludeTag}", which sync skips` : undefined,
-    counts.error > 0 ? `${counts.error} failed extraction (see the sync log)` : undefined,
+    counts.excluded > 0 ? `${counts.excluded} tagged "${config.excludeTag}" at the last sync, which skips them` : undefined,
+    counts.error > 0 ? `${counts.error} failed extraction (${errorAdvice})` : undefined,
     counts.missing > 0 ? `${counts.missing} whose attachment file was missing at the last sync` : undefined,
     counts.unsupported > 0 ? `${counts.unsupported} with an unsupported attachment type` : undefined,
     counts.unseen > 0
