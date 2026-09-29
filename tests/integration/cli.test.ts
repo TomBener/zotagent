@@ -268,7 +268,7 @@ test("help summarizes current commands and keeps config-only overrides out of th
   assert.match(result.stdout, /^Index$/m);
   assert.match(
     result.stdout,
-    /sync \[--attachments-root <path>\] \[--retry-errors\] \[--pdf-timeout-ms <n>\] \[--pdf-batch-size <n>\]/,
+    /sync \[--attachments-root <path>\] \[--data-dir <path>\] \[--retry-errors\] \[--pdf-timeout-ms <n>\]/,
   );
   assert.match(result.stdout, /^\s+status$/m);
   assert.match(result.stdout, /^Add to Zotero$/m);
@@ -355,10 +355,12 @@ test("help summarizes current commands and keeps config-only overrides out of th
   // Examples block was removed; workflows live in the zotagent skill, not here.
   assert.doesNotMatch(result.stdout, /^Examples$/m);
 
-  // Config-only overrides should not appear in user-facing help.
+  // Config-only overrides should not appear in user-facing help. --data-dir
+  // is documented as a sync flag, like --attachments-root: indexing a
+  // subfolder needs both on the same run.
   assert.doesNotMatch(result.stdout, /--bibliography <path>/);
-  assert.doesNotMatch(result.stdout, /--data-dir <path>/);
   assert.doesNotMatch(result.stdout, /--qmd-embed-model <uri>/);
+  assert.match(result.stdout, /--data-dir <path>\s+Override dataDir for this run/);
 });
 
 test("config fails fast when stdin is not a TTY", () => {

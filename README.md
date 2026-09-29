@@ -139,12 +139,13 @@ Local search payloads (`search`, `search-in`, `metadata`) include `data.query`
 once alongside `data.results`.
 
 Index
-  sync [--attachments-root <path>] [--retry-errors] [--pdf-timeout-ms <n>] [--pdf-batch-size <n>]
-       [--pdf-concurrency <n>]
+  sync [--attachments-root <path>] [--data-dir <path>] [--retry-errors] [--pdf-timeout-ms <n>]
+       [--pdf-batch-size <n>] [--pdf-concurrency <n>]
       Build or refresh the local index of PDF, EPUB, HTML, and TXT attachments.
       Unchanged extraction errors are skipped by default; pass --retry-errors to retry them.
         --attachments-root <path>   Override attachmentsRoot for this run. docKeys are relative
-                                    to it, so index a subfolder into a separate dataDir.
+                                    to it, so pair it with --data-dir to index a subfolder.
+        --data-dir <path>           Override dataDir for this run: index into a separate directory.
         --retry-errors              Retry unchanged files that failed extraction earlier.
         --pdf-timeout-ms <n>        Override the OpenDataLoader timeout for each PDF extraction call.
         --pdf-batch-size <n>        Override the maximum number of PDFs per extraction batch.
