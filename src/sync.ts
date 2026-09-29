@@ -1,8 +1,6 @@
 import {
   appendFileSync,
   copyFileSync,
-  readFileSync,
-  renameSync,
   statSync,
   writeFileSync,
   type Stats,
@@ -33,6 +31,7 @@ import { fetchTopLevelItemKeysByTags, getReadConfig } from "./zotero-http.js";
 import { KEYWORD_INDEX_SCHEMA_VERSION, openKeywordIndex, type KeywordIndexFactory } from "./keyword-db.js";
 import { QMD_PACKAGE_VERSION, openQmdClient, resolveQmdEmbedModel, type QmdFactory } from "./qmd.js";
 import { decideRemoval } from "./removal-guard.js";
+import { readSavedTagLists, savedTagListsPath, saveTagList, type TagKnob } from "./tag-lists.js";
 import { OPENCC_PACKAGE_VERSION } from "./zh-convert.js";
 import { mapEntriesByDocKey, readCatalogFile, summarizeCatalog, writeCatalogFile } from "./state.js";
 import { artifactsAcceptable, decideTriage } from "./triage.js";
@@ -390,29 +389,6 @@ export type SyncRunOptions = {
   storeFactory?: ArtifactStoreFactory;
 };
 
-// The last successful answer for each tag lookup, so a sync without network
-// can still honour the tags instead of stopping. Keyed by the config knob and
-// guarded by the tag name: renaming a tag invalidates its saved list.
-type TagKnob = "verticalTextTag" | "excludeTag";
-type SavedTagLists = Partial<Record<TagKnob, { tag: string; itemKeys: string[]; fetchedAt: string }>>;
-
-function readSavedTagLists(path: string): SavedTagLists {
-  try {
-    const parsed = JSON.parse(readFileSync(path, "utf-8")) as unknown;
-    return parsed && typeof parsed === "object" ? (parsed as SavedTagLists) : {};
-  } catch {
-    return {};
-  }
-}
-
-function saveTagList(path: string, knob: TagKnob, tag: string, itemKeys: string[]): void {
-  const saved = readSavedTagLists(path);
-  saved[knob] = { tag, itemKeys: [...itemKeys].sort(), fetchedAt: new Date().toISOString() };
-  const tmp = `${path}.tmp`;
-  writeFileSync(tmp, JSON.stringify(saved, null, 2), "utf-8");
-  renameSync(tmp, path);
-}
-
 // Look up all top-level Zotero items carrying the given tag. Returns an empty
 // set when the tag is unset or credentials are missing — silently, because
 // the tag knobs ship with defaults (zotagent:vertical / zotagent:exclude) and
@@ -747,11 +723,11 @@ export async function runSync(
     // top-level items carry each tag, then treat their PDFs as vertical /
     // skip them entirely. Test injections bypass the API call.
     const fetchImpl = options.fetchImpl ?? fetch;
-    const savedTagListsPath = resolve(paths.indexDir, "zotero-tags.json");
+    const savedListsPath = savedTagListsPath(paths.indexDir);
     const verticalItemKeys: ReadonlySet<string> =
-      options.verticalItemKeys ?? (await resolveVerticalItemKeys(config, savedTagListsPath, fetchImpl, logger));
+      options.verticalItemKeys ?? (await resolveVerticalItemKeys(config, savedListsPath, fetchImpl, logger));
     const excludedItemKeys: ReadonlySet<string> =
-      options.excludeItemKeys ?? (await resolveExcludedItemKeys(config, savedTagListsPath, fetchImpl, logger));
+      options.excludeItemKeys ?? (await resolveExcludedItemKeys(config, savedListsPath, fetchImpl, logger));
 
     const rawCatalogData = loadCatalog(config);
     logger.info(

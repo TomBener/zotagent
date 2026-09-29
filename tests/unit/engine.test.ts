@@ -531,7 +531,11 @@ test("searchLiterature returns empty results and warns when matched items are no
   );
   assert.deepEqual(allMissing.results, []);
   assert.equal(keywordSearchCalled, false);
-  assert.ok(allMissing.warnings?.some((w) => /2 of 2 matched items are not indexed locally/u.test(w)));
+  assert.ok(
+    allMissing.warnings?.some((w) =>
+      /2 of 2 matched items have no searchable text here: 2 not in the local index .*`zotagent sync` picks up new ones/u.test(w),
+    ),
+  );
 
   const partial = await searchLiterature(
     "anything",
@@ -541,7 +545,96 @@ test("searchLiterature returns empty results and warns when matched items are no
     { itemKeys: ["INDEXED1", "MISSING1"] },
     fakeKeywordFactory,
   );
-  assert.ok(partial.warnings?.some((w) => /1 of 2 matched items is not indexed locally/u.test(w)));
+  assert.ok(partial.warnings?.some((w) => /1 of 2 matched items has no searchable text here/u.test(w)));
+});
+
+test("searchLiterature says why tag-matched items have no searchable text", async () => {
+  // Excluded items and failed extractions are not a sync away, so the
+  // warning names them and keeps the sync advice for items never seen.
+  const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-tag-why-"));
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  mkdirSync(indexDir, { recursive: true });
+  const entry = (itemKey: string, docKey: string, extractStatus: CatalogFile["entries"][number]["extractStatus"]) => ({
+    docKey,
+    itemKey,
+    title: itemKey,
+    authors: [],
+    filePath: `/tmp/${itemKey}.pdf`,
+    fileExt: "pdf",
+    exists: extractStatus !== "missing",
+    supported: extractStatus !== "unsupported",
+    extractStatus,
+    size: 1,
+    mtimeMs: 1,
+    sourceHash: `hash-${itemKey}`,
+  });
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [
+      entry("INDEXED1", "1".repeat(40), "ready"),
+      entry("ERRORED1", "2".repeat(40), "error"),
+      entry("ERRORED2", "3".repeat(40), "error"),
+      entry("ERRORED2", "4".repeat(40), "missing"),
+      entry("GONEFILE", "5".repeat(40), "missing"),
+      entry("ODDTYPE1", "6".repeat(40), "unsupported"),
+    ],
+  });
+  const writeSavedExcludes = (tag: string) =>
+    writeFileSync(
+      join(indexDir, "zotero-tags.json"),
+      JSON.stringify({ excludeTag: { tag, itemKeys: ["EXCLUDE1"], fetchedAt: "2026-09-29T00:00:00.000Z" } }),
+    );
+  const keywordFactory = async () => ({
+    rebuildIndex: async () => {},
+    searchDocs: async () => [],
+    searchBlocks: async () => [],
+    isEmpty: async () => false,
+    close: async () => {},
+  });
+  const unusedQmd = async () => { throw new Error("qmd should not be opened"); };
+  const overrides = {
+    bibliographyJsonPath: join(root, "bibliography.json"),
+    attachmentsRoot: root,
+    dataDir,
+    excludeTag: "zotagent:exclude",
+  };
+  const itemKeys = ["INDEXED1", "EXCLUDE1", "ERRORED1", "ERRORED2", "GONEFILE", "ODDTYPE1", "NEWITEM1"];
+  const warningFor = async () => {
+    const result = await searchLiterature("anything", 10, overrides, unusedQmd, { itemKeys }, keywordFactory);
+    const warning = result.warnings?.find((w) => w.includes("matched items"));
+    assert.ok(warning, "a warning for the unsearchable items");
+    return warning;
+  };
+
+  const previous = process.env.ZOTAGENT_SYNC_ENABLED;
+  try {
+    process.env.ZOTAGENT_SYNC_ENABLED = "true";
+    writeSavedExcludes("zotagent:exclude");
+    assert.equal(
+      await warningFor(),
+      '6 of 7 matched items have no searchable text here: 1 tagged "zotagent:exclude", which sync skips; ' +
+        "2 failed extraction (see the sync log); 1 whose attachment file was missing at the last sync; " +
+        "1 with an unsupported attachment type; 1 not in the local index (no attachment file, or added " +
+        "since the last sync; `zotagent sync` picks up new ones).",
+    );
+
+    // A list saved under a tag name that is no longer configured says
+    // nothing about the current tag, so its items are not called excluded.
+    writeSavedExcludes("old:exclude");
+    const renamed = await warningFor();
+    assert.doesNotMatch(renamed, /tagged/u);
+    assert.match(renamed, /; 2 not in the local index/u);
+
+    process.env.ZOTAGENT_SYNC_ENABLED = "false";
+    const readOnly = await warningFor();
+    assert.match(readOnly, /they appear once the host that syncs this dataDir indexes them/u);
+    assert.doesNotMatch(readOnly, /`zotagent sync`/u);
+  } finally {
+    if (previous === undefined) delete process.env.ZOTAGENT_SYNC_ENABLED;
+    else process.env.ZOTAGENT_SYNC_ENABLED = previous;
+  }
 });
 
 test("searchLiterature keyword mode anchors long-block passages on the matched query", async () => {

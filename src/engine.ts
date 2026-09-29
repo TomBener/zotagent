@@ -11,7 +11,8 @@ import { keywordIndexIsCurrent, maskQuotedPhrases, openKeywordIndex, unmaskQuote
 import { mergeManifestsForItem } from "./manifest.js";
 import { openQmdClient, type QmdFactory } from "./qmd.js";
 import { getReadyEntries, readCatalogFile, summarizeCatalog } from "./state.js";
-import type { AppConfig, AttachmentManifest, CatalogEntry, ManifestBlock, SearchResultRow } from "./types.js";
+import { savedTagItemKeys, savedTagListsPath } from "./tag-lists.js";
+import type { AppConfig, AttachmentManifest, CatalogEntry, CatalogFile, ManifestBlock, SearchResultRow } from "./types.js";
 import { cleanText, compactHomePath, exists, overlap } from "./utils.js";
 import { toSimplified } from "./zh-convert.js";
 
@@ -587,6 +588,53 @@ function staleKeywordIndexWarning(config: AppConfig): string {
     : `${stale} The next \`zotagent sync\` rebuilds it.`;
 }
 
+// A tag or collection filter can match items that have no searchable text
+// here, and most of them are not a sync away: sync skips excluded items and
+// fails the same extraction again. So each item is put in the first bucket
+// that explains it, and only items the index has never seen get sync advice
+// — pointed at the syncing host when this one cannot sync.
+function unindexedItemsWarning(
+  unindexed: string[],
+  matched: number,
+  catalog: CatalogFile,
+  config: AppConfig,
+  indexDir: string,
+): string {
+  const excluded = new Set(savedTagItemKeys(savedTagListsPath(indexDir), "excludeTag", config.excludeTag));
+  const statuses = new Map<string, Set<CatalogEntry["extractStatus"]>>();
+  for (const entry of catalog.entries) {
+    const seen = statuses.get(entry.itemKey) ?? new Set();
+    seen.add(entry.extractStatus);
+    statuses.set(entry.itemKey, seen);
+  }
+  const counts = { excluded: 0, error: 0, missing: 0, unsupported: 0, unseen: 0 };
+  for (const itemKey of unindexed) {
+    const seen = statuses.get(itemKey);
+    if (excluded.has(itemKey)) counts.excluded += 1;
+    else if (seen?.has("error")) counts.error += 1;
+    else if (seen?.has("missing")) counts.missing += 1;
+    else if (seen?.has("unsupported")) counts.unsupported += 1;
+    else counts.unseen += 1;
+  }
+  const unseenAdvice =
+    config.syncEnabled === false
+      ? "they appear once the host that syncs this dataDir indexes them"
+      : "`zotagent sync` picks up new ones";
+  const parts = [
+    counts.excluded > 0 ? `${counts.excluded} tagged "${config.excludeTag}", which sync skips` : undefined,
+    counts.error > 0 ? `${counts.error} failed extraction (see the sync log)` : undefined,
+    counts.missing > 0 ? `${counts.missing} whose attachment file was missing at the last sync` : undefined,
+    counts.unsupported > 0 ? `${counts.unsupported} with an unsupported attachment type` : undefined,
+    counts.unseen > 0
+      ? `${counts.unseen} not in the local index (no attachment file, or added since the last sync; ${unseenAdvice})`
+      : undefined,
+  ].filter((part): part is string => part !== undefined);
+  return (
+    `${unindexed.length} of ${matched} matched item${matched === 1 ? "" : "s"} ` +
+    `${unindexed.length === 1 ? "has" : "have"} no searchable text here: ${parts.join("; ")}.`
+  );
+}
+
 export async function searchLiterature(
   query: string,
   limit: number,
@@ -627,11 +675,9 @@ export async function searchLiterature(
     : allReadyEntries;
   if (itemKeyFilter !== undefined) {
     const indexedItemKeys = new Set(readyEntries.map((entry) => entry.itemKey));
-    const missing = itemKeyFilter.size - indexedItemKeys.size;
-    if (missing > 0) {
-      warnings.push(
-        `${missing} of ${itemKeyFilter.size} matched item${itemKeyFilter.size === 1 ? "" : "s"} ${missing === 1 ? "is" : "are"} not indexed locally; run \`zotagent sync\` to include ${missing === 1 ? "it" : "them"}.`,
-      );
+    const unindexed = [...itemKeyFilter].filter((itemKey) => !indexedItemKeys.has(itemKey));
+    if (unindexed.length > 0) {
+      warnings.push(unindexedItemsWarning(unindexed, itemKeyFilter.size, catalog, config, paths.indexDir));
     }
   }
   if (readyEntries.length === 0) {
