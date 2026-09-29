@@ -158,7 +158,9 @@ Index
       successful lookup, and stops with ZOTERO_TAG_LOOKUP_FAILED only if there is none.
       sync refuses with MASS_REMOVAL_REFUSED when the bibliography resolves no attachments,
       or when more than 10% (and at least 50) of the indexed items vanished from it, because
-      the run would delete their artifacts.
+      the run would delete their artifacts. When the embedding model computes different
+      vectors than the stored ones (e.g. its cached file was replaced by another revision),
+      sync rebuilds every embedding.
 
   status
       Show attachment counts, local index paths, and qmd status.
@@ -177,7 +179,9 @@ Search
       term NEAR/<n> term, prefix*. Use NEAR/50 for proximity; NEAR(...) is not accepted.
       There is no -term exclusion: write "a NOT b".
       Chinese, Japanese, and Korean text is supported with accurate phrase matching.
-      --semantic uses qmd vector search with LLM query expansion (slower, heavier).
+      --semantic uses qmd vector search with LLM query expansion (slower, heavier). It fails
+      with SEMANTIC_INDEX_MISMATCH when this host's embedding model computes different vectors
+      than the ones the index was built with; every host sharing a dataDir needs the same file.
         --limit <n>                 Return up to n search results. Default: 10 (max 100) for search, 20 for
                                     metadata. --semantic draws on about 40 candidate documents, so it
                                     can return fewer.

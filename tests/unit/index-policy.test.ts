@@ -81,6 +81,7 @@ const QUIET_FACTS: IndexUpdateFacts = {
   orphanDocKeys: 0,
   allEntriesMatchPrevious: true,
   previousPendingEmbeddings: false,
+  storedEmbeddingsStale: false,
 };
 
 const updateRows: Array<{
@@ -132,6 +133,16 @@ const updateRows: Array<{
     name: "unsettled embeddings from the last run retry the embedding pass alone",
     facts: { previousPendingEmbeddings: true },
     want: { shortCircuit: false, keywordRebuild: false, embedOnly: true },
+  },
+  {
+    name: "stale stored vectors on a quiet sync rebuild the embeddings alone",
+    facts: { storedEmbeddingsStale: true },
+    want: { shortCircuit: false, keywordRebuild: false, embedOnly: true },
+  },
+  {
+    name: "stale stored vectors plus a real change run the full pass",
+    facts: { storedEmbeddingsStale: true, changedAttachments: 1 },
+    want: { shortCircuit: false, keywordRebuild: false, embedOnly: false },
   },
   {
     name: "unsettled embeddings plus a real change run the full pass",

@@ -4,9 +4,17 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { expandDocument, fullTextDocument, getDocumentBlocks, searchLiterature, searchWithinDocuments } from "../../src/engine.js";
+import {
+  SemanticIndexMismatchError,
+  expandDocument,
+  fullTextDocument,
+  getDocumentBlocks,
+  searchLiterature,
+  searchWithinDocuments,
+} from "../../src/engine.js";
 import { openKeywordIndex, type KeywordSearchOptions } from "../../src/keyword-db.js";
 import { resolveConfig } from "../../src/config.js";
+import { encodeEmbeddingProbe } from "../../src/qmd.js";
 import { writeCatalogFile } from "../../src/state.js";
 import type { AttachmentManifest, CatalogFile } from "../../src/types.js";
 import { MANIFEST_EXT, writeManifestFile } from "../../src/utils.js";
@@ -811,6 +819,74 @@ test("searchLiterature semantic mode anchors long-block passages on the best chu
   assert.equal(result.results.length, 1);
   assert.match(result.results[0]!.passage, /semantic-anchor/);
   assert.ok(result.results[0]!.charOffset < 20, `charOffset ${result.results[0]!.charOffset} should anchor near the best chunk`);
+});
+
+test("searchLiterature semantic mode refuses vectors built by a model that computes a different probe", async () => {
+  // A host that downloaded another revision of the embedding model file than
+  // the host that built the vectors gets query embeddings from an unrelated
+  // space: every score would be noise, so semantic search must not answer.
+  const root = mkdtempSync(join(tmpdir(), "zotagent-semantic-probe-"));
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  mkdirSync(indexDir, { recursive: true });
+  const docKey = "8".repeat(40);
+  writeManifest(join(dataDir, "manifests", docKey + MANIFEST_EXT), {
+    docKey,
+    itemKey: "ITEMPROB",
+    title: "Probe",
+    authors: [],
+    filePath: "/tmp/probe.pdf",
+    blocks: [{
+      blockIndex: 0, blockType: "paragraph", sectionPath: ["Body"], text: "semantic body",
+      charStart: 0, charEnd: 13, lineStart: 1, lineEnd: 1, isReferenceLike: false,
+    }],
+  });
+  const storedProbe = encodeEmbeddingProbe([1, 0, 0, 0]);
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    qmdEmbedProbe: storedProbe,
+    entries: [{
+      docKey, itemKey: "ITEMPROB", title: "Probe", authors: [], filePath: "/tmp/probe.pdf", fileExt: "pdf",
+      exists: true, supported: true, extractStatus: "ready", size: 1, mtimeMs: 1, sourceHash: "hash-probe",
+    }],
+  });
+  let localProbe = encodeEmbeddingProbe([0, 1, 0, 0]);
+  let searched = 0;
+  const qmdFactory = async () => ({
+    search: async () => {
+      searched += 1;
+      return [{ file: `qmd://library/${docKey}.md`, displayPath: `qmd://library/${docKey}.md`, bestChunk: "semantic body", bestChunkPos: 0, score: 1 }];
+    },
+    embeddingProbe: async () => localProbe,
+    close: async () => {},
+  });
+  const overrides = { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir };
+  const semantic = () => searchLiterature("query", 10, overrides, qmdFactory as never, { semantic: true });
+
+  const previous = process.env.ZOTAGENT_SYNC_ENABLED;
+  try {
+    process.env.ZOTAGENT_SYNC_ENABLED = "true";
+    await assert.rejects(semantic(), (error: unknown) =>
+      error instanceof SemanticIndexMismatchError &&
+      error.code === "SEMANTIC_INDEX_MISMATCH" &&
+      /probe similarity 0\.000/u.test(error.message) &&
+      /Run `zotagent sync` to rebuild the embeddings/u.test(error.message));
+    assert.equal(searched, 0, "the search never runs against vectors it cannot compare");
+
+    // A host that cannot sync is pointed at the model file of the host that does.
+    process.env.ZOTAGENT_SYNC_ENABLED = "false";
+    await assert.rejects(semantic(), (error: unknown) =>
+      error instanceof SemanticIndexMismatchError && /shasum -a 256 ~\/\.cache\/qmd\/models/u.test(error.message));
+
+    localProbe = storedProbe;
+    const matched = await semantic();
+    assert.equal(searched, 1);
+    assert.deepEqual(matched.results.map((row) => row.itemKey), ["ITEMPROB"]);
+  } finally {
+    if (previous === undefined) delete process.env.ZOTAGENT_SYNC_ENABLED;
+    else process.env.ZOTAGENT_SYNC_ENABLED = previous;
+  }
 });
 
 test("searchLiterature keyword mode bootstraps a missing keyword index from existing manifests", async () => {

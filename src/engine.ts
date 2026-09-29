@@ -9,7 +9,7 @@ import { findExactPhraseBlockRange, normalizeExactText } from "./exact.js";
 import { isBoilerplateLikeText, isTableOfContentsLikeText } from "./heuristics.js";
 import { keywordIndexIsCurrent, maskQuotedPhrases, openKeywordIndex, unmaskQuotedPhrases, type KeywordIndexFactory } from "./keyword-db.js";
 import { mergeManifestsForItem } from "./manifest.js";
-import { openQmdClient, type QmdFactory } from "./qmd.js";
+import { EMBED_PROBE_MIN_SIMILARITY, embeddingProbeSimilarity, openQmdClient, type QmdFactory } from "./qmd.js";
 import { getReadyEntries, readCatalogFile, summarizeCatalog } from "./state.js";
 import { savedTagItemKeys, savedTagListsPath } from "./tag-lists.js";
 import type { AppConfig, AttachmentManifest, CatalogEntry, CatalogFile, ManifestBlock, SearchResultRow } from "./types.js";
@@ -574,6 +574,25 @@ function renderManifestMarkdown(manifest: AttachmentManifest): string {
   return cleanText(snippets.join("\n\n"));
 }
 
+/** Semantic search refused because this host's embedding model computes
+ *  different vectors than the ones the index holds: every score would be
+ *  noise. */
+export class SemanticIndexMismatchError extends Error {
+  readonly code = "SEMANTIC_INDEX_MISMATCH";
+  constructor(similarity: number, config: AppConfig) {
+    super(
+      `The semantic index was embedded by a model that computes different vectors than this host's ` +
+        `(probe similarity ${similarity.toFixed(3)}), so semantic results would be random. ` +
+        (config.syncEnabled === false
+          ? "Use the same embedding model file as the host that syncs this dataDir: compare " +
+            "`shasum -a 256 ~/.cache/qmd/models/*.gguf` on both hosts and copy that host's file here. "
+          : "Run `zotagent sync` to rebuild the embeddings with this host's model. ") +
+        "Keyword search is unaffected.",
+    );
+    this.name = "SemanticIndexMismatchError";
+  }
+}
+
 // The index can be stale in either direction — built by an older zotagent
 // before an upgrade, or by a newer one on the host that syncs a shared
 // dataDir — so the warning names neither, and a host that cannot sync is
@@ -719,6 +738,12 @@ export async function searchLiterature(
   if (behavior.semantic) {
     const qmd = await qmdFactory(config);
     try {
+      // Vectors from another model share no space with this host's query
+      // embedding, so the check comes before a search that could only mislead.
+      if (catalog.qmdEmbedProbe) {
+        const similarity = embeddingProbeSimilarity(await qmd.embeddingProbe(), catalog.qmdEmbedProbe);
+        if (similarity < EMBED_PROBE_MIN_SIMILARITY) throw new SemanticIndexMismatchError(similarity, config);
+      }
       behavior.progress?.("qmd search: running semantic query");
       // Without reranking, qmd scores results by fused rank alone (1/rank),
       // so there is no relevance threshold to pass along; --min-score is

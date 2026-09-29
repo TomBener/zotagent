@@ -38,6 +38,46 @@ export function resolveQmdEmbedModel(config: Pick<AppConfig, "qmdEmbedModel">): 
   return config.qmdEmbedModel ?? QMD_DEFAULT_EMBED_MODEL_SENTINEL;
 }
 
+// qmd identifies stored vectors by the model URI string alone, so two
+// revisions of the same GGUF file look identical to it even when their vector
+// spaces share nothing. That happened when embeddinggemma-300M was revised
+// upstream on 2026-04-29 to include its dense layers: a host still holding
+// the April file embedded the library, a host that downloaded the file later
+// embedded queries, and semantic search compared vectors from two different
+// spaces, which gave random results. The embedding of this fixed text
+// identifies what the model actually computes. Sync records it with the
+// vectors, and every host compares its own before trusting them.
+const EMBED_PROBE_TEXT = "zotagent embedding probe: land, state, and society in modern China";
+
+// The same file and runtime reproduce the probe exactly, and the two
+// embeddinggemma revisions agree at about 0.0. A tolerance of 0.99 leaves room
+// for numeric noise across GPU backends.
+export const EMBED_PROBE_MIN_SIMILARITY = 0.99;
+
+export function encodeEmbeddingProbe(vector: ArrayLike<number>): string {
+  return Buffer.from(Float32Array.from(vector).buffer).toString("base64");
+}
+
+function decodeEmbeddingProbe(encoded: string): Float32Array {
+  return new Float32Array(Uint8Array.from(Buffer.from(encoded, "base64")).buffer);
+}
+
+/** Cosine similarity of two encoded probes; 0 when they cannot be compared. */
+export function embeddingProbeSimilarity(a: string, b: string): number {
+  const x = decodeEmbeddingProbe(a);
+  const y = decodeEmbeddingProbe(b);
+  if (x.length === 0 || x.length !== y.length) return 0;
+  let dot = 0;
+  let xx = 0;
+  let yy = 0;
+  for (let i = 0; i < x.length; i++) {
+    dot += x[i]! * y[i]!;
+    xx += x[i]! * x[i]!;
+    yy += y[i]! * y[i]!;
+  }
+  return xx > 0 && yy > 0 ? dot / Math.sqrt(xx * yy) : 0;
+}
+
 // content_vectors.model values qmd used to write before 2.5.0 switched to the
 // full hf: URI. When a user upgrades qmd, the new code can't see vectors stored
 // under the old alias and would otherwise re-embed the entire library. Append
@@ -142,6 +182,8 @@ export interface QmdClient {
   // in place. Safe to call every sync — the implementation skips when neither
   // the segment count nor the freelist exceeds the bloat threshold.
   compactDatabase(): Promise<QmdCompactResult>;
+  /** The encoded embedding of a fixed text: what this host's model computes. */
+  embeddingProbe(): Promise<string>;
   close(): Promise<void>;
 }
 
@@ -267,6 +309,11 @@ function wrapStore(store: QMDStore): QmdClient {
         ran: true,
         reason: `merged ${segments} fts segment(s); reclaimed ${freelist} free page(s)`,
       };
+    },
+    embeddingProbe: async () => {
+      const result = await store.internal.llm?.embed(EMBED_PROBE_TEXT);
+      if (!result) throw new Error("qmd could not embed the embedding-model probe text.");
+      return encodeEmbeddingProbe(result.embedding);
     },
     close: () => store.close(),
   };

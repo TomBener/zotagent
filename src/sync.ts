@@ -29,13 +29,20 @@ import { type FetchLike } from "./http.js";
 import { compareIndexerState, decideIndexUpdate, type IndexerState } from "./index-policy.js";
 import { fetchTopLevelItemKeysByTags, getReadConfig } from "./zotero-http.js";
 import { KEYWORD_INDEX_SCHEMA_VERSION, openKeywordIndex, type KeywordIndexFactory } from "./keyword-db.js";
-import { QMD_PACKAGE_VERSION, openQmdClient, resolveQmdEmbedModel, type QmdFactory } from "./qmd.js";
+import {
+  EMBED_PROBE_MIN_SIMILARITY,
+  QMD_PACKAGE_VERSION,
+  embeddingProbeSimilarity,
+  openQmdClient,
+  resolveQmdEmbedModel,
+  type QmdFactory,
+} from "./qmd.js";
 import { decideRemoval } from "./removal-guard.js";
 import { readSavedTagLists, savedTagListsPath, saveTagList, type TagKnob } from "./tag-lists.js";
 import { OPENCC_PACKAGE_VERSION } from "./zh-convert.js";
 import { mapEntriesByDocKey, readCatalogFile, summarizeCatalog, writeCatalogFile } from "./state.js";
 import { artifactsAcceptable, decideTriage } from "./triage.js";
-import type { AttachmentCatalogEntry, CatalogEntry, CatalogFile, SyncStats } from "./types.js";
+import type { AppConfig, AttachmentCatalogEntry, CatalogEntry, CatalogFile, SyncStats } from "./types.js";
 import {
   compactHomePath,
   ensureDir,
@@ -526,11 +533,13 @@ export function buildContext(entry: CatalogEntry): string {
 function writeProgressCatalog(
   path: string,
   entries: CatalogEntry[],
-  indexerState?: IndexerState,
+  indexerState: IndexerState | undefined,
+  embedProbe: string | undefined,
 ): void {
   // Persist the active embed model and indexer signature on progress writes
   // when they are known to match the qmd DB. During a model/signature change,
-  // callers keep the old state here until old vectors have been cleared.
+  // callers keep the old state here until old vectors have been cleared. The
+  // embedding probe follows the same rule: it describes the stored vectors.
   // `indexesCompletedAt` is deliberately omitted: the short-circuit path still
   // requires it, so a mid-flight write cannot be mistaken for a completed sync.
   // This overwrites the file, so callers must pass every entry the catalog
@@ -548,6 +557,7 @@ function writeProgressCatalog(
           indexerSignature: indexerState.indexerSignature,
         }
       : {}),
+    ...(embedProbe ? { qmdEmbedProbe: embedProbe } : {}),
   };
   writeCatalogFile(path, snapshot);
 }
@@ -583,6 +593,40 @@ function readyDocKeys(entries: CatalogEntry[]): Set<string> {
       .filter((entry) => entry.extractStatus === "ready")
       .map((entry) => entry.docKey),
   );
+}
+
+/** Embed the probe text with the model this run will embed with, and compare
+ *  it with the probe recorded for the stored vectors. `changed` means those
+ *  vectors came from a model that computes something else, so every one of
+ *  them must be rebuilt. Nothing is recorded yet on a catalog written before
+ *  probes existed; the stored vectors are then taken to match. */
+async function checkEmbeddingProbe(
+  qmdFactory: QmdFactory,
+  config: AppConfig,
+  recorded: string | undefined,
+  logger: SyncLogger,
+): Promise<{ probe: string; changed: boolean }> {
+  const qmd = await qmdFactory(config);
+  let probe: string;
+  try {
+    probe = await qmd.embeddingProbe();
+  } finally {
+    await qmd.close();
+  }
+  if (recorded === undefined) return { probe, changed: false };
+  const similarity = embeddingProbeSimilarity(probe, recorded);
+  if (similarity >= EMBED_PROBE_MIN_SIMILARITY) return { probe, changed: false };
+  logger.warn(
+    `The embedding model now computes different vectors than the stored ones (probe similarity ${similarity.toFixed(3)}), ` +
+      "usually because its cached model file was replaced by another revision. Rebuilding every embedding.",
+    { console: true },
+  );
+  return { probe, changed: true };
+}
+
+async function clearStaleEmbeddings(qmd: Awaited<ReturnType<QmdFactory>>, logger: SyncLogger): Promise<void> {
+  logger.info("Clearing existing qmd embeddings built by the previous model.", { console: true });
+  await qmd.clearEmbeddings();
 }
 
 /** Embed until qmd reports nothing left or a pass makes no progress, and
@@ -814,6 +858,7 @@ export async function runSync(
       },
     );
     let progressIndexerState: IndexerState | undefined = indexerComparison.progressIndexerState;
+    let progressEmbedProbe: string | undefined = previousCatalog.qmdEmbedProbe;
     const nextEntries: CatalogEntry[] = [];
     const changedAttachments: AttachmentCatalogEntry[] = [];
     // Populated only by recordReadyAttachment on successful extraction. We
@@ -1105,7 +1150,7 @@ export async function runSync(
       // did not change would leave its new artifacts behind an entry that
       // still claims the old ones are indexed, and the next run would
       // short-circuit past them.
-      writeProgressCatalog(paths.catalogPath, progressEntries(), progressIndexerState);
+      writeProgressCatalog(paths.catalogPath, progressEntries(), progressIndexerState, progressEmbedProbe);
     } else {
       logger.info("No extraction needed; reusing existing indexed files where possible.", { console: true });
     }
@@ -1122,7 +1167,7 @@ export async function runSync(
       }
     }
     if (nonPdfAttachments.length > 0) {
-      writeProgressCatalog(paths.catalogPath, progressEntries(), progressIndexerState);
+      writeProgressCatalog(paths.catalogPath, progressEntries(), progressIndexerState, progressEmbedProbe);
     }
 
     async function recordReadyAttachment(
@@ -1368,7 +1413,7 @@ export async function runSync(
             skippedAttachments: stats.skippedAttachments,
             note: "finished individual retries",
           });
-          writeProgressCatalog(paths.catalogPath, progressEntries(), progressIndexerState);
+          writeProgressCatalog(paths.catalogPath, progressEntries(), progressIndexerState, progressEmbedProbe);
           return;
         }
 
@@ -1407,7 +1452,7 @@ export async function runSync(
         skippedAttachments: stats.skippedAttachments,
         note: "batch finished",
       });
-      writeProgressCatalog(paths.catalogPath, progressEntries(), progressIndexerState);
+      writeProgressCatalog(paths.catalogPath, progressEntries(), progressIndexerState, progressEmbedProbe);
     };
 
     let nextBatchIndex = 0;
@@ -1451,7 +1496,7 @@ export async function runSync(
       generatedAt: new Date().toISOString(),
       entries: nextEntries,
     };
-    writeProgressCatalog(paths.catalogPath, nextEntries, progressIndexerState);
+    writeProgressCatalog(paths.catalogPath, nextEntries, progressIndexerState, progressEmbedProbe);
 
     const readyEntries = nextEntries.filter((entry) => entry.extractStatus === "ready");
     const previousReadyDocKeys = readyDocKeys(previousCatalog.entries);
@@ -1467,6 +1512,16 @@ export async function runSync(
       const prev = previousByDocKey.get(entry.docKey);
       return prev === undefined || prev.extractStatus !== "ready" || !isEntryContentUnchanged(prev, entry);
     });
+    // Checked before the short-circuit: a replaced model file changes
+    // nothing else, and a quiet sync must still rebuild the vectors it made
+    // unsearchable.
+    const probeCheck =
+      readyEntries.length > 0
+        ? await checkEmbeddingProbe(qmdFactory, config, previousCatalog.qmdEmbedProbe, logger)
+        : undefined;
+    // The recorded probe describes the stored vectors, so a changed probe
+    // replaces it only once they are cleared.
+    if (!probeCheck?.changed) progressEmbedProbe = probeCheck?.probe;
     const indexUpdate = decideIndexUpdate(indexerComparison, {
       previousCompleted: previousCatalogCompleted,
       changedAttachments: changedAttachments.length,
@@ -1477,6 +1532,7 @@ export async function runSync(
         return prev !== undefined && isEntryContentUnchanged(prev, entry);
       }),
       previousPendingEmbeddings: (previousCatalog.pendingEmbeddings ?? 0) > 0,
+      storedEmbeddingsStale: probeCheck?.changed === true,
     });
     let pendingEmbeddings = 0;
 
@@ -1487,11 +1543,18 @@ export async function runSync(
       );
     } else if (indexUpdate.embedOnly) {
       logger.info(
-        `No catalog changes since last completed sync; retrying the ${previousCatalog.pendingEmbeddings} document(s) left unembedded.`,
+        probeCheck?.changed
+          ? "No catalog changes since last completed sync; rebuilding the embeddings alone."
+          : `No catalog changes since last completed sync; retrying the ${previousCatalog.pendingEmbeddings} document(s) left unembedded.`,
         { console: true },
       );
       const qmd = await qmdFactory(config);
       try {
+        if (probeCheck?.changed) {
+          await clearStaleEmbeddings(qmd, logger);
+          progressEmbedProbe = probeCheck.probe;
+          writeProgressCatalog(paths.catalogPath, nextEntries, progressIndexerState, progressEmbedProbe);
+        }
         pendingEmbeddings = await embedQmdUntilSettled(qmd, logger);
       } finally {
         await qmd.close();
@@ -1564,7 +1627,12 @@ export async function runSync(
           });
           await qmd.clearEmbeddings();
           progressIndexerState = indexerComparison.current;
-          writeProgressCatalog(paths.catalogPath, nextEntries, progressIndexerState);
+          progressEmbedProbe = probeCheck?.probe;
+          writeProgressCatalog(paths.catalogPath, nextEntries, progressIndexerState, progressEmbedProbe);
+        } else if (probeCheck?.changed) {
+          await clearStaleEmbeddings(qmd, logger);
+          progressEmbedProbe = probeCheck.probe;
+          writeProgressCatalog(paths.catalogPath, nextEntries, progressIndexerState, progressEmbedProbe);
         }
         if (readyEntries.length > 0) {
           pendingEmbeddings = await embedQmdUntilSettled(qmd, logger);
@@ -1609,6 +1677,7 @@ export async function runSync(
       indexedQmdEmbedModel: indexerComparison.current.indexedQmdEmbedModel,
       indexerSignature: indexerComparison.current.indexerSignature,
       ...(pendingEmbeddings > 0 ? { pendingEmbeddings } : {}),
+      ...(progressEmbedProbe ? { qmdEmbedProbe: progressEmbedProbe } : {}),
     });
 
     const finalCounts = summarizeCatalog(nextCatalog);

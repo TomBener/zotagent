@@ -80,6 +80,10 @@ export interface IndexUpdateFacts {
   /** The previous run completed with documents qmd could not finish
    *  embedding; the semantic pass must run again even with nothing changed. */
   previousPendingEmbeddings: boolean;
+  /** The embedding model now computes a different probe than the one
+   *  recorded with the stored vectors (its file was replaced): every vector
+   *  must be rebuilt, even with nothing else changed. */
+  storedEmbeddingsStale: boolean;
 }
 
 export interface IndexUpdateDecision {
@@ -90,8 +94,8 @@ export interface IndexUpdateDecision {
    *  the previous sync never completed, or the indexer implementation
    *  changed out from under the stored rows. */
   keywordRebuild: boolean;
-  /** Nothing changed except that the last run left documents unembedded:
-   *  retry the embedding pass alone. Rescanning the corpus and updating the
+  /** Nothing changed except that the last run left documents unembedded,
+   *  or that the stored vectors are stale: run the embedding pass alone. Rescanning the corpus and updating the
    *  keyword index would be no-ops, and on every run a permanently
    *  unembeddable document would otherwise cost a full qmd rescan. */
   embedOnly: boolean;
@@ -110,9 +114,10 @@ export function decideIndexUpdate(
     facts.staleDocKeys === 0 &&
     facts.orphanDocKeys === 0 &&
     facts.allEntriesMatchPrevious;
+  const embeddingsDue = facts.previousPendingEmbeddings || facts.storedEmbeddingsStale;
   return {
-    shortCircuit: nothingChanged && !facts.previousPendingEmbeddings,
+    shortCircuit: nothingChanged && !embeddingsDue,
     keywordRebuild,
-    embedOnly: nothingChanged && facts.previousPendingEmbeddings,
+    embedOnly: nothingChanged && embeddingsDue,
   };
 }

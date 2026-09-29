@@ -24,6 +24,10 @@ import { openFsArtifactStore, type ArtifactStore } from "../../src/artifact-stor
 import { readCatalogFile, writeCatalogFile } from "../../src/state.js";
 import type { AttachmentCatalogEntry, CatalogFile, ManifestBlock } from "../../src/types.js";
 import { MANIFEST_EXT, readManifestFile, sha1, writeManifestFile } from "../../src/utils.js";
+import { encodeEmbeddingProbe } from "../../src/qmd.js";
+
+// What every fake qmd client reports its model computes.
+const TEST_EMBED_PROBE = encodeEmbeddingProbe([1, 0, 0, 0]);
 
 // Keep the developer's real ~/.zotagent/config.json out of every runSync: with
 // Zotero credentials there, each run would query the live API for the tag
@@ -222,6 +226,7 @@ test("runSync relays SIGINT instead of swallowing it", () => {
         cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
         migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
         adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+        embeddingProbe: async () => TEST_EMBED_PROBE,
         compactDatabase: async () => ({ ran: false, reason: "" }),
         close: async () => {},
       });
@@ -296,6 +301,7 @@ test("runSync does not swallow uncaught exceptions", () => {
         cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
         migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
         adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+        embeddingProbe: async () => TEST_EMBED_PROBE,
         compactDatabase: async () => ({ ran: false, reason: "" }),
         close: async () => {},
       });
@@ -433,6 +439,7 @@ test("runSync skips unchanged ready pdfs and refreshes qmd contexts", async () =
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    embeddingProbe: async () => TEST_EMBED_PROBE,
     compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {
       calls.closed += 1;
@@ -453,7 +460,8 @@ test("runSync skips unchanged ready pdfs and refreshes qmd contexts", async () =
   assert.equal(calls.embed, 1);
   assert.equal(calls.removed, 1);
   assert.equal(calls.added, 1);
-  assert.equal(calls.closed, 1);
+  // The embedding-probe check opens and closes a client of its own.
+  assert.equal(calls.closed, 2);
 
   const logBody = readFileSync(result.logPath, "utf-8");
   assert.match(logBody, /## Skipped Files/);
@@ -546,6 +554,7 @@ test("runSync re-extracts vertical PDFs whose cached manifest predates verticalT
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    embeddingProbe: async () => TEST_EMBED_PROBE,
     compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
@@ -693,6 +702,7 @@ test("runSync re-extraction of a vertical PDF with unchanged sourceHash still up
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    embeddingProbe: async () => TEST_EMBED_PROBE,
     compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
@@ -856,6 +866,7 @@ test("runSync preserves previous artifacts when a vertical-PDF re-extraction fai
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    embeddingProbe: async () => TEST_EMBED_PROBE,
     compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
@@ -1014,6 +1025,7 @@ test("runSync errors a failed re-extraction when the previous normalized.md is m
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    embeddingProbe: async () => TEST_EMBED_PROBE,
     compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
@@ -1089,6 +1101,7 @@ test("runSync re-extracts when the Zotero vertical-text tag is added between syn
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    embeddingProbe: async () => TEST_EMBED_PROBE,
     compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
@@ -1239,6 +1252,7 @@ test("runSync marks the entry as error when a same-size/same-mtime replacement c
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    embeddingProbe: async () => TEST_EMBED_PROBE,
     compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
@@ -1361,6 +1375,7 @@ test("runSync re-extracts a renamed vertical PDF whose old manifest predates ver
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    embeddingProbe: async () => TEST_EMBED_PROBE,
     compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
@@ -1494,6 +1509,7 @@ test("runSync reuses unchanged horizontal PDFs without re-extraction", async () 
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    embeddingProbe: async () => TEST_EMBED_PROBE,
     compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
@@ -1614,6 +1630,7 @@ test("runSync short-circuits both index rebuilds when the catalog is identical t
       cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
       migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
       adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+      embeddingProbe: async () => TEST_EMBED_PROBE,
       compactDatabase: async () => ({ ran: false, reason: "" }),
       close: async () => {},
     };
@@ -1645,7 +1662,9 @@ test("runSync short-circuits both index rebuilds when the catalog is identical t
   );
 
   assert.equal(result.stats.skippedAttachments, 1);
-  assert.equal(qmdCalls.opened, 0);
+  // Only the embedding-probe check opens qmd: a replaced model file changes
+  // nothing else, so even a quiet sync has to look.
+  assert.equal(qmdCalls.opened, 1);
   assert.equal(qmdCalls.update, 0);
   assert.equal(qmdCalls.listContexts, 0);
   assert.equal(keywordCalls.opened, 0);
@@ -1658,6 +1677,98 @@ test("runSync short-circuits both index rebuilds when the catalog is identical t
   assert.ok(persisted.indexesCompletedAt, "expected completion marker to be persisted");
   assert.equal(persisted.indexedQmdEmbedModel, "fake-embed-model");
   assert.equal(persisted.indexerSignature, buildIndexerSignature("fake-embed-model"));
+  // A catalog written before probes existed gets one on its next quiet sync.
+  assert.equal(persisted.qmdEmbedProbe, TEST_EMBED_PROBE);
+});
+
+test("runSync rebuilds every embedding when the model's probe no longer matches the stored vectors", async () => {
+  // A replaced model file (e.g. an upstream GGUF revision) leaves the catalog
+  // and every stored vector untouched, so the quiet sync that follows must
+  // still rebuild the embeddings it made unsearchable.
+  const root = mkdtempSync(join(tmpdir(), "zotagent-sync-embed-probe-"));
+  const attachmentsRoot = join(root, "attachments");
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  mkdirSync(join(attachmentsRoot, "papers"), { recursive: true });
+  mkdirSync(indexDir, { recursive: true });
+  const pdfPath = join(attachmentsRoot, "papers", "paper.pdf");
+  writeFileSync(pdfPath, "pdf");
+  const pdfStat = statSync(pdfPath);
+  const docKey = sha1("papers/paper.pdf");
+  openFsArtifactStore({ normalizedDir: join(dataDir, "normalized"), manifestsDir: join(dataDir, "manifests") })
+    .publish({ markdown: "Body", manifest: { docKey, itemKey: "ITEM1", title: "Paper", authors: [], filePath: pdfPath, blocks: [trivialBlock()] } });
+  const bibliographyPath = join(root, "bibliography.json");
+  writeFileSync(bibliographyPath, JSON.stringify([{ id: "cite", title: "Paper", file: pdfPath, "zotero-item-key": "ITEM1" }]));
+  const catalogPath = join(indexDir, "catalog.json");
+  const oldProbe = encodeEmbeddingProbe([0, 1, 0, 0]);
+  writeCatalogFile(catalogPath, {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    indexesCompletedAt: new Date().toISOString(),
+    indexedQmdEmbedModel: "fake-embed-model",
+    indexerSignature: buildIndexerSignature("fake-embed-model"),
+    qmdEmbedProbe: oldProbe,
+    entries: [{
+      docKey, itemKey: "ITEM1", citationKey: "cite", title: "Paper", authors: [], filePath: pdfPath,
+      fileExt: "pdf", exists: true, supported: true, extractStatus: "ready", size: pdfStat.size,
+      mtimeMs: Math.trunc(pdfStat.mtimeMs), sourceHash: "existinghash", lastIndexedAt: new Date().toISOString(),
+    }],
+  });
+
+  let needsEmbedding = 0;
+  const calls = { clear: 0, embed: 0, update: 0 };
+  const probeOnDisk: { atClear?: string; atEmbed?: string } = {};
+  const qmdFactory = async () => ({
+    search: async () => [], searchLex: async () => [], update: async () => { calls.update += 1; return {}; },
+    embed: async () => {
+      calls.embed += 1;
+      probeOnDisk.atEmbed = readCatalogFile(catalogPath).qmdEmbedProbe;
+      needsEmbedding = 0;
+      return {};
+    },
+    getStatus: async () => ({ totalDocuments: 1, needsEmbedding, hasVectorIndex: true, collections: [] }),
+    listContexts: async () => [], addContext: async () => true, removeContext: async () => true,
+    clearEmbeddings: async () => {
+      calls.clear += 1;
+      probeOnDisk.atClear = readCatalogFile(catalogPath).qmdEmbedProbe;
+      needsEmbedding = 1;
+    },
+    cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
+    migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
+    adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    embeddingProbe: async () => TEST_EMBED_PROBE,
+    compactDatabase: async () => ({ ran: false, reason: "" }),
+    close: async () => {},
+  });
+  const keywordFactory = async () => ({
+    rebuildIndex: async () => ({ skippedDocKeys: [] }),
+    updateIndex: async () => ({ skippedDocKeys: [] }),
+    vacuum: async () => {},
+    searchDocs: async () => [], searchBlocks: async () => [], isEmpty: async () => false, close: async () => {},
+  });
+  const sync = () => runSync(
+    { bibliographyJsonPath: bibliographyPath, attachmentsRoot, dataDir, qmdEmbedModel: "fake-embed-model" },
+    qmdFactory as never,
+    keywordFactory as never,
+  );
+
+  const result = await sync();
+  assert.equal(calls.clear, 1);
+  assert.equal(calls.embed, 1);
+  assert.equal(calls.update, 0, "the rebuild embeds only; it does not rescan the corpus");
+  // The recorded probe describes the stored vectors: it changes only once the
+  // old ones are gone, so an interrupted rebuild cannot vouch for them.
+  assert.equal(probeOnDisk.atClear, oldProbe);
+  assert.equal(probeOnDisk.atEmbed, TEST_EMBED_PROBE);
+  const persisted = readCatalogFile(catalogPath);
+  assert.equal(persisted.qmdEmbedProbe, TEST_EMBED_PROBE);
+  assert.ok(persisted.indexesCompletedAt);
+  assert.match(readFileSync(result.logPath, "utf-8"), /computes different vectors than the stored ones \(probe similarity 0\.000\)/);
+
+  // With the probe matching again, the next quiet sync short-circuits.
+  await sync();
+  assert.equal(calls.clear, 1);
+  assert.equal(calls.embed, 1);
 });
 
 test("runSync retries embeddings that stalled instead of short-circuiting past them", async () => {
@@ -1701,6 +1812,7 @@ test("runSync retries embeddings that stalled instead of short-circuiting past t
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    embeddingProbe: async () => TEST_EMBED_PROBE,
     compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
@@ -1785,6 +1897,7 @@ test("runSync drops the completion marker before publishing any re-extraction", 
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    embeddingProbe: async () => TEST_EMBED_PROBE,
     compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
@@ -1922,6 +2035,7 @@ test("runSync incrementally updates the keyword index after a completed sync", a
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    embeddingProbe: async () => TEST_EMBED_PROBE,
     compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
@@ -2090,6 +2204,7 @@ test("runSync rebuilds indexes when the qmd embedding model changes since last s
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    embeddingProbe: async () => TEST_EMBED_PROBE,
     compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
@@ -2210,6 +2325,7 @@ test("runSync rebuilds indexes but preserves embeddings when only the indexer si
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    embeddingProbe: async () => TEST_EMBED_PROBE,
     compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
@@ -2339,6 +2455,7 @@ test("runSync keeps old indexer state in progress catalog until changed qmd embe
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    embeddingProbe: async () => TEST_EMBED_PROBE,
     compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
@@ -2462,6 +2579,7 @@ test("runSync does not force re-embed when resuming an interrupted sync with mat
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    embeddingProbe: async () => TEST_EMBED_PROBE,
     compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
@@ -2581,6 +2699,7 @@ test("runSync migrates cached artifacts when an attachment is renamed inside att
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    embeddingProbe: async () => TEST_EMBED_PROBE,
     compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
@@ -2725,6 +2844,7 @@ test("runSync preserves verticalText when migrating a renamed vertical PDF", asy
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    embeddingProbe: async () => TEST_EMBED_PROBE,
     compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
@@ -2840,6 +2960,7 @@ test("runSync re-extracts renamed attachments when cached artifacts are not reus
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    embeddingProbe: async () => TEST_EMBED_PROBE,
     compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
@@ -2968,6 +3089,7 @@ test("runSync re-extracts renamed attachments when rename candidates are ambiguo
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    embeddingProbe: async () => TEST_EMBED_PROBE,
     compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
@@ -3061,6 +3183,7 @@ test("runSync asks qmd to clean orphaned residue on the happy path", async () =>
     },
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    embeddingProbe: async () => TEST_EMBED_PROBE,
     compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
@@ -3186,6 +3309,7 @@ test("runSync skips qmd context writes when existing contexts already match", as
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    embeddingProbe: async () => TEST_EMBED_PROBE,
     compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
@@ -3264,6 +3388,7 @@ test("runSync resumes from existing normalized and manifest outputs when catalog
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    embeddingProbe: async () => TEST_EMBED_PROBE,
     compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
@@ -3370,6 +3495,7 @@ test("runSync re-extracts attachments when fallback normalized output is empty",
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    embeddingProbe: async () => TEST_EMBED_PROBE,
     compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
@@ -3502,6 +3628,7 @@ test("runSync re-extracts when the source file changed even if stale cache match
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    embeddingProbe: async () => TEST_EMBED_PROBE,
     compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
@@ -3630,6 +3757,7 @@ test("runSync re-extracts ready entries whose cached manifest has zero blocks", 
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    embeddingProbe: async () => TEST_EMBED_PROBE,
     compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
@@ -3779,6 +3907,7 @@ test("runSync keeps embedding until qmd no longer reports pending documents", as
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    embeddingProbe: async () => TEST_EMBED_PROBE,
     compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
@@ -3833,6 +3962,7 @@ test("runSync marks empty txt extraction output as error", async () => {
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    embeddingProbe: async () => TEST_EMBED_PROBE,
     compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
@@ -3895,6 +4025,7 @@ test("runSync indexes txt attachments without Java extraction", async () => {
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    embeddingProbe: async () => TEST_EMBED_PROBE,
     compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
@@ -4036,6 +4167,7 @@ test("runSync reuses a ready index when bibliography paths come from another mac
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    embeddingProbe: async () => TEST_EMBED_PROBE,
     compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
@@ -4257,6 +4389,7 @@ test("runSync prunes cached outputs when attachment disappears from the current 
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    embeddingProbe: async () => TEST_EMBED_PROBE,
     compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
@@ -4431,6 +4564,7 @@ test("runSync falls back to the saved tag list when a later lookup fails", async
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    embeddingProbe: async () => TEST_EMBED_PROBE,
     compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
@@ -4541,6 +4675,7 @@ test("runSync reuses cached outputs after an attachment temporarily disappears",
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    embeddingProbe: async () => TEST_EMBED_PROBE,
     compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
@@ -4649,6 +4784,7 @@ test("runSync skips unchanged previous extraction errors by default", async () =
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    embeddingProbe: async () => TEST_EMBED_PROBE,
     compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
@@ -4749,6 +4885,7 @@ test("runSync retries unchanged previous errors when requested and passes custom
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    embeddingProbe: async () => TEST_EMBED_PROBE,
     compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
@@ -4853,6 +4990,7 @@ test("runSync extracts book attachments in single-file batches by default", asyn
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    embeddingProbe: async () => TEST_EMBED_PROBE,
     compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
@@ -4947,6 +5085,7 @@ test("runSync honors explicit PDF batch size", async () => {
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    embeddingProbe: async () => TEST_EMBED_PROBE,
     compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
@@ -5040,6 +5179,7 @@ test("runSync records extraction failures per attachment and continues indexing 
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    embeddingProbe: async () => TEST_EMBED_PROBE,
     compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
@@ -5159,6 +5299,7 @@ test("runSync retries a timed out batch one file at a time", async () => {
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    embeddingProbe: async () => TEST_EMBED_PROBE,
     compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
@@ -5296,6 +5437,7 @@ function stageRenameScenario(prefix: string) {
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    embeddingProbe: async () => TEST_EMBED_PROBE,
     compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
@@ -5625,6 +5767,7 @@ test("runSync reuses artifacts when a re-download changes mtime but not bytes, a
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    embeddingProbe: async () => TEST_EMBED_PROBE,
     compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
@@ -5788,6 +5931,7 @@ test("runSync progress catalog keeps the previous entries of attachments still a
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    embeddingProbe: async () => TEST_EMBED_PROBE,
     compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });
@@ -5957,6 +6101,7 @@ test("runSync rolls back a failed re-extraction whose source only changed mtime,
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
+    embeddingProbe: async () => TEST_EMBED_PROBE,
     compactDatabase: async () => ({ ran: false, reason: "" }),
     close: async () => {},
   });

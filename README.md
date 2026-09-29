@@ -120,7 +120,7 @@ Any of these can also come from environment variables (`ZOTAGENT_*` or unprefixe
 > ```
 
 > [!TIP]
-> **Read-only hosts:** If you share `dataDir` across machines (e.g. via iCloud) but keep the attachment files only on the machine that runs `sync`, set `"syncEnabled": false` in the other hosts' `~/.zotagent/config.json` (or export `ZOTAGENT_SYNC_ENABLED=false`; `0`, `no`, and `off` work too, and a value that cannot be read also disables sync, with `SYNC_DISABLED` naming that value). `sync` on those hosts fails fast with `SYNC_DISABLED` before touching the index — without this guard, a misfired `sync` would see every attachment as missing and wipe the keyword / semantic indexes. All local lookup commands (`search`, `blocks`, `expand`, `fulltext`, `metadata`) still work.
+> **Read-only hosts:** If you share `dataDir` across machines (e.g. via iCloud) but keep the attachment files only on the machine that runs `sync`, set `"syncEnabled": false` in the other hosts' `~/.zotagent/config.json` (or export `ZOTAGENT_SYNC_ENABLED=false`; `0`, `no`, and `off` work too, and a value that cannot be read also disables sync, with `SYNC_DISABLED` naming that value). `sync` on those hosts fails fast with `SYNC_DISABLED` before touching the index — without this guard, a misfired `sync` would see every attachment as missing and wipe the keyword / semantic indexes. All local lookup commands (`search`, `blocks`, `expand`, `fulltext`, `metadata`) still work. `search --semantic` also needs the same embedding model file as the host that syncs: qmd caches it under `~/.cache/qmd/models/`, and a host that downloaded another revision of it (embeddinggemma-300M was revised upstream on 2026-04-29) computes query vectors that share no space with the stored ones. Such a host fails with `SEMANTIC_INDEX_MISMATCH` instead of returning random results; copy the syncing host's file over (compare `shasum -a 256`).
 
 ## Usage
 
@@ -162,7 +162,9 @@ Index
       successful lookup, and stops with ZOTERO_TAG_LOOKUP_FAILED only if there is none.
       sync refuses with MASS_REMOVAL_REFUSED when the bibliography resolves no attachments,
       or when more than 10% (and at least 50) of the indexed items vanished from it, because
-      the run would delete their artifacts.
+      the run would delete their artifacts. When the embedding model computes different
+      vectors than the stored ones (e.g. its cached file was replaced by another revision),
+      sync rebuilds every embedding.
 
   status
       Show attachment counts, local index paths, and qmd status.
@@ -181,7 +183,9 @@ Search
       term NEAR/<n> term, prefix*. Use NEAR/50 for proximity; NEAR(...) is not accepted.
       There is no -term exclusion: write "a NOT b".
       Chinese, Japanese, and Korean text is supported with accurate phrase matching.
-      --semantic uses qmd vector search with LLM query expansion (slower, heavier).
+      --semantic uses qmd vector search with LLM query expansion (slower, heavier). It fails
+      with SEMANTIC_INDEX_MISMATCH when this host's embedding model computes different vectors
+      than the ones the index was built with; every host sharing a dataDir needs the same file.
         --limit <n>                 Return up to n search results. Default: 10 (max 100) for search, 20 for
                                     metadata. --semantic draws on about 40 candidate documents, so it
                                     can return fewer.

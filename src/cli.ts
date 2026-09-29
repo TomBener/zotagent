@@ -7,7 +7,15 @@ import { BOOLEAN_FLAGS, COMMAND_FLAG_ALLOWLIST, GLOBAL_BOOLEAN_FLAGS, GLOBAL_OVE
 import { ConfigCommandError, runConfigCommand } from "./config-command.js";
 import { getDataPaths, resolveConfig, type ConfigOverrides } from "./config.js";
 import { diagnoseExtraction } from "./diagnose.js";
-import { expandDocument, fullTextDocument, getDocumentBlocks, getIndexStatus, searchLiterature, searchWithinDocuments } from "./engine.js";
+import {
+  SemanticIndexMismatchError,
+  expandDocument,
+  fullTextDocument,
+  getDocumentBlocks,
+  getIndexStatus,
+  searchLiterature,
+  searchWithinDocuments,
+} from "./engine.js";
 import { emitError, emitOk } from "./json.js";
 import { JsonInputError } from "./json-input.js";
 import { KeywordQuerySyntaxError } from "./keyword-db.js";
@@ -1090,7 +1098,7 @@ async function main(): Promise<void> {
       emitError(error.code, error.message, error.details);
       return;
     }
-    if (error instanceof SyncRefusedError) {
+    if (error instanceof SyncRefusedError || error instanceof SemanticIndexMismatchError) {
       emitError(error.code, error.message);
       return;
     }

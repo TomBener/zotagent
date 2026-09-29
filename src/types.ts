@@ -154,6 +154,10 @@ export interface CatalogFile {
   // embedding stopped making progress. Present only when non-zero; it keeps
   // the next sync from short-circuiting so the embedding pass is retried.
   pendingEmbeddings?: number;
+  // Encoded embedding of qmd.ts's fixed probe text from the model that built
+  // the stored vectors. A host whose model computes a different probe cannot
+  // search those vectors, and sync rebuilds them.
+  qmdEmbedProbe?: string;
 }
 
 export interface CatalogCounts {
