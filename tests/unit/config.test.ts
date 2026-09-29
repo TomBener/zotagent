@@ -115,11 +115,16 @@ test("resolveConfig fails closed on an unreadable syncEnabled", () => {
   const fromFile = withConfigFile({ syncEnabled: "nope" }, NO_SYNC_ENV, () => resolveConfig());
   assert.equal(fromFile.syncEnabled, false);
   assert.match(fromFile.warnings.join("\n"), /syncEnabled.*Treating sync as disabled/u);
+  assert.match(fromFile.syncDisabledReason ?? "", /`syncEnabled` in ~\/\.zotagent\/config\.json is "nope"/u);
 
   const fromEnv = withConfigFile({ syncEnabled: true }, { ZOTAGENT_SYNC_ENABLED: "disable" }, () => resolveConfig());
   assert.equal(fromEnv.syncEnabled, false);
   assert.match(fromEnv.warnings.join("\n"), /ZOTAGENT_SYNC_ENABLED.*Treating sync as disabled/u);
+  assert.match(fromEnv.syncDisabledReason ?? "", /ZOTAGENT_SYNC_ENABLED is 'disable'/u);
 
+  // An explicit off carries no reason: SYNC_DISABLED keeps its plain message.
   const offEnv = withConfigFile({ syncEnabled: true }, { ZOTAGENT_SYNC_ENABLED: "off" }, () => resolveConfig());
   assert.equal(offEnv.syncEnabled, false);
+  assert.equal(offEnv.syncDisabledReason, undefined);
+  assert.equal(withConfigFile({ syncEnabled: false }, NO_SYNC_ENV, () => resolveConfig()).syncDisabledReason, undefined);
 });

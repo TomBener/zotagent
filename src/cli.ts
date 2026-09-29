@@ -334,7 +334,9 @@ async function main(): Promise<void> {
         if (syncConfig.syncEnabled === false) {
           emitError(
             "SYNC_DISABLED",
-            "sync is disabled on this host. Set `syncEnabled` to true in ~/.zotagent/config.json (or ZOTAGENT_SYNC_ENABLED=true) to enable.",
+            syncConfig.syncDisabledReason
+              ? `sync is disabled on this host: ${syncConfig.syncDisabledReason}`
+              : "sync is disabled on this host. Set `syncEnabled` to true in ~/.zotagent/config.json (or ZOTAGENT_SYNC_ENABLED=true) to enable.",
           );
           return;
         }

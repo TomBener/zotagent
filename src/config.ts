@@ -65,8 +65,14 @@ const FALSE_WORDS = new Set(["false", "0", "no", "off"]);
 // syncEnabled is the guard README tells read-only hosts to rely on, so a
 // value that cannot be read fails closed: someone who set it was most likely
 // trying to turn sync off, and running sync on such a host would see every
-// attachment as missing.
-function resolveSyncEnabled(raw: unknown, envValue: string | undefined, warnings: string[]): boolean | undefined {
+// attachment as missing. The refusal then names the value that closed it —
+// SYNC_DISABLED otherwise reads like an explicit false and sends the user
+// looking for a setting they never wrote.
+function resolveSyncEnabled(
+  raw: unknown,
+  envValue: string | undefined,
+  warnings: string[],
+): { syncEnabled: boolean | undefined; syncDisabledReason?: string } {
   const parse = (value: string): boolean | undefined => {
     const normalized = value.trim().toLowerCase();
     if (TRUE_WORDS.has(normalized)) return true;
@@ -75,21 +81,31 @@ function resolveSyncEnabled(raw: unknown, envValue: string | undefined, warnings
   };
   if (envValue !== undefined && envValue !== "") {
     const parsed = parse(envValue);
-    if (parsed !== undefined) return parsed;
+    if (parsed !== undefined) return { syncEnabled: parsed };
     warnings.push(
       `Environment variable 'ZOTAGENT_SYNC_ENABLED' must be true/false (or 1/0, yes/no, on/off); got '${envValue}'. Treating sync as disabled.`,
     );
-    return false;
+    return {
+      syncEnabled: false,
+      syncDisabledReason:
+        `ZOTAGENT_SYNC_ENABLED is '${envValue}', which cannot be read as true or false. Set it to true ` +
+        "(or unset it to use `syncEnabled` from ~/.zotagent/config.json) to enable sync.",
+    };
   }
-  if (raw === undefined || raw === null) return undefined;
-  if (typeof raw === "boolean") return raw;
-  if (raw === 1 || raw === 0) return raw === 1;
+  if (raw === undefined || raw === null) return { syncEnabled: undefined };
+  if (typeof raw === "boolean") return { syncEnabled: raw };
+  if (raw === 1 || raw === 0) return { syncEnabled: raw === 1 };
   const parsed = typeof raw === "string" ? parse(raw) : undefined;
-  if (parsed !== undefined) return parsed;
+  if (parsed !== undefined) return { syncEnabled: parsed };
   warnings.push(
     `Config field 'syncEnabled' must be true or false; got ${JSON.stringify(raw)}. Treating sync as disabled.`,
   );
-  return false;
+  return {
+    syncEnabled: false,
+    syncDisabledReason:
+      `\`syncEnabled\` in ~/.zotagent/config.json is ${JSON.stringify(raw)}, which cannot be read as true ` +
+      "or false. Set it to true to enable sync.",
+  };
 }
 
 // Trailing slashes are stripped so endpoint paths can be appended verbatim.
@@ -217,7 +233,7 @@ export function resolveConfig(overrides: ConfigOverrides = {}): AppConfig {
         ),
       warnings,
     ),
-    syncEnabled: resolveSyncEnabled(
+    ...resolveSyncEnabled(
       fileConfig.syncEnabled,
       process.env.ZOTAGENT_SYNC_ENABLED,
       warnings,

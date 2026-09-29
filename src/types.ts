@@ -17,6 +17,10 @@ export interface AppConfig {
   // `add --from-url` / `add --identifier` paths become available.
   translationServerUrl?: string;
   syncEnabled?: boolean;
+  // Set when an unreadable syncEnabled / ZOTAGENT_SYNC_ENABLED value closed
+  // sync: names that value, so SYNC_DISABLED is not mistaken for an
+  // explicit false.
+  syncDisabledReason?: string;
   // Name of the Zotero tag whose items should be extracted with
   // --reading-order=off (vertical CJK layout). Unset = no PDFs are treated
   // as vertical. Sync queries Zotero's Web API for this tag at start.

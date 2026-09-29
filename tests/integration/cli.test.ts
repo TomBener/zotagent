@@ -419,6 +419,14 @@ test("sync refuses to run when syncEnabled is false", () => {
   assert.match(result.stdout, /sync is disabled on this host/);
 });
 
+test("sync names the unreadable ZOTAGENT_SYNC_ENABLED value that disabled it", () => {
+  const result = runCli(["sync"], { ...process.env, ZOTAGENT_SYNC_ENABLED: "maybe" });
+
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /"code": "SYNC_DISABLED"/);
+  assert.match(result.stdout, /ZOTAGENT_SYNC_ENABLED is 'maybe', which cannot be read as true or false/);
+});
+
 test("add requires doi or title", () => {
   const result = runCli(["add"]);
 
