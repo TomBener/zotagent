@@ -222,12 +222,13 @@ test("isOdlStructuralBug still routes a StackOverflowError, which escapes the pe
 });
 
 test("isOdlStructuralBug leaves unreadable and password-protected PDFs alone", () => {
-  // Both print their `Error:` line to stdout. stderr already holds the INFO
-  // preamble by then, so runProcessWithTimeout reports stderr and the
-  // message is the INFO lines alone.
-  const rejected = odlFailure(
+  // Both log an INFO preamble to stderr, then print their verdict to stdout;
+  // runProcessWithTimeout keeps the two, stdout last.
+  const preamble =
     "Oct 01, 2026 5:56:05 PM org.opendataloader.pdf.processors.DocumentProcessor preprocessing\n" +
-      "INFO: File name: /lib/x.pdf",
-  );
-  assert.equal(isOdlStructuralBug(rejected), false);
+    "INFO: File name: /lib/x.pdf\n\n";
+  const invalid = odlFailure(`${preamble}Error: 'x.pdf' is not a valid PDF file (corrupted or truncated content).`);
+  assert.equal(isOdlStructuralBug(invalid), false);
+  const locked = odlFailure(`${preamble}Error: 'x.pdf' is password-protected. Use --password option.`);
+  assert.equal(isOdlStructuralBug(locked), false);
 });

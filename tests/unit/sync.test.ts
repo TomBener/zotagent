@@ -18,6 +18,7 @@ import {
   buildIndexerSignature,
   isEntryContentUnchanged,
   runSync,
+  summarizeSyncError,
   SyncRefusedError,
 } from "../../src/sync.js";
 import { openFsArtifactStore, type ArtifactStore } from "../../src/artifact-store.js";
@@ -154,6 +155,32 @@ test("runProcessWithTimeout terminates a hung child process", async () => {
       assert.match(error.message, /test process timed out after 50ms/);
       return true;
     },
+  );
+});
+
+test("runProcessWithTimeout keeps a reason the child printed to stdout", async () => {
+  // OpenDataLoader's shape for a password-protected or unreadable PDF: an INFO
+  // preamble on stderr, the verdict on stdout, exit code 1.
+  const failure = await runProcessWithTimeout({
+    command: process.execPath,
+    args: [
+      "-e",
+      [
+        "process.stderr.write('Oct 01, 2026 5:56:05 PM org.opendataloader.pdf.processors.DocumentProcessor preprocessing\\nINFO: File name: /lib/locked.pdf\\n');",
+        "process.stdout.write(\"Error: 'locked.pdf' is password-protected. Use --password option.\\n\", () => process.exit(1));",
+      ].join(" "),
+    ],
+    timeoutMs: 5_000,
+    label: "OpenDataLoader PDF extraction",
+  }).then(
+    () => assert.fail("expected the child to fail"),
+    (error: unknown) => error,
+  );
+  assert.ok(failure instanceof Error);
+  assert.match(failure.message, /INFO: File name: \/lib\/locked\.pdf/);
+  assert.equal(
+    summarizeSyncError(failure),
+    "Error: 'locked.pdf' is password-protected. Use --password option.",
   );
 });
 

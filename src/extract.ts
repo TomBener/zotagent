@@ -474,11 +474,18 @@ export async function runProcessWithTimeout({
     });
 
     child.on("close", (code, signal) => {
-      const errorOutput = (
-        stderr.length > 0
-          ? formatBufferedOutput(stderr, truncatedStderrBytes)
-          : formatBufferedOutput(stdout, truncatedStdoutBytes)
-      ).trim();
+      // A failing child can put its reason on either stream. OpenDataLoader
+      // logs INFO lines to stderr, then prints `Error: '<file>' is
+      // password-protected` (or not a valid PDF) to stdout. Both are kept,
+      // stdout last, because the sync summary takes the last line that reads
+      // as an error.
+      const errorOutput = [
+        formatBufferedOutput(stderr, truncatedStderrBytes),
+        formatBufferedOutput(stdout, truncatedStdoutBytes),
+      ]
+        .map((text) => text.trim())
+        .filter((text) => text.length > 0)
+        .join("\n\n");
 
       if (timedOut) {
         const suffix = errorOutput.length > 0 ? `\n\n${errorOutput}` : "";

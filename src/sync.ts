@@ -494,7 +494,7 @@ function resolveExcludedItemKeys(
   );
 }
 
-function summarizeSyncError(error: unknown): string {
+export function summarizeSyncError(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error);
   const normalized = raw.replace(/\r/g, "").replace(/\\n/g, "\n");
   const lines = normalized
