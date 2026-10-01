@@ -494,6 +494,13 @@ function resolveExcludedItemKeys(
   );
 }
 
+// java.util.logging's default header, e.g. `Oct 01, 2026 5:56:05 PM
+// org.opendataloader.pdf.cli.CLIMain processFile`. It names a class and a
+// method, never the failure, so it is never the summary. The month and the
+// AM/PM marker follow the JVM's locale (`Sept`, `P.M.`, `9月 … 上午`), so
+// only the numeric part is matched.
+const JUL_HEADER_LINE = /^\S+ \d{1,2}, \d{4} \d{1,2}:\d{2}:\d{2} /;
+
 export function summarizeSyncError(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error);
   const normalized = raw.replace(/\r/g, "").replace(/\\n/g, "\n");
@@ -507,11 +514,11 @@ export function summarizeSyncError(error: unknown): string {
       /(error|exception|failed|caused by|timed out)/i.test(line) &&
       !/^warning:/i.test(line) &&
       !/^info:/i.test(line) &&
-      !/^apr \d{2},/i.test(line),
+      !JUL_HEADER_LINE.test(line),
     );
   const fallback = [...lines]
     .reverse()
-    .find((line) => !/^picked up java_tool_options/i.test(line) && !/^apr \d{2},/i.test(line));
+    .find((line) => !/^picked up java_tool_options/i.test(line) && !JUL_HEADER_LINE.test(line));
   const candidate = preferred ?? fallback ?? raw.trim();
   return candidate.replace(/\s+/g, " ").trim();
 }

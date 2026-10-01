@@ -184,6 +184,29 @@ test("runProcessWithTimeout keeps a reason the child printed to stdout", async (
   );
 });
 
+test("summarizeSyncError never reports a java.util.logging header, whatever the month or locale", () => {
+  // A cleanup log after the failure whose header happens to name an Error class.
+  const severe = "SEVERE: Exception during processing file /lib/x.pdf: Index 3 out of bounds for length 3";
+  for (const stamp of [
+    "Oct 01, 2026 5:56:05 PM",
+    "Sept 05, 2026 7:08:09 AM", // en_GB
+    "Oct 01, 2026 5:56:05 P.M.", // en_CA
+    "9月 05, 2026 7:08:09 上午", // zh
+  ]) {
+    const error = new Error(
+      [
+        "OpenDataLoader PDF extraction exited with code 1.",
+        "",
+        `${stamp} org.opendataloader.pdf.cli.CLIMain processFile`,
+        severe,
+        `${stamp} org.example.FontErrorLog close`,
+        "INFO: Closed 2 fonts",
+      ].join("\n"),
+    );
+    assert.equal(summarizeSyncError(error), severe, stamp);
+  }
+});
+
 test("runProcessWithTimeout keeps only the tail of oversized child output", async () => {
   await assert.rejects(
     runProcessWithTimeout({
