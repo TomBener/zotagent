@@ -21,10 +21,17 @@ const HIDE_JAVA_DOCK_ICON_FLAG = "-Dapple.awt.UIElement=true";
 const JVM_STACK_SIZE_FLAG = "-Xss32m";
 const ODL_JAR_NAME = "opendataloader-pdf-cli.jar";
 const ODL_SINGLE_PDF_TIMEOUT_MS = 600_000;
+// OpenDataLoader logs an exception thrown while processing a file as
+// `SEVERE: Exception during processing file <path>: <message>`. Since 2.5.1
+// it drops the stack trace from that line, so a bug inside a processor no
+// longer names the class it came from (HeadingProcessor, LevelProcessor) and
+// the line itself is the only sign left. Unreadable, password-protected, and
+// encrypted PDFs report through their own messages and stay out of it.
+// StackOverflowError is an Error, not an Exception: it escapes that catch and
+// needs its own pattern.
 const ODL_STRUCTURAL_BUG_PATTERNS = [
+  /Exception during processing file/,
   /StackOverflowError/i,
-  /HeadingProcessor/i,
-  /LevelProcessor/i,
   /Comparison method violates/i,
   /outside raster/i,
 ];
@@ -55,7 +62,7 @@ const ODL_CONTENT_SAFETY_OFF = "tiny";
 const MIN_YIELD_PAGES = 4;
 const MIN_CHARS_PER_PAGE = 50;
 
-function isOdlStructuralBug(error: unknown): boolean {
+export function isOdlStructuralBug(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return ODL_STRUCTURAL_BUG_PATTERNS.some((pattern) => pattern.test(message));
 }

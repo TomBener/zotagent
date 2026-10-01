@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { buildArgs } from "@opendataloader/pdf";
 
-import { garbledTextRatios, groupForOdlBatches, odlConvertOptions, odlYieldShortfall, pdftotextYieldShortfall, scatteredGlyphRatios } from "../../src/extract.js";
+import { garbledTextRatios, groupForOdlBatches, isOdlStructuralBug, odlConvertOptions, odlYieldShortfall, pdftotextYieldShortfall, scatteredGlyphRatios } from "../../src/extract.js";
 import type { AttachmentCatalogEntry } from "../../src/types.js";
 
 function odlJson(pages: number): string {
@@ -198,4 +198,36 @@ test("pdftotextYieldShortfall ignores layout padding and exempts short documents
   assert.equal(pdftotextYieldShortfall("x\n\f".repeat(3)), undefined);
   // No form feeds: page count unknown, no judgement.
   assert.equal(pdftotextYieldShortfall("x"), undefined);
+});
+
+// The shape runOdlConvert rejects with: its exit line, then ODL's stderr.
+function odlFailure(stderr: string): Error {
+  return new Error(`OpenDataLoader PDF extraction exited with code 1.\n\n${stderr}`);
+}
+
+test("isOdlStructuralBug routes a processor exception that carries no stack trace", () => {
+  // OpenDataLoader 2.5.x logs the message alone; the processor class is gone.
+  const error = odlFailure(
+    "Oct 01, 2026 5:56:05 PM org.opendataloader.pdf.cli.CLIMain processFile\n" +
+      "SEVERE: Exception during processing file /lib/x.pdf: Index 3 out of bounds for length 3",
+  );
+  assert.equal(isOdlStructuralBug(error), true);
+});
+
+test("isOdlStructuralBug still routes a StackOverflowError, which escapes the per-file catch", () => {
+  const error = odlFailure(
+    'Exception in thread "main" java.lang.StackOverflowError\n\tat java.base/java.util.ArrayList.get(ArrayList.java:427)',
+  );
+  assert.equal(isOdlStructuralBug(error), true);
+});
+
+test("isOdlStructuralBug leaves unreadable and password-protected PDFs alone", () => {
+  // An unreadable PDF: its `Error:` line goes to stdout, so stderr holds only INFO lines.
+  const invalid = odlFailure(
+    "Oct 01, 2026 5:56:05 PM org.opendataloader.pdf.processors.DocumentProcessor preprocessing\n" +
+      "INFO: File name: /lib/x.pdf",
+  );
+  assert.equal(isOdlStructuralBug(invalid), false);
+  const locked = odlFailure("Error: 'x.pdf' is password-protected. Use --password option.");
+  assert.equal(isOdlStructuralBug(locked), false);
 });
