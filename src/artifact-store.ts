@@ -3,7 +3,6 @@ import { resolve } from "node:path";
 import type { AttachmentManifest } from "./types.js";
 import {
   MANIFEST_EXT,
-  assertManifestsCurrent,
   ensureDir,
   readManifestFile,
   resolveHomePath,
@@ -47,8 +46,7 @@ export interface ArtifactProbe {
 export type ManifestReadResult =
   | { status: "ok"; manifest: AttachmentManifest }
   | { status: "missing" }
-  // Gunzip/JSON failure. `error` preserves the original throw so callers can
-  // surface a LegacyManifestFormatError's migration hint verbatim.
+  // Gunzip/JSON failure; `error` is the original throw.
   | { status: "unreadable"; error: unknown };
 
 export type ReuseRefusal =
@@ -343,14 +341,12 @@ function tryUnlink(path: string): boolean {
 }
 
 /** Production adapter over the real filesystem. On construction it creates
- *  both directories and enforces the legacy-manifest guard, so every
- *  artifact consumer gets the guard without remembering to call it. */
+ *  both directories. */
 export function openFsArtifactStore(dirs: StoreDirs, testHooks: StoreTestHooks = {}): ArtifactStore {
   const normalizedDir = resolveHomePath(dirs.normalizedDir);
   const manifestsDir = resolveHomePath(dirs.manifestsDir);
   ensureDir(normalizedDir);
   ensureDir(manifestsDir);
-  assertManifestsCurrent(manifestsDir);
 
   const step = (name: StoreStep, docKey: string): void => {
     testHooks.onStep?.(name, docKey);

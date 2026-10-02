@@ -74,8 +74,7 @@ function groupReadyEntriesByItemKey(entries: CatalogEntry[]): Map<string, Catalo
   return groups;
 }
 
-// Every read command constructs one reader per invocation; the store's
-// factory also enforces the legacy-manifest guard for the whole command.
+// Every read command constructs one reader per invocation.
 function openArtifactReader(dataDir: string): ArtifactReader {
   const paths = getDataPaths(dataDir);
   return openFsArtifactStore({
@@ -96,8 +95,8 @@ function readManifestCached(
     throw new Error(`Indexed manifest not found for file: ${entry.filePath}`);
   }
   if (result.status === "unreadable") {
-    // Preserves LegacyManifestFormatError's migration hint verbatim.
-    throw result.error;
+    const detail = result.error instanceof Error ? result.error.message : String(result.error);
+    throw new Error(`Indexed manifest unreadable for file: ${entry.filePath} (${detail})`);
   }
   cache.set(entry.docKey, result.manifest);
   return result.manifest;

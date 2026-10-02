@@ -12,7 +12,7 @@ import type {
 } from "../../src/artifact-store.js";
 import { EmptyArtifactError, openFsArtifactStore } from "../../src/artifact-store.js";
 import { openMemoryArtifactStore } from "../helpers/memory-artifact-store.js";
-import { LegacyManifestFormatError, MANIFEST_EXT, writeManifestFile } from "../../src/utils.js";
+import { MANIFEST_EXT, writeManifestFile } from "../../src/utils.js";
 import type { AttachmentManifest, ManifestBlock } from "../../src/types.js";
 
 function sampleBlock(text = "hello world"): ManifestBlock {
@@ -521,7 +521,7 @@ test("[fs] session sweep tolerates unlink faults and still reports stale docKeys
   assert.equal(report.sweptFiles, 0);
 });
 
-test("[fs] construction creates directories and enforces the legacy-manifest guard", () => {
+test("[fs] construction creates directories", () => {
   const base = mkdtempSync(join(tmpdir(), "zotagent-store-"));
   const dirs = { normalizedDir: join(base, "normalized"), manifestsDir: join(base, "manifests") };
 
@@ -529,21 +529,14 @@ test("[fs] construction creates directories and enforces the legacy-manifest gua
   assert.ok(existsSync(dirs.normalizedDir));
   assert.ok(existsSync(dirs.manifestsDir));
   store.publish(built("DOC1"));
-
-  writeFileSync(join(dirs.manifestsDir, "legacy.json"), "{}");
-  assert.throws(
-    () => openFsArtifactStore(dirs),
-    (err: unknown) => err instanceof Error && /migrate-gzip-manifests/.test(err.message),
-  );
 });
 
-test("[fs] readManifest surfaces non-gzip bytes as unreadable with the legacy error", () => {
+test("[fs] readManifest surfaces non-gzip bytes as unreadable", () => {
   const { store, seedRaw } = makeFsHarness();
   seedRaw("CORRUPT", { markdown: "content", corruptManifest: true });
 
   const result = store.readManifest("CORRUPT");
   assert.equal(result.status, "unreadable");
-  assert.ok(result.status === "unreadable" && result.error instanceof LegacyManifestFormatError);
 });
 
 test("[fs] pathsFor rejects docKeys that are not a single path segment", () => {

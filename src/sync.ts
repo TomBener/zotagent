@@ -763,7 +763,7 @@ export async function runSync(
     ensureDir(paths.indexDir);
     ensureDir(paths.tempDir);
     ensureDir(paths.logsDir);
-    // Creates normalized/ + manifests/ and enforces the legacy-manifest guard.
+    // Creates normalized/ + manifests/.
     const store = (options.storeFactory ?? openFsArtifactStore)({
       normalizedDir: paths.normalizedDir,
       manifestsDir: paths.manifestsDir,

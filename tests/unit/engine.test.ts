@@ -2588,6 +2588,48 @@ test("getDocumentBlocks merges multi-attachment itemKey and expandDocument uses 
   assert.equal(expanded.passageEnd, 23);
 });
 
+test("getDocumentBlocks names the attachment whose manifest is unreadable", () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-unreadable-manifest-"));
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const manifestsDir = join(dataDir, "manifests");
+  mkdirSync(indexDir, { recursive: true });
+  mkdirSync(manifestsDir, { recursive: true });
+
+  const docKey = "4".repeat(40);
+  writeFileSync(join(manifestsDir, `${docKey}${MANIFEST_EXT}`), "not gzip at all");
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [
+      {
+        docKey,
+        itemKey: "ITEM4000",
+        title: "Broken",
+        authors: ["A"],
+        filePath: "/tmp/broken.pdf",
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: 1,
+        mtimeMs: 1,
+        sourceHash: "hash4000",
+        lastIndexedAt: new Date().toISOString(),
+      },
+    ],
+  });
+
+  assert.throws(
+    () =>
+      getDocumentBlocks(
+        { key: "ITEM4000", offsetBlock: 0, limitBlocks: 20 },
+        { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir },
+      ),
+    /Indexed manifest unreadable for file: \/tmp\/broken\.pdf/u,
+  );
+});
+
 test("expandDocument resolves a unique attachment by itemKey", () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-expand-item-key-"));
   const dataDir = join(root, "data");
