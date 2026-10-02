@@ -71,8 +71,9 @@ Ordered by leverage. Each was confirmed against the code at `9b80ba6`.
   precompute normalized fields in `loadCatalog`. Effort M.
 - **DEBT-04** — `escapeRegExp` duplicated (`engine.ts:231`, `exact.ts:102`);
   CJK script-range regexes hand-written in ~7 places. Effort S.
-- **DEBT-05** — manifest gzip I/O lives in the general `utils.ts` grab-bag;
-  `scripts/compare-formats.ts` is unreferenced. Effort S.
+- **DEBT-05** — manifest gzip I/O lives in the general `utils.ts` grab-bag.
+  Effort S. (The unreferenced `scripts/compare-formats.ts` it also named has
+  been deleted.)
 - **TEST-02** — no integration coverage for `status`/`recent` CLI wiring
   (`tests/integration/cli.test.ts` never invokes them). Effort S.
 - **DX-01** — no linter beyond `tsc`, no formatter, no pre-commit hook.
