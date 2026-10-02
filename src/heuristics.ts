@@ -31,14 +31,8 @@ function isReferenceLikeText(text: string): boolean {
   return false;
 }
 
-export function isReferenceLikeBlock(input: {
-  text: string;
-  sectionPath: string[];
-  blockType?: string;
-}): boolean {
-  if (isReferenceLikeSectionPath(input.sectionPath)) return true;
-  if (input.blockType === "list item" && isReferenceLikeText(input.text)) return true;
-  return isReferenceLikeText(input.text);
+export function isReferenceLikeBlock(input: { text: string; sectionPath: string[] }): boolean {
+  return isReferenceLikeSectionPath(input.sectionPath) || isReferenceLikeText(input.text);
 }
 
 export function isBoilerplateLikeText(text: string): boolean {

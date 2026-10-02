@@ -199,11 +199,7 @@ function annotateBlocks(draftBlocks: DraftBlock[]): { markdown: string; blocks: 
       charEnd,
       lineStart,
       lineEnd,
-      isReferenceLike: isReferenceLikeBlock({
-        text: draft.text,
-        sectionPath: draft.sectionPath,
-        blockType: draft.blockType,
-      }),
+      isReferenceLike: isReferenceLikeBlock({ text: draft.text, sectionPath: draft.sectionPath }),
     });
   }
 
