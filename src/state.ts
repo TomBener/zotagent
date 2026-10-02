@@ -1,29 +1,14 @@
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 
 import type { CatalogCounts, CatalogEntry, CatalogFile } from "./types.js";
 import { compactHomePath, ensureParentDir, exists, normalizePathForLookup } from "./utils.js";
 
-function replaceForeignHome(path: string): string {
-  const normalized = normalizePathForLookup(path);
-  const currentHome = normalizePathForLookup(homedir());
-  if (normalized.startsWith(`${currentHome}/`)) return normalized;
-
-  const replaced = normalized.replace(/^\/Users\/[^/]+/u, currentHome);
-  return replaced !== normalized && exists(replaced) ? replaced : normalized;
-}
-
-// Older catalogs stored normalizedPath/manifestPath per entry. The artifact
-// store derives both from docKey, so the fields carry no information — strip
-// them on read (the next write simply omits them).
+// Stored filePaths are home-relative (`~/…`, see compactCatalogEntry);
+// expand them to this machine's home on read.
 function hydrateCatalogEntry(entry: CatalogEntry): CatalogEntry {
-  const { normalizedPath: _n, manifestPath: _m, ...rest } = entry as CatalogEntry & {
-    normalizedPath?: string;
-    manifestPath?: string;
-  };
   return {
-    ...rest,
-    filePath: replaceForeignHome(entry.filePath),
+    ...entry,
+    filePath: normalizePathForLookup(entry.filePath),
   };
 }
 
