@@ -6,13 +6,17 @@ import { resolve } from "node:path";
 // guarded by the tag name: renaming a tag invalidates its saved list. Search
 // reads the exclude list too, to tell an excluded item from an unsynced one.
 export type TagKnob = "verticalTextTag" | "excludeTag";
-export type SavedTagLists = Partial<Record<TagKnob, { tag: string; itemKeys: string[]; fetchedAt: string }>>;
+export interface SavedTagList {
+  itemKeys: string[];
+  fetchedAt: string;
+}
+type SavedTagLists = Partial<Record<TagKnob, SavedTagList & { tag: string }>>;
 
-export function savedTagListsPath(indexDir: string): string {
+function savedTagListsPath(indexDir: string): string {
   return resolve(indexDir, "zotero-tags.json");
 }
 
-export function readSavedTagLists(path: string): SavedTagLists {
+function readSavedTagLists(path: string): SavedTagLists {
   try {
     const parsed = JSON.parse(readFileSync(path, "utf-8")) as unknown;
     return parsed && typeof parsed === "object" ? (parsed as SavedTagLists) : {};
@@ -21,15 +25,18 @@ export function readSavedTagLists(path: string): SavedTagLists {
   }
 }
 
-/** The item keys saved for `knob`, or undefined when nothing was saved for
- *  the tag currently configured. */
-export function savedTagItemKeys(path: string, knob: TagKnob, tag: string | undefined): string[] | undefined {
+/** The list saved for `knob`, or undefined when nothing was saved for the
+ *  tag currently configured. */
+export function readSavedTagList(indexDir: string, knob: TagKnob, tag: string | undefined): SavedTagList | undefined {
   if (!tag) return undefined;
-  const saved = readSavedTagLists(path)[knob];
-  return saved && saved.tag === tag && Array.isArray(saved.itemKeys) ? saved.itemKeys : undefined;
+  const saved = readSavedTagLists(savedTagListsPath(indexDir))[knob];
+  return saved && saved.tag === tag && Array.isArray(saved.itemKeys)
+    ? { itemKeys: saved.itemKeys, fetchedAt: saved.fetchedAt }
+    : undefined;
 }
 
-export function saveTagList(path: string, knob: TagKnob, tag: string, itemKeys: string[]): void {
+export function saveTagList(indexDir: string, knob: TagKnob, tag: string, itemKeys: string[]): void {
+  const path = savedTagListsPath(indexDir);
   const saved = readSavedTagLists(path);
   saved[knob] = { tag, itemKeys: [...itemKeys].sort(), fetchedAt: new Date().toISOString() };
   const tmp = `${path}.tmp`;

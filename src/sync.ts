@@ -38,7 +38,7 @@ import {
   type QmdFactory,
 } from "./qmd.js";
 import { decideRemoval } from "./removal-guard.js";
-import { readSavedTagLists, savedTagListsPath, saveTagList, type TagKnob } from "./tag-lists.js";
+import { readSavedTagList, saveTagList, type TagKnob } from "./tag-lists.js";
 import { OPENCC_PACKAGE_VERSION } from "./zh-convert.js";
 import { mapEntriesByDocKey, readCatalogFile, summarizeCatalog, writeCatalogFile } from "./state.js";
 import { artifactsAcceptable, decideTriage } from "./triage.js";
@@ -409,7 +409,7 @@ async function fetchTaggedItemKeys(
   knob: TagKnob,
   tag: string | undefined,
   config: ReturnType<typeof resolveConfig>,
-  savedListsPath: string,
+  indexDir: string,
   fetchImpl: FetchLike,
   logger: SyncLogger,
   onSuccess: (count: number) => string,
@@ -423,15 +423,15 @@ async function fetchTaggedItemKeys(
   }
   try {
     const keys = await fetchTopLevelItemKeysByTags([tag], readConfig, fetchImpl);
-    saveTagList(savedListsPath, knob, tag, keys);
+    saveTagList(indexDir, knob, tag, keys);
     if (keys.length > 0) {
       logger.info(onSuccess(keys.length), { console: true });
     }
     return new Set(keys);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    const saved = readSavedTagLists(savedListsPath)[knob];
-    if (saved && saved.tag === tag && Array.isArray(saved.itemKeys)) {
+    const saved = readSavedTagList(indexDir, knob, tag);
+    if (saved) {
       logger.warn(
         `Could not fetch Zotero items tagged "${tag}" (${knob}): ${message}. Using the ${saved.itemKeys.length} ` +
           `item(s) saved by the last successful lookup (${saved.fetchedAt}); items tagged since then are not ` +
@@ -459,7 +459,7 @@ function warnSkippedManifests(logger: SyncLogger, skippedDocKeys: string[]): voi
 
 function resolveVerticalItemKeys(
   config: ReturnType<typeof resolveConfig>,
-  savedListsPath: string,
+  indexDir: string,
   fetchImpl: FetchLike,
   logger: SyncLogger,
 ): Promise<ReadonlySet<string>> {
@@ -468,7 +468,7 @@ function resolveVerticalItemKeys(
     "verticalTextTag",
     tag,
     config,
-    savedListsPath,
+    indexDir,
     fetchImpl,
     logger,
     (n) =>
@@ -478,7 +478,7 @@ function resolveVerticalItemKeys(
 
 function resolveExcludedItemKeys(
   config: ReturnType<typeof resolveConfig>,
-  savedListsPath: string,
+  indexDir: string,
   fetchImpl: FetchLike,
   logger: SyncLogger,
 ): Promise<ReadonlySet<string>> {
@@ -487,7 +487,7 @@ function resolveExcludedItemKeys(
     "excludeTag",
     tag,
     config,
-    savedListsPath,
+    indexDir,
     fetchImpl,
     logger,
     (n) => `Loaded ${n} item(s) tagged "${tag}" from Zotero; these will be skipped by sync.`,
@@ -774,11 +774,10 @@ export async function runSync(
     // top-level items carry each tag, then treat their PDFs as vertical /
     // skip them entirely. Test injections bypass the API call.
     const fetchImpl = options.fetchImpl ?? fetch;
-    const savedListsPath = savedTagListsPath(paths.indexDir);
     const verticalItemKeys: ReadonlySet<string> =
-      options.verticalItemKeys ?? (await resolveVerticalItemKeys(config, savedListsPath, fetchImpl, logger));
+      options.verticalItemKeys ?? (await resolveVerticalItemKeys(config, paths.indexDir, fetchImpl, logger));
     const excludedItemKeys: ReadonlySet<string> =
-      options.excludeItemKeys ?? (await resolveExcludedItemKeys(config, savedListsPath, fetchImpl, logger));
+      options.excludeItemKeys ?? (await resolveExcludedItemKeys(config, paths.indexDir, fetchImpl, logger));
 
     const rawCatalogData = loadCatalog(config);
     logger.info(

@@ -11,7 +11,7 @@ import { keywordIndexIsCurrent, maskQuotedPhrases, openKeywordIndex, type Keywor
 import { mergeManifestsForItem } from "./manifest.js";
 import { EMBED_PROBE_MIN_SIMILARITY, embeddingProbeSimilarity, openQmdClient, type QmdFactory } from "./qmd.js";
 import { getReadyEntries, readCatalogFile, summarizeCatalog } from "./state.js";
-import { savedTagItemKeys, savedTagListsPath } from "./tag-lists.js";
+import { readSavedTagList } from "./tag-lists.js";
 import type { AppConfig, AttachmentManifest, CatalogEntry, CatalogFile, ManifestBlock, SearchResultRow } from "./types.js";
 import { cleanText, compactHomePath, exists, overlap } from "./utils.js";
 import { toSimplified } from "./zh-convert.js";
@@ -619,7 +619,7 @@ function unindexedItemsWarning(
   config: AppConfig,
   indexDir: string,
 ): string {
-  const excluded = new Set(savedTagItemKeys(savedTagListsPath(indexDir), "excludeTag", config.excludeTag));
+  const excluded = new Set(readSavedTagList(indexDir, "excludeTag", config.excludeTag)?.itemKeys);
   const statuses = new Map<string, Set<CatalogEntry["extractStatus"]>>();
   for (const entry of catalog.entries) {
     const seen = statuses.get(entry.itemKey) ?? new Set();
