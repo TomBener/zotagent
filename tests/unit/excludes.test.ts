@@ -39,7 +39,6 @@ test("applyExcludes is a no-op when the exclusion set is empty", () => {
   assert.equal(filtered, data);
   assert.equal(stats.excludedRecords, 0);
   assert.equal(stats.excludedAttachments, 0);
-  assert.deepEqual(stats.matchedKeys, []);
   assert.deepEqual(stats.unmatchedKeys, []);
 });
 
@@ -62,7 +61,6 @@ test("applyExcludes drops records and attachments whose itemKey is tagged", () =
   assert.deepEqual(filtered.attachments.map((a) => a.filePath), ["/tmp/keep.pdf"]);
   assert.equal(stats.excludedRecords, 1);
   assert.equal(stats.excludedAttachments, 2);
-  assert.deepEqual(stats.matchedKeys, ["DROPITEM"]);
   assert.deepEqual(stats.unmatchedKeys, []);
 });
 
@@ -91,6 +89,5 @@ test("applyExcludes reports keys whose itemKey didn't match any bibliography ent
   const excludes = new Set(["PRESENT1", "STALEKEY"]);
   const { filtered, stats } = applyExcludes(data, excludes);
   assert.equal(filtered.records.length, 0);
-  assert.deepEqual(stats.matchedKeys, ["PRESENT1"]);
   assert.deepEqual(stats.unmatchedKeys, ["STALEKEY"]);
 });

@@ -3,7 +3,6 @@ import type { CatalogData } from "./catalog.js";
 export interface ExcludeFilterStats {
   excludedRecords: number;
   excludedAttachments: number;
-  matchedKeys: string[];
   unmatchedKeys: string[];
 }
 
@@ -20,7 +19,7 @@ export function applyExcludes(
   if (excludedItemKeys.size === 0) {
     return {
       filtered: catalogData,
-      stats: { excludedRecords: 0, excludedAttachments: 0, matchedKeys: [], unmatchedKeys: [] },
+      stats: { excludedRecords: 0, excludedAttachments: 0, unmatchedKeys: [] },
     };
   }
 
@@ -49,7 +48,6 @@ export function applyExcludes(
     stats: {
       excludedRecords: catalogData.records.length - filteredRecords.length,
       excludedAttachments: catalogData.attachments.length - filteredAttachments.length,
-      matchedKeys: [...matched].sort(),
       unmatchedKeys,
     },
   };
