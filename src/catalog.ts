@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 
 import { CJK_CHAR_RE } from "./cjk.js";
 import type { AppConfig, AttachmentCatalogEntry, BibliographyRecord } from "./types.js";
-import { formatAuthors, normalizePathForLookup, sha1, toSupportedFileType } from "./utils.js";
+import { normalizePathForLookup, sha1, toSupportedFileType } from "./utils.js";
 
 interface RawBibliographyAuthor {
   family?: string;
@@ -304,7 +304,7 @@ export function loadCatalog(config: AppConfig): LoadedCatalog {
   return { records, attachments: deduped, filePathCount };
 }
 
-export function preferEpubOverPdf(
+function preferEpubOverPdf(
   attachments: AttachmentCatalogEntry[],
 ): AttachmentCatalogEntry[] {
   const hasEpubByItem = new Map<string, boolean>();
@@ -312,8 +312,4 @@ export function preferEpubOverPdf(
     if (a.fileExt === "epub") hasEpubByItem.set(a.itemKey, true);
   }
   return attachments.filter((a) => !(a.fileExt === "pdf" && hasEpubByItem.get(a.itemKey)));
-}
-
-export function authorsToText(authors: string[]): string {
-  return formatAuthors(authors);
 }

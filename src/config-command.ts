@@ -169,7 +169,6 @@ interface Colors {
   dim: (text: string) => string;
   cyan: (text: string) => string;
   green: (text: string) => string;
-  yellow: (text: string) => string;
   red: (text: string) => string;
 }
 
@@ -183,7 +182,6 @@ function makeColors(enabled: boolean): Colors {
     dim: wrap("2", "22"),
     cyan: wrap("36", "39"),
     green: wrap("32", "39"),
-    yellow: wrap("33", "39"),
     red: wrap("31", "39"),
   };
 }
@@ -217,7 +215,7 @@ export async function runConfigCommand(): Promise<ConfigCommandResult> {
   const cleared: string[] = [];
 
   const colors = makeColors(!process.env.NO_COLOR && Boolean(process.stderr.isTTY));
-  const { bold, dim, cyan, green, yellow, red } = colors;
+  const { bold, dim, cyan, green, red } = colors;
   const writeInfo = (text: string): void => {
     process.stderr.write(text);
   };

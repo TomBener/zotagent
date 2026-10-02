@@ -70,30 +70,6 @@ export function normalizeExactText(input: string): string {
   return collapseSegmentedCjkRuns(normalized);
 }
 
-export function buildExactIndexText(parts: string[]): string {
-  return parts
-    .map((part) => normalizeExactText(part))
-    .filter((part) => part.length > 0)
-    .join(" ");
-}
-
-export function buildExactManifestBody(manifest: AttachmentManifest): string {
-  return buildExactIndexText(manifest.blocks.map((block) => block.text));
-}
-
-export function countExactMatches(haystack: string, needle: string): number {
-  if (needle.length === 0) return 0;
-
-  let count = 0;
-  let pos = haystack.indexOf(needle);
-  while (pos !== -1) {
-    count += 1;
-    pos = haystack.indexOf(needle, pos + 1);
-  }
-
-  return count;
-}
-
 function buildFlexibleCjkPattern(query: string): RegExp | null {
   const { source, containsCjk } = cjkFlexiblePatternSource(query);
   if (!containsCjk) return null;

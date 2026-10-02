@@ -7,7 +7,7 @@ import { CJK_CHAR_RE, CJK_CLASS_SOURCE, cjkFlexiblePatternSource } from "./cjk.j
 import { getDataPaths, resolveConfig, type ConfigOverrides } from "./config.js";
 import { findExactPhraseBlockRange, normalizeExactText } from "./exact.js";
 import { isBoilerplateLikeText, isTableOfContentsLikeText } from "./heuristics.js";
-import { keywordIndexIsCurrent, maskQuotedPhrases, openKeywordIndex, unmaskQuotedPhrases, type KeywordIndexFactory } from "./keyword-db.js";
+import { keywordIndexIsCurrent, maskQuotedPhrases, openKeywordIndex, type KeywordIndexFactory } from "./keyword-db.js";
 import { mergeManifestsForItem } from "./manifest.js";
 import { EMBED_PROBE_MIN_SIMILARITY, embeddingProbeSimilarity, openQmdClient, type QmdFactory } from "./qmd.js";
 import { getReadyEntries, readCatalogFile, summarizeCatalog } from "./state.js";

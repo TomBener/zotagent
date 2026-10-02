@@ -17,13 +17,7 @@ export class LegacyManifestFormatError extends Error {
   }
 }
 
-export function resolveManifestPath(path: string): string {
-  if (path.endsWith(MANIFEST_EXT)) return path;
-  if (path.endsWith(".json")) return `${path}.gz`;
-  return path;
-}
-
-export function listLegacyManifests(manifestsDir: string): string[] {
+function listLegacyManifests(manifestsDir: string): string[] {
   if (!existsSync(manifestsDir)) return [];
   try {
     return readdirSync(manifestsDir).filter(
@@ -53,15 +47,6 @@ export function readManifestFile(path: string): AttachmentManifest {
   }
   const json = gunzipSync(buf).toString("utf8");
   return JSON.parse(json) as AttachmentManifest;
-}
-
-export function tryReadManifestFile(path: string): AttachmentManifest | undefined {
-  if (!existsSync(path)) return undefined;
-  try {
-    return readManifestFile(path);
-  } catch {
-    return undefined;
-  }
 }
 
 export function writeManifestFile(path: string, manifest: AttachmentManifest): void {
@@ -120,20 +105,8 @@ export function cleanText(input: string): string {
     .trim();
 }
 
-export function chunkArray<T>(items: T[], size: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < items.length; i += size) {
-    out.push(items.slice(i, i + size));
-  }
-  return out;
-}
-
 export function exists(path: string): boolean {
   return existsSync(resolveHomePath(path));
-}
-
-export function formatAuthors(authors: string[]): string {
-  return authors.join("; ");
 }
 
 export function toSupportedFileType(filePath: string): SupportedFileType {

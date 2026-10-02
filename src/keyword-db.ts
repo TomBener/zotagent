@@ -341,7 +341,7 @@ export function maskQuotedPhrases(query: string): { masked: string; phrases: str
   return { masked, phrases };
 }
 
-export function unmaskQuotedPhrases(text: string, phrases: string[]): string {
+function unmaskQuotedPhrases(text: string, phrases: string[]): string {
   return text.replace(QUOTE_UNMASK_RE, (_, idx: string) => phrases[Number(idx)]!);
 }
 

@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
 
 import type { AppConfig, DataPaths, ZoteroLibraryType } from "./types.js";
 import { resolveHomePath } from "./utils.js";
@@ -268,8 +268,4 @@ export function getDataPaths(dataDir: string): DataPaths {
     qmdDbPath: resolve(indexDir, "qmd.sqlite"),
     catalogPath: resolve(indexDir, "catalog.json"),
   };
-}
-
-export function getConfigDir(): string {
-  return dirname(getConfigPath());
 }

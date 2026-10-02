@@ -13,11 +13,11 @@ const TABLE_OF_CONTENTS_RE =
 const DOT_LEADER_RE =
   /(?:^|[\s\S]{4,})\.{4,}\s*\d+\s*$/u;
 
-export function isReferenceLikeSectionPath(sectionPath: string[]): boolean {
+function isReferenceLikeSectionPath(sectionPath: string[]): boolean {
   return REFERENCE_SECTION_RE.test(sectionPath.join(" / "));
 }
 
-export function isReferenceLikeText(text: string): boolean {
+function isReferenceLikeText(text: string): boolean {
   const compact = text.replace(/\s+/g, " ").trim();
   if (!compact) return false;
   if (/(available at|retrieved from|doi\s*:|https?:\/\/)/i.test(compact)) return true;
