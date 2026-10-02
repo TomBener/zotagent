@@ -40,7 +40,7 @@ import {
 import { decideRemoval } from "./removal-guard.js";
 import { readSavedTagList, saveTagList, type TagKnob } from "./tag-lists.js";
 import { OPENCC_PACKAGE_VERSION } from "./zh-convert.js";
-import { mapEntriesByDocKey, readCatalogFile, summarizeCatalog, writeCatalogFile } from "./state.js";
+import { readCatalogFile, summarizeCatalog, writeCatalogFile } from "./state.js";
 import { artifactsAcceptable, decideTriage } from "./triage.js";
 import type { AppConfig, AttachmentCatalogEntry, CatalogEntry, CatalogFile, SyncStats } from "./types.js";
 import {
@@ -823,7 +823,7 @@ export async function runSync(
       );
     }
     const previousCatalogCompleted = previousCatalog.indexesCompletedAt !== undefined;
-    const previousByDocKey = mapEntriesByDocKey(previousCatalog);
+    const previousByDocKey = new Map(previousCatalog.entries.map((entry) => [entry.docKey, entry]));
     // Paths the current bibliography still references. Used when building the
     // rename-detection index so we only treat an entry as the "old side" of a
     // rename when its filePath has actually dropped out of the bibliography —

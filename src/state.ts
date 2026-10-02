@@ -108,10 +108,6 @@ export function summarizeCatalog(catalog: CatalogFile): CatalogCounts {
   return counts;
 }
 
-export function mapEntriesByDocKey(catalog: CatalogFile): Map<string, CatalogEntry> {
-  return new Map(catalog.entries.map((entry) => [entry.docKey, entry]));
-}
-
 export function getReadyEntries(catalog: CatalogFile): CatalogEntry[] {
   return catalog.entries.filter((entry) => entry.extractStatus === "ready");
 }
