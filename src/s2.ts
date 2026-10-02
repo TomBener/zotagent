@@ -1,6 +1,6 @@
 import { resolveConfig, type ConfigOverrides } from "./config.js";
 import { fetchWithTimeout, readJsonResponse, type FetchLike } from "./http.js";
-import { cleanDoi } from "./item-metadata.js";
+import { cleanDoi, normalizeSpace } from "./item-metadata.js";
 import type {
   AppConfig,
   SemanticScholarLinkedPaperRow,
@@ -110,10 +110,6 @@ interface SemanticScholarLinksApiResponse {
   offset?: unknown;
   next?: unknown;
   data?: unknown;
-}
-
-function normalizeSpace(value: string): string {
-  return value.replace(/\u00a0/gu, " ").replace(/\s+/gu, " ").trim();
 }
 
 function firstString(value: unknown): string | undefined {
