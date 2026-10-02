@@ -17,7 +17,7 @@ below as candidates for a future planning pass.
 | 002  | Fix stale `excludes.txt` documentation (AGENTS.md + SKILL.md) | P1 | S | — | DONE |
 | 003  | Atomic catalog.json write + corrupt-file-tolerant read | P1 | S | 001 | DONE |
 | 004  | Owner-only permissions on `~/.zotagent/config.json` | P1 | S | 001 | DONE |
-| 005  | Keyword indexing skips unreadable manifests | P2 | S | 001 | DONE |
+| 005  | Keyword indexing skips unreadable manifests | P2 | S | 001 | DONE — landed via the artifact store's `readManifest` `unreadable` status, not `tryReadManifestFile` (since deleted); the plan's grep check no longer applies |
 | 006  | Reject attachment paths escaping `attachmentsRoot` via dot segments | P1 | S | — | DONE |
 | 007  | Resolve transitive npm audit advisories under `@tobilu/qmd` | P2 | S | — | DONE |
 | 008  | Annotate Semantic Scholar rows with `inLibrary` + `itemKey` | P2 | M | — | TODO |
