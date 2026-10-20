@@ -182,16 +182,20 @@ Search
       --semantic uses qmd vector search with LLM query expansion (slower, heavier). It fails
       with SEMANTIC_INDEX_MISMATCH when this host's embedding model computes different vectors
       than the ones the index was built with; every host sharing a dataDir needs the same file.
+      Text with no letters or digits fails with INVALID_ARGUMENT, and a data dir with no indexed
+      documents fails with INDEX_EMPTY.
         --limit <n>                 Return up to n search results. Default: 10 (max 100) for search, 20 for
                                     metadata. --semantic draws on about 40 candidate documents, so it
                                     can return fewer.
         --min-score <n>             Keyword search only: drop hits scoring below n (bm25-based; higher
                                     is better). Semantic scores are rank positions (1/rank).
         --tag <tag>                 Restrict keyword search to top-level Zotero items with this tag.
-                                    Repeatable; requires Zotero read API config.
+                                    Repeatable; requires Zotero read API config. A tag no top-level
+                                    item carries adds a warning.
         --collection-key <key>      Restrict keyword search to top-level items directly in this Zotero
                                     collection. Repeatable (union); combinable with --tag (intersection);
-                                    requires Zotero read API config.
+                                    requires Zotero read API config. An unknown key fails with
+                                    COLLECTION_NOT_FOUND; one with no top-level items adds a warning.
 
   search-in "<text>" --key <key> [--limit <n>]
       Search within one indexed item's attachments. Uses the same FTS5 keyword
@@ -219,10 +223,12 @@ Search
         --journal <text>            Filter by journal substring.
         --publisher <text>          Filter by publisher substring.
         --tag <tag>                 Filter by top-level Zotero item tag. Repeatable; requires
-                                    Zotero read API config.
+                                    Zotero read API config. A tag no top-level item carries adds
+                                    a warning.
         --collection-key <key>      Filter by top-level items directly in this Zotero collection.
                                     Repeatable (union); combinable with --tag (intersection);
-                                    requires Zotero read API config.
+                                    requires Zotero read API config. An unknown key fails with
+                                    COLLECTION_NOT_FOUND; one with no top-level items adds a warning.
         --indexed                   Keep only metadata results with a full-text-indexed attachment
                                     (readable via search-in/fulltext).
         --abstract                  Include the abstract in each result. Omitted by default to keep
@@ -332,6 +338,7 @@ Add to Zotero
       (10.x/...), an arXiv id (2106.15928), a prefixed id (DOI:, ARXIV:,
       PMID:, CorpusId:, URL:), or a doi.org / arxiv.org / semanticscholar.org
       URL. Rows omit the abstract; \`add --s2-paper-id <paperId>\` fetches one.
+      An identifier Semantic Scholar does not know fails with PAPER_NOT_FOUND.
         --limit <n>                 Return up to n rows. Default: 50. Max: 1000.
         --offset <n>                Skip the first n rows; data.next gives the next offset.
 

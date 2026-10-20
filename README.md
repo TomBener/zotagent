@@ -24,7 +24,7 @@
 - `search --semantic` — vector search over [QMD](https://github.com/tobi/qmd) embeddings with LLM query expansion; slower and heavier than keyword search. Results are not reranked, so each semantic `score` is its fused rank position (1/rank) rather than a relevance value, and `--min-score` applies to keyword search only.
 - CJK search is handled explicitly: Chinese, Japanese, and Korean text is segmented for FTS, Traditional Chinese is folded to Simplified at index and query time for keyword search, and exact CJK phrase matching remains accurate while returned text preserves the source form.
 - `search-in` — scope a text query to one indexed item, addressed by `itemKey` or `citationKey` (auto-detected). It uses the same FTS5 syntax as `search` and adds a manifest-level cross-block scan for a single quoted phrase.
-- `metadata` — search the Zotero bibliography (Better CSL JSON) across `title`, `author`, `year`, `abstract`, `journal`, and `publisher`. `--field` narrows the positional query; per-field filters (`--author`, `--year`, `--title`, `--journal`, `--publisher`) AND together and can replace the positional query entirely; `--tag` and `--collection-key` fetch matching top-level item keys from the Zotero Web API and filter locally (combinable with each other; intersection); `--indexed` keeps only items whose full text is in the shared index (readable via `search-in`/`fulltext`) and `--abstract` opts into bulkier abstract output. Each result reports `indexed`/`indexedFiles` from that index — independent of whether attachment files exist on the current device. When the index catalog is missing or has no ready entries, a warning is emitted and every result reports `indexed: false`. Titles and journal names drop Zotero's rich-text markup (`<i>`, `<b>`, `<sub>`, `<sup>`, `<span class="nocase">`), so `--title "Chiang Kai-shek"` matches a title stored as `Chiang Kai-<span class="nocase">shek</span>`; every other command, including `search`, `blocks`, and `recent`, reports titles without the markup too, with no re-sync needed.
+- `metadata` — search the Zotero bibliography (Better CSL JSON) across `title`, `author`, `year`, `abstract`, `journal`, and `publisher`. `--field` narrows the positional query; per-field filters (`--author`, `--year`, `--title`, `--journal`, `--publisher`) AND together and can replace the positional query entirely; `--tag` and `--collection-key` fetch matching top-level item keys from the Zotero Web API and filter locally (combinable with each other; intersection; a filter that matches nothing adds a warning); `--indexed` keeps only items whose full text is in the shared index (readable via `search-in`/`fulltext`) and `--abstract` opts into bulkier abstract output. Each result reports `indexed`/`indexedFiles` from that index — independent of whether attachment files exist on the current device. When the index catalog is missing or has no ready entries, a warning is emitted and every result reports `indexed: false`. Titles and journal names drop Zotero's rich-text markup (`<i>`, `<b>`, `<sub>`, `<sup>`, `<span class="nocase">`), so `--title "Chiang Kai-shek"` matches a title stored as `Chiang Kai-<span class="nocase">shek</span>`; the commands that read the library (`search`, `blocks`, `recent`, and the rest) report titles without the markup too, with no re-sync needed; `add` echoes the title it writes.
 - Search results return compact passages centered on the hit, stable `itemKey`s, internal `charOffset`s for `expand`, and page hints (`pageStart` / `pageEnd`) when the extractor recorded them. Page hints are positions in the PDF file, counted from 1, not the page numbers printed in the paper or book: a journal article printed as pp. 1360–1380 reports pages 1–21, and a book's front matter shifts every page.
 
 ### Retrieve
@@ -186,16 +186,20 @@ Search
       --semantic uses qmd vector search with LLM query expansion (slower, heavier). It fails
       with SEMANTIC_INDEX_MISMATCH when this host's embedding model computes different vectors
       than the ones the index was built with; every host sharing a dataDir needs the same file.
+      Text with no letters or digits fails with INVALID_ARGUMENT, and a data dir with no indexed
+      documents fails with INDEX_EMPTY.
         --limit <n>                 Return up to n search results. Default: 10 (max 100) for search, 20 for
                                     metadata. --semantic draws on about 40 candidate documents, so it
                                     can return fewer.
         --min-score <n>             Keyword search only: drop hits scoring below n (bm25-based; higher
                                     is better). Semantic scores are rank positions (1/rank).
         --tag <tag>                 Restrict keyword search to top-level Zotero items with this tag.
-                                    Repeatable; requires Zotero read API config.
+                                    Repeatable; requires Zotero read API config. A tag no top-level
+                                    item carries adds a warning.
         --collection-key <key>      Restrict keyword search to top-level items directly in this Zotero
                                     collection. Repeatable (union); combinable with --tag (intersection);
-                                    requires Zotero read API config.
+                                    requires Zotero read API config. An unknown key fails with
+                                    COLLECTION_NOT_FOUND; one with no top-level items adds a warning.
 
   search-in "<text>" --key <key> [--limit <n>]
       Search within one indexed item's attachments. Uses the same FTS5 keyword
@@ -219,10 +223,12 @@ Search
         --journal <text>            Filter by journal substring.
         --publisher <text>          Filter by publisher substring.
         --tag <tag>                 Filter by top-level Zotero item tag. Repeatable; requires
-                                    Zotero read API config.
+                                    Zotero read API config. A tag no top-level item carries adds
+                                    a warning.
         --collection-key <key>      Filter by top-level items directly in this Zotero collection.
                                     Repeatable (union); combinable with --tag (intersection);
-                                    requires Zotero read API config.
+                                    requires Zotero read API config. An unknown key fails with
+                                    COLLECTION_NOT_FOUND; one with no top-level items adds a warning.
         --indexed                   Keep only metadata results with a full-text-indexed attachment
                                     (readable via search-in/fulltext).
         --abstract                  Include the abstract in each result. Omitted by default to keep
@@ -329,6 +335,7 @@ Add to Zotero
       (10.x/...), an arXiv id (2106.15928), a prefixed id (DOI:, ARXIV:,
       PMID:, CorpusId:, URL:), or a doi.org / arxiv.org / semanticscholar.org
       URL. Rows omit the abstract; `add --s2-paper-id <paperId>` fetches one.
+      An identifier Semantic Scholar does not know fails with PAPER_NOT_FOUND.
         --limit <n>                 Return up to n rows. Default: 50. Max: 1000.
         --offset <n>                Skip the first n rows; data.next gives the next offset.
 
