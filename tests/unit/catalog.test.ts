@@ -317,3 +317,45 @@ test("loadCatalog keeps semicolons inside attachment file names", () => {
     ],
   );
 });
+
+test("loadCatalog strips Zotero rich-text markup from titles and journal names", () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-catalog-richtext-"));
+  const attachmentsRoot = join(root, "attachments");
+  mkdirSync(attachmentsRoot, { recursive: true });
+  const pdfPath = join(attachmentsRoot, "victorious.pdf");
+  writeFileSync(pdfPath, "pdf");
+  const bibliographyPath = join(root, "bibliography.json");
+  writeFileSync(
+    bibliographyPath,
+    JSON.stringify([
+      {
+        title: "Victorious in defeat: the life and times of Chiang Kai-<span class=\"nocase\">shek</span>",
+        type: "book",
+        file: pdfPath,
+        "zotero-item-key": "BOOK0001",
+      },
+      {
+        title: "Reading <i>Shenbao</i> and <b>CO<sub>2</sub></b> in the 21<sup>st</sup> century",
+        "container-title": "<span style=\"font-variant:small-caps;\">Modern China</span>",
+        type: "article-journal",
+        "zotero-item-key": "ART00001",
+      },
+      {
+        // Angle brackets that are not Zotero's rich-text tags are real text.
+        title: "When a < b and <正> markers survive",
+        type: "article-journal",
+        "zotero-item-key": "ART00002",
+      },
+    ]),
+    "utf-8",
+  );
+
+  const catalog = loadCatalog({ bibliographyJsonPath: bibliographyPath, attachmentsRoot, dataDir: join(root, "data"), warnings: [] });
+  const byKey = new Map(catalog.records.map((record) => [record.itemKey, record]));
+
+  assert.equal(byKey.get("BOOK0001")?.title, "Victorious in defeat: the life and times of Chiang Kai-shek");
+  assert.equal(catalog.attachments[0]?.title, "Victorious in defeat: the life and times of Chiang Kai-shek");
+  assert.equal(byKey.get("ART00001")?.title, "Reading Shenbao and CO2 in the 21st century");
+  assert.equal(byKey.get("ART00001")?.journal, "Modern China");
+  assert.equal(byKey.get("ART00002")?.title, "When a < b and <正> markers survive");
+});

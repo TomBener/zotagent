@@ -40,6 +40,18 @@ export interface LoadedCatalog extends CatalogData {
   filePathCount: number;
 }
 
+// Zotero keeps rich text in titles as a fixed set of HTML-like tags (<i>, <b>,
+// <sub>, <sup>, <span class="nocase">, small-caps spans) and Better CSL JSON
+// exports them verbatim. Left in, they break substring matching — "Chiang
+// Kai-<span class="nocase">shek</span>" never matches "Chiang Kai-shek" — and
+// leak into every title an agent quotes. Only these tags are removed: other
+// angle brackets in a title are text.
+const RICH_TEXT_TAG_RE = /<\/?(?:i|b|sub|sup|sc|span)(?:\s[^>]*)?>/giu;
+
+export function stripRichText(text: string): string {
+  return text.replace(RICH_TEXT_TAG_RE, "");
+}
+
 const JOURNAL_TYPES = new Set(["article-journal", "article-magazine", "article-newspaper", "article"]);
 const PUBLISHER_TYPES = new Set(["book", "chapter", "thesis", "report", "paper-conference"]);
 
@@ -243,7 +255,7 @@ export function loadCatalog(config: AppConfig): LoadedCatalog {
     const authors = parsePeople(item.author);
     const editors = authors.names.length > 0 ? { names: [], searchTexts: [] } : parsePeople(item.editor);
     const people = authors.names.length > 0 ? authors : editors;
-    const title = (item.title || "").trim() || itemKey;
+    const title = stripRichText(item.title || "").trim() || itemKey;
     const type = (item.type || "").trim() || undefined;
     const rawFilePaths = splitFileField(item.file);
     filePathCount += rawFilePaths.length;
@@ -259,8 +271,9 @@ export function loadCatalog(config: AppConfig): LoadedCatalog {
       return out;
     }, []);
     const attachmentPaths = resolvedAttachments.map((attachment) => attachment.absolutePath);
-    const journal =
+    const journalRaw =
       type && JOURNAL_TYPES.has(type) ? firstString(item["container-title"]) : undefined;
+    const journal = journalRaw === undefined ? undefined : stripRichText(journalRaw).trim() || undefined;
     const publisher =
       type && PUBLISHER_TYPES.has(type) ? firstString(item.publisher) : undefined;
 

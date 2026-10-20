@@ -1,3 +1,4 @@
+import { stripRichText } from "./catalog.js";
 import { resolveConfig, type ConfigOverrides } from "./config.js";
 import { fetchWithTimeout, type FetchLike } from "./http.js";
 import {
@@ -68,7 +69,7 @@ function toRow(item: ZoteroItemResponse): RecentItemRow {
   const year = extractYear(item.meta?.parsedDate, item.data.date);
   return {
     itemKey: item.data.key,
-    title: (item.data.title ?? "").trim(),
+    title: stripRichText(item.data.title ?? "").trim(),
     authors,
     ...(year ? { year } : {}),
     type: item.data.itemType,

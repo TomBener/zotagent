@@ -555,3 +555,35 @@ test("searchMetadata exposes publisher for thesis, report, and paper-conference 
   );
   assert.equal(confHit.results[0]?.publisher, "Association for Computing Machinery");
 });
+
+test("searchMetadata matches titles across Zotero rich-text markup", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-metadata-richtext-"));
+  const { attachmentsRoot } = createFixturePaths(root);
+  const { bibliographyPath, dataDir } = writeBibliography(root, [
+    {
+      id: "taylor2009",
+      title: "The generalissimo: Chiang Kai-<span class=\"nocase\">shek</span> and the struggle for modern China",
+      author: [{ family: "Taylor", given: "Jay" }],
+      issued: { "date-parts": [[2009]] },
+      type: "book",
+      "zotero-item-key": "GENERAL1",
+    },
+    {
+      id: "yang2021",
+      title: "<i>Diasporic citizen journalism</i>: exploring WeChat",
+      author: [{ family: "Yang", given: "Li" }],
+      issued: { "date-parts": [[2021]] },
+      type: "article-journal",
+      "zotero-item-key": "DIASPOR1",
+    },
+  ]);
+  const overrides = { bibliographyJsonPath: bibliographyPath, attachmentsRoot, dataDir };
+
+  const byFilter = await searchMetadata("", 10, overrides, { filters: { title: "Chiang Kai-shek" } });
+  assert.deepEqual(byFilter.results.map((row) => row.itemKey), ["GENERAL1"]);
+  assert.equal(byFilter.results[0]?.title, "The generalissimo: Chiang Kai-shek and the struggle for modern China");
+
+  const acrossTag = await searchMetadata("Diasporic citizen journalism: exploring", 10, overrides, { fields: ["title"] });
+  assert.deepEqual(acrossTag.results.map((row) => row.itemKey), ["DIASPOR1"]);
+  assert.equal(acrossTag.results[0]?.title, "Diasporic citizen journalism: exploring WeChat");
+});

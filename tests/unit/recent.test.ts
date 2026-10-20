@@ -140,7 +140,7 @@ test("listRecentItems uses group library URLs and dateModified sorting", async (
         data: {
           key: "ITEM0003",
           itemType: "report",
-          title: "Recent Report",
+          title: "Recent <i>Report</i> on CO<sub>2</sub>",
           creators: [],
           dateAdded: "2026-04-20T08:00:00Z",
           dateModified: "2026-04-23T08:30:00Z",
@@ -163,4 +163,5 @@ test("listRecentItems uses group library URLs and dateModified sorting", async (
   );
 
   assert.equal(result.results[0]?.itemKey, "ITEM0003");
+  assert.equal(result.results[0]?.title, "Recent Report on CO2");
 });
