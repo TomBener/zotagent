@@ -440,3 +440,24 @@ test("Semantic Scholar requests fail with RATE_LIMITED once retries run out", as
   );
   assert.equal(calls, 3);
 });
+
+test("Semantic Scholar answers an unknown paper id with PAPER_NOT_FOUND", async () => {
+  const fetchMock: typeof fetch = async () =>
+    new Response(JSON.stringify({ error: "Paper with id DOI:10.1000/nope not found" }), {
+      status: 404,
+      headers: { "Content-Type": "application/json" },
+    });
+
+  for (const call of [
+    () => getSemanticScholarReferences("DOI:10.1000/nope", { limit: 1, offset: 0 }, { semanticScholarApiKey: "k" }, fetchMock),
+    () => getSemanticScholarPaper("DOI:10.1000/nope", { semanticScholarApiKey: "k" }, fetchMock),
+  ]) {
+    await assert.rejects(call, (error: unknown) => {
+      assert.ok(error instanceof SemanticScholarError);
+      assert.equal(error.code, "PAPER_NOT_FOUND");
+      assert.match(error.message, /^Paper with id DOI:10\.1000\/nope not found\. /);
+      assert.match(error.message, /zotagent s2 "<title>"/);
+      return true;
+    });
+  }
+});

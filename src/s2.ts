@@ -234,8 +234,8 @@ export function parseRetryAfterMs(headerValue: string | null): number {
 
 // Single entry point for every Semantic Scholar GET, so the 429 handling is
 // uniform across search, single-paper, and citation-graph calls. Each attempt
-// gets its own timeout budget; non-429 failures keep readJsonResponse's plain
-// Error wording.
+// gets its own timeout budget; a 404 becomes PAPER_NOT_FOUND, and other
+// failures keep readJsonResponse's plain Error wording.
 async function fetchSemanticScholarJson<T>(
   url: string,
   config: AppConfig,
@@ -245,6 +245,25 @@ async function fetchSemanticScholarJson<T>(
     const response = await fetchWithTimeout(fetchImpl, url, {
       headers: getSemanticScholarHeaders(config),
     }, REQUEST_TIMEOUT_MS);
+    if (response.status === 404) {
+      // Only the paper endpoints take an identifier, and S2 answers an
+      // identifier it does not know with 404 and {"error": "Paper with id … not
+      // found"}: the most common failure of s2-refs / s2-citations / add.
+      const body = await response.text().catch(() => "");
+      let reason = "";
+      try {
+        const parsed = JSON.parse(body) as { error?: unknown };
+        if (typeof parsed.error === "string") reason = parsed.error;
+      } catch {
+        // Not JSON; fall back to the generic wording below.
+      }
+      throw new SemanticScholarError(
+        "PAPER_NOT_FOUND",
+        `${reason || "Semantic Scholar has no paper for this identifier"}. Check the identifier; if it is right, ` +
+          'Semantic Scholar may index the paper under another one — find it by title with `zotagent s2 "<title>"` and pass the returned paperId.',
+        { url },
+      );
+    }
     if (response.status !== 429) {
       return await readJsonResponse<T>(response, url);
     }
