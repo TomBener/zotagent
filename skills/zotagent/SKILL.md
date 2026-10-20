@@ -49,14 +49,12 @@ Chinese trad/simp folding: keyword `search`, `search-in`, and `metadata` match a
 
 ## Citing passages
 
-Paraphrase by default and cite in **Pandoc source form** using the returned `itemKey` with `pageStart` / `pageEnd` as the locator. Reach for a verbatim quote only when the exact wording matters (a distinctive phrase, primary-source quotation, or a definition) — quoting indiscriminately turns the document into a transcript.
+Paraphrase by default and cite in **Pandoc source form** using the returned `itemKey`. Reach for a verbatim quote only when the exact wording matters (a distinctive phrase, primary-source quotation, or a definition) — quoting indiscriminately turns the document into a transcript.
 
-`pageStart` / `pageEnd` are positions in the PDF file, counted from 1, not the page numbers printed in the paper or book. A journal article printed as pp. 1360–1380 comes back as pages 1–21, and a book's front matter shifts every page (printed p. 96 can come back as `pageStart: 98`).
+Do not put `pageStart` / `pageEnd` in a citation. They are positions in the PDF file, counted from 1, not the page numbers printed in the paper or book: a journal article printed as pp. 1360–1380 comes back as pages 1–21, and a book's front matter shifts every page (printed p. 96 can come back as `pageStart: 98`).
 
-- Paraphrase + locator: `[@itemKey, p. 23]`
-- Page range: `[@itemKey, p. 23-25]`
-- No page available: `[@itemKey]` (EPUB, some scans, and multi-attachment hits near a separator may set no page numbers)
-- Verbatim phrase when wording is load-bearing: `... a "non-trivial role" [@itemKey, p. 137]`
+- Paraphrase: `[@itemKey]`
+- Verbatim phrase when wording is load-bearing: `... a "non-trivial role" [@itemKey]`
 - Narrative reference: `@itemKey says ...`
 
 Do not cite `charOffset` or block indices in user-facing prose. `charOffset` is what you pass to `expand` to fetch more context; block indices appear in `blocks` output but no PDF/EPUB reader navigates by them.
