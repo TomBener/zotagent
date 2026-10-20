@@ -69,11 +69,6 @@ export function isValidCollectionKey(key: string): boolean {
   return COLLECTION_KEY_PATTERN.test(key);
 }
 
-// Zotero v3 returns the full key list for `format=keys` in a single
-// newline-delimited response — `limit`/`start` are ignored for this format
-// (https://www.zotero.org/support/dev/web_api/v3/basics). We still verify
-// `Total-Results` against the parsed line count so a future API change that
-// silently truncates would surface as an error instead of dropped items.
 export class ZoteroLookupError extends Error {
   constructor(
     public readonly code: string,
@@ -84,6 +79,11 @@ export class ZoteroLookupError extends Error {
   }
 }
 
+// Zotero v3 returns the full key list for `format=keys` in a single
+// newline-delimited response — `limit`/`start` are ignored for this format
+// (https://www.zotero.org/support/dev/web_api/v3/basics). We still verify
+// `Total-Results` against the parsed line count so a future API change that
+// silently truncates would surface as an error instead of dropped items.
 export async function fetchTopLevelItemKeysByTags(
   tags: string[],
   readConfig: ZoteroCredentials,
