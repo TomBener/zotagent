@@ -518,7 +518,7 @@ test("runSync skips unchanged ready pdfs and refreshes qmd contexts", async () =
   assert.match(logBody, /paper\.pdf: reused existing indexed output/);
 });
 
-test("runSync reads a stored title with rich-text markup as clean and keeps the extracted artifacts", async () => {
+test("runSync treats a stored title with rich-text markup as unchanged and short-circuits", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-sync-richtext-"));
   const attachmentsRoot = join(root, "attachments");
   const dataDir = join(root, "data");
@@ -534,45 +534,35 @@ test("runSync reads a stored title with rich-text markup as clean and keeps the 
   writeFileSync(pdfPath, "pdf");
   const currentStat = statSync(pdfPath);
   const docKey = sha1("papers/paper.pdf");
-  const normalizedPath = join(normalizedDir, `${docKey}.md`);
-  const manifestPath = join(manifestsDir, `${docKey}${MANIFEST_EXT}`);
-  writeFileSync(normalizedPath, "Body");
-  writeManifestFile(
-    manifestPath,
-    {
-      docKey,
-      itemKey: "ITEM1",
-      title: "Chiang Kai-<span class=\"nocase\">shek</span>",
-      authors: ["A"],
-      filePath: pdfPath,
-      blocks: [trivialBlock()],
-    },
-  );
-
+  const rawTitle = 'Chiang Kai-<span class="nocase">shek</span>';
+  writeFileSync(join(normalizedDir, `${docKey}.md`), "Body");
+  writeManifestFile(join(manifestsDir, `${docKey}${MANIFEST_EXT}`), {
+    docKey,
+    itemKey: "ITEM1",
+    title: rawTitle,
+    authors: ["A Author"],
+    filePath: pdfPath,
+    blocks: [trivialBlock()],
+  });
   const bibliographyPath = join(root, "bibliography.json");
   writeFileSync(
     bibliographyPath,
-    JSON.stringify([
-      {
-        id: "cite",
-        title: "Chiang Kai-<span class=\"nocase\">shek</span>",
-        author: [{ family: "A", given: "Author" }],
-        file: pdfPath,
-        "zotero-item-key": "ITEM1",
-      },
-    ]),
+    JSON.stringify([{ id: "cite", title: rawTitle, author: [{ family: "A", given: "Author" }], file: pdfPath, "zotero-item-key": "ITEM1" }]),
     "utf-8",
   );
-
-  const previousCatalog: CatalogFile = {
+  // A completed catalog as an older build wrote it: the title still carries markup.
+  writeCatalogFile(join(indexDir, "catalog.json"), {
     version: 1,
     generatedAt: new Date().toISOString(),
+    indexesCompletedAt: new Date().toISOString(),
+    indexedQmdEmbedModel: "fake-embed-model",
+    indexerSignature: buildIndexerSignature("fake-embed-model"),
     entries: [
       {
         docKey,
         itemKey: "ITEM1",
         citationKey: "cite",
-        title: "Chiang Kai-<span class=\"nocase\">shek</span>",
+        title: rawTitle,
         authors: ["A Author"],
         filePath: pdfPath,
         fileExt: "pdf",
@@ -585,69 +575,56 @@ test("runSync reads a stored title with rich-text markup as clean and keeps the 
         lastIndexedAt: new Date().toISOString(),
       },
     ],
-  };
-  writeCatalogFile(join(indexDir, "catalog.json"), previousCatalog);
+  });
 
-  const calls = {
-    update: 0,
-    embed: 0,
-    removed: 0,
-    added: 0,
-    closed: 0,
-  };
-
-  const contexts: string[] = [];
-  let needsEmbedding = 1;
-  const fakeFactory = async () => ({
+  const qmdFactory = async () => ({
     search: async () => [],
     searchLex: async () => [],
-    update: async () => {
-      calls.update += 1;
-      return {};
-    },
-    embed: async () => {
-      calls.embed += 1;
-      needsEmbedding = 0;
-      return {};
-    },
-    getStatus: async () => ({ totalDocuments: 1, needsEmbedding, hasVectorIndex: needsEmbedding === 0, collections: [] }),
-    listContexts: async () => [{ collection: "library", path: "/old.md", context: "old" }],
-    addContext: async (_collection: string, _path: string, context: string) => {
-      calls.added += 1;
-      contexts.push(context);
-      return true;
-    },
-    removeContext: async () => {
-      calls.removed += 1;
-      return true;
-    },
+    update: async () => ({}),
+    embed: async () => ({}),
+    getStatus: async () => ({ totalDocuments: 1, needsEmbedding: 0, hasVectorIndex: true, collections: [] }),
+    listContexts: async () => [],
+    addContext: async () => true,
+    removeContext: async () => true,
     clearEmbeddings: async () => {},
     cleanupOrphans: async () => ({ deletedInactiveDocuments: 0, cleanedOrphanedContent: 0, cleanedOrphanedVectors: 0 }),
     migrateLegacyModelAliases: async () => ({ updated: 0, conflicts: 0 }),
     adoptLegacyEmbeddings: async () => ({ adopted: 0, checked: false, reason: "" }),
     embeddingProbe: async () => TEST_EMBED_PROBE,
     compactDatabase: async () => ({ ran: false, reason: "" }),
-    close: async () => {
-      calls.closed += 1;
-    },
+    close: async () => {},
   });
-  const result = await runSync(
-    {
-      bibliographyJsonPath: bibliographyPath,
-      attachmentsRoot,
-      dataDir,
+  const keywordUpdates: string[][] = [];
+  const keywordFactory = async () => ({
+    rebuildIndex: async () => ({ skippedDocKeys: [] }),
+    updateIndex: async (changed: Array<{ docKey: string }>) => {
+      keywordUpdates.push(changed.map((entry) => entry.docKey));
+      return { skippedDocKeys: [] };
     },
-    fakeFactory,
+    vacuum: async () => {},
+    searchDocs: async () => [],
+    searchBlocks: async () => [],
+    isEmpty: async () => false,
+    close: async () => {},
+  });
+  const extractCalls: string[] = [];
+  const extractBatchFn = async (batch: Array<{ docKey: string }>) => {
+    extractCalls.push(...batch.map((item) => item.docKey));
+    return new Set<string>();
+  };
+
+  const result = await runSync(
+    { bibliographyJsonPath: bibliographyPath, attachmentsRoot, dataDir, qmdEmbedModel: "fake-embed-model" },
+    qmdFactory,
+    keywordFactory,
+    extractBatchFn,
   );
 
-  // The stored title reads clean, so the entry counts as unchanged: nothing is
-  // re-extracted, and the rewritten catalog and qmd context carry the clean title.
-  assert.equal(result.stats.skippedAttachments, 1);
-  assert.equal(result.stats.updatedAttachments, 0);
-  assert.deepEqual(contexts, ["Chiang Kai-shek\nA Author"]);
-  const catalog = JSON.parse(readFileSync(join(indexDir, "catalog.json"), "utf-8")) as CatalogFile;
-  assert.equal(catalog.entries[0]?.title, "Chiang Kai-shek");
-  assert.match(readFileSync(result.logPath, "utf-8"), /paper\.pdf: reused existing indexed output/);
+  // The stored title reads clean, so the entry equals the bibliography's: nothing
+  // is re-extracted or re-indexed, and the sync short-circuits.
+  assert.deepEqual(extractCalls, []);
+  assert.deepEqual(keywordUpdates, []);
+  assert.match(readFileSync(result.logPath, "utf-8"), /No catalog changes since last completed sync/);
 });
 
 test("runSync re-extracts vertical PDFs whose cached manifest predates verticalText support", async () => {
