@@ -8,6 +8,7 @@ import { ConfigCommandError, runConfigCommand } from "./config-command.js";
 import { getDataPaths, resolveConfig, type ConfigOverrides } from "./config.js";
 import { diagnoseExtraction } from "./diagnose.js";
 import {
+  IndexEmptyError,
   SemanticIndexMismatchError,
   expandDocument,
   fullTextDocument,
@@ -39,6 +40,7 @@ import {
   normalizeCollectionFilters,
   normalizeTagFilters,
   resolveItemKeyFilter,
+  ZoteroLookupError,
 } from "./zotero-http.js";
 
 type FlagValue = string | string[] | boolean;
@@ -1110,7 +1112,12 @@ async function main(): Promise<void> {
       emitError(error.code, error.message, error.details);
       return;
     }
-    if (error instanceof SyncRefusedError || error instanceof SemanticIndexMismatchError) {
+    if (
+      error instanceof SyncRefusedError ||
+      error instanceof SemanticIndexMismatchError ||
+      error instanceof IndexEmptyError ||
+      error instanceof ZoteroLookupError
+    ) {
       emitError(error.code, error.message);
       return;
     }

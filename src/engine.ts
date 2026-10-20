@@ -576,6 +576,10 @@ function renderManifestMarkdown(manifest: AttachmentManifest): string {
 /** Semantic search refused because this host's embedding model computes
  *  different vectors than the ones the index holds: every score would be
  *  noise. */
+export class IndexEmptyError extends Error {
+  readonly code = "INDEX_EMPTY";
+}
+
 export class SemanticIndexMismatchError extends Error {
   readonly code = "SEMANTIC_INDEX_MISMATCH";
   constructor(similarity: number, config: AppConfig) {
@@ -692,7 +696,12 @@ export async function searchLiterature(
     return wrap([]);
   }
   if (allReadyEntries.length === 0) {
-    throw new Error("No indexed documents found. Run `zotagent sync` first.");
+    throw new IndexEmptyError(
+      config.syncEnabled === false
+        ? `No indexed documents found in ${compactHomePath(config.dataDir)}. Sync is disabled on this host, so the index ` +
+            "has to come from the host that runs sync: point dataDir at its shared copy."
+        : "No indexed documents found. Run `zotagent sync` first.",
+    );
   }
   const readyEntries = itemKeyFilter
     ? allReadyEntries.filter((entry) => itemKeyFilter.has(entry.itemKey))

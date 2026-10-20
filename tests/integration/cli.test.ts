@@ -453,6 +453,20 @@ test("blank query text counts as missing for every query command", () => {
   assert.match(blankFilter.stdout, /"code": "MISSING_ARGUMENT"/);
 });
 
+test("search on an empty index fails with INDEX_EMPTY, without sync advice when sync is disabled", () => {
+  const env = isolatedEnv();
+  const enabled = runCli(["search", "state"], env);
+  assert.equal(enabled.status, 1);
+  assert.match(enabled.stdout, /"code": "INDEX_EMPTY"/);
+  assert.match(enabled.stdout, /Run `zotagent sync` first/);
+
+  const disabled = runCli(["search", "state"], { ...env, ZOTAGENT_SYNC_ENABLED: "false" });
+  assert.equal(disabled.status, 1);
+  assert.match(disabled.stdout, /"code": "INDEX_EMPTY"/);
+  assert.match(disabled.stdout, /Sync is disabled on this host/);
+  assert.doesNotMatch(disabled.stdout, /Run `zotagent sync`/);
+});
+
 test("punctuation-only semantic and metadata queries are invalid arguments", () => {
   const semantic = runCli(["search", "?!", "--semantic"], isolatedEnv());
   assert.equal(semantic.status, 1);

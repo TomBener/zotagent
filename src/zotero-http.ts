@@ -74,6 +74,16 @@ export function isValidCollectionKey(key: string): boolean {
 // (https://www.zotero.org/support/dev/web_api/v3/basics). We still verify
 // `Total-Results` against the parsed line count so a future API change that
 // silently truncates would surface as an error instead of dropped items.
+export class ZoteroLookupError extends Error {
+  constructor(
+    public readonly code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ZoteroLookupError";
+  }
+}
+
 export async function fetchTopLevelItemKeysByTags(
   tags: string[],
   readConfig: ZoteroCredentials,
@@ -127,8 +137,10 @@ export async function fetchTopLevelItemKeysByCollections(
     const text = await response.text();
     if (!response.ok) {
       if (response.status === 404) {
-        throw new Error(
-          `Zotero collection ${collectionKey} not found (404). Verify the collection key in your library.`,
+        throw new ZoteroLookupError(
+          "COLLECTION_NOT_FOUND",
+          `Zotero collection ${collectionKey} not found (404). Verify the collection key: it is the 8-character key ` +
+            "at the end of the collection's URL in the Zotero web library.",
         );
       }
       const detail = text.trim() || response.statusText;

@@ -5,6 +5,7 @@ import {
   fetchTopLevelItemKeysByCollections,
   isValidCollectionKey,
   normalizeCollectionFilters,
+  ZoteroLookupError,
 } from "../../src/zotero-http.js";
 import type { ZoteroCredentials } from "../../src/zotero-http.js";
 
@@ -133,6 +134,9 @@ test("fetchTopLevelItemKeysByCollections surfaces 404 with a clear unknown-colle
 
   await assert.rejects(
     () => fetchTopLevelItemKeysByCollections(["ZZZZ9999"], userReadConfig, fetchMock),
-    /Zotero collection ZZZZ9999 not found \(404\)/u,
+    (error: unknown) =>
+      error instanceof ZoteroLookupError &&
+      error.code === "COLLECTION_NOT_FOUND" &&
+      /Zotero collection ZZZZ9999 not found \(404\)/u.test(error.message),
   );
 });
