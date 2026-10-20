@@ -342,7 +342,7 @@ test("loadCatalog strips Zotero rich-text markup from titles and journal names",
       },
       {
         // Angle brackets that are not Zotero's rich-text tags are real text.
-        title: "When a < b and <正> markers survive",
+        title: "When a < b, x<b holds whenever y>z, and <正> markers survive",
         type: "article-journal",
         "zotero-item-key": "ART00002",
       },
@@ -357,5 +357,5 @@ test("loadCatalog strips Zotero rich-text markup from titles and journal names",
   assert.equal(catalog.attachments[0]?.title, "Victorious in defeat: the life and times of Chiang Kai-shek");
   assert.equal(byKey.get("ART00001")?.title, "Reading Shenbao and CO2 in the 21st century");
   assert.equal(byKey.get("ART00001")?.journal, "Modern China");
-  assert.equal(byKey.get("ART00002")?.title, "When a < b and <正> markers survive");
+  assert.equal(byKey.get("ART00002")?.title, "When a < b, x<b holds whenever y>z, and <正> markers survive");
 });

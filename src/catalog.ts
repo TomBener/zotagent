@@ -44,12 +44,19 @@ export interface LoadedCatalog extends CatalogData {
 // <sub>, <sup>, <span class="nocase">, small-caps spans) and Better CSL JSON
 // exports them verbatim. Left in, they break substring matching — "Chiang
 // Kai-<span class="nocase">shek</span>" never matches "Chiang Kai-shek" — and
-// leak into every title an agent quotes. Only these tags are removed: other
-// angle brackets in a title are text.
-const RICH_TEXT_TAG_RE = /<\/?(?:i|b|sub|sup|sc|span)(?:\s[^>]*)?>/giu;
+// leak into every title an agent quotes. Only these exact tag shapes are
+// removed: other angle brackets in a title are text ("a<b and c>d" survives).
+const RICH_TEXT_TAG_RE = /<\/?(?:i|b|sub|sup|sc)>|<span(?:\s+(?:class|style)="[^"]*")+\s*>|<\/?span>/giu;
 
 export function stripRichText(text: string): string {
   return text.replace(RICH_TEXT_TAG_RE, "");
+}
+
+/** The title every command reports: rich text removed, trimmed, and the
+ *  itemKey when nothing is left. loadCatalog and readCatalogFile both use it,
+ *  so sync compares like with like. */
+export function cleanTitle(raw: string, itemKey: string): string {
+  return stripRichText(raw).trim() || itemKey;
 }
 
 const JOURNAL_TYPES = new Set(["article-journal", "article-magazine", "article-newspaper", "article"]);
@@ -255,7 +262,7 @@ export function loadCatalog(config: AppConfig): LoadedCatalog {
     const authors = parsePeople(item.author);
     const editors = authors.names.length > 0 ? { names: [], searchTexts: [] } : parsePeople(item.editor);
     const people = authors.names.length > 0 ? authors : editors;
-    const title = stripRichText(item.title || "").trim() || itemKey;
+    const title = cleanTitle(item.title || "", itemKey);
     const type = (item.type || "").trim() || undefined;
     const rawFilePaths = splitFileField(item.file);
     filePathCount += rawFilePaths.length;

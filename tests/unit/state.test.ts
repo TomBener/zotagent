@@ -102,3 +102,15 @@ test("readCatalogFile reads titles written with Zotero rich-text markup as clean
 
   assert.equal(readCatalogFile(catalogPath).entries[0]?.title, "Victorious in defeat: Chiang Kai-shek");
 });
+
+test("readCatalogFile falls back to the itemKey for a title that is only markup, as loadCatalog does", () => {
+  const indexDir = tempIndexDir();
+  const catalogPath = join(indexDir, "catalog.json");
+  writeCatalogFile(catalogPath, {
+    version: 1,
+    generatedAt: "2026-01-01T00:00:00.000Z",
+    entries: [{ ...sampleEntry("DOC1"), title: " <i></i> " }],
+  });
+
+  assert.equal(readCatalogFile(catalogPath).entries[0]?.title, "ITEM-DOC1");
+});

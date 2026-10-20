@@ -1,6 +1,6 @@
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 
-import { stripRichText } from "./catalog.js";
+import { cleanTitle } from "./catalog.js";
 import type { CatalogCounts, CatalogEntry, CatalogFile } from "./types.js";
 import { compactHomePath, ensureParentDir, exists, normalizePathForLookup } from "./utils.js";
 
@@ -11,7 +11,7 @@ import { compactHomePath, ensureParentDir, exists, normalizePathForLookup } from
 function hydrateCatalogEntry(entry: CatalogEntry): CatalogEntry {
   return {
     ...entry,
-    title: stripRichText(entry.title),
+    title: cleanTitle(entry.title, entry.itemKey),
     filePath: normalizePathForLookup(entry.filePath),
   };
 }
