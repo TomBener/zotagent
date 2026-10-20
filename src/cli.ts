@@ -131,6 +131,11 @@ function parseArgs(argv: string[]): ParsedArgs {
   return { positionals, flags };
 }
 
+function withWarnings<T extends { warnings?: string[] }>(data: T, extra: string[] | undefined): T {
+  if (!extra || extra.length === 0) return data;
+  return { ...data, warnings: [...(data.warnings ?? []), ...extra] };
+}
+
 // The words after the subcommand, trimmed: a blank query ("  ") counts as
 // missing instead of reaching a search that cannot use it.
 function positionalText(positionals: string[]): string {
@@ -799,7 +804,7 @@ async function main(): Promise<void> {
         }
         const limit = limitInput.value ?? 10;
         const minScore = minScoreInput.value;
-        const itemKeys =
+        const filter =
           tagInput.tags || collectionInput.collectionKeys
             ? await resolveItemKeyFilter(
                 tagInput.tags,
@@ -810,10 +815,10 @@ async function main(): Promise<void> {
         const data = await searchLiterature(query, limit, overrides, openQmdClient, {
           ...(semantic ? { semantic: true } : {}),
           ...(minScore !== undefined ? { minScore } : {}),
-          ...(itemKeys !== undefined ? { itemKeys } : {}),
+          ...(filter !== undefined ? { itemKeys: filter.itemKeys } : {}),
           ...(semantic ? { progress: (message: string) => process.stderr.write(`${message}\n`) } : {}),
         });
-        emitOk(data);
+        emitOk(withWarnings(data, filter?.warnings));
         return;
       }
 
@@ -918,7 +923,7 @@ async function main(): Promise<void> {
           return;
         }
         const limit = limitInput.value ?? 20;
-        const itemKeys =
+        const filter =
           tagInput.tags || collectionInput.collectionKeys
             ? await resolveItemKeyFilter(
                 tagInput.tags,
@@ -931,9 +936,9 @@ async function main(): Promise<void> {
           ...(getBooleanFlag(parsed.flags, "indexed") ? { indexed: true } : {}),
           ...(getBooleanFlag(parsed.flags, "abstract") ? { includeAbstract: true } : {}),
           ...(hasFilters ? { filters } : {}),
-          ...(itemKeys !== undefined ? { itemKeys } : {}),
+          ...(filter !== undefined ? { itemKeys: filter.itemKeys } : {}),
         });
-        emitOk(data);
+        emitOk(withWarnings(data, filter?.warnings));
         return;
       }
 

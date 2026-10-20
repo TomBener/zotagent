@@ -32,7 +32,7 @@ test("resolveItemKeyFilter passes through a tag-only filter", async () => {
     assert.match(url, /\/items\/top\?/u);
     return ["AAAA1111", "BBBB2222"];
   }));
-  assert.deepEqual(result, ["AAAA1111", "BBBB2222"]);
+  assert.deepEqual(result, { itemKeys: ["AAAA1111", "BBBB2222"], warnings: [] });
 });
 
 test("resolveItemKeyFilter intersects tag and collection matches, keeping tag order", async () => {
@@ -46,7 +46,7 @@ test("resolveItemKeyFilter intersects tag and collection matches, keeping tag or
         : ["AAAA1111", "BBBB2222", "CCCC3333"],
     ),
   );
-  assert.deepEqual(result, ["BBBB2222", "CCCC3333"]);
+  assert.deepEqual(result, { itemKeys: ["BBBB2222", "CCCC3333"], warnings: [] });
 });
 
 test("resolveItemKeyFilter yields an empty list when the intersection is empty", async () => {
@@ -56,5 +56,21 @@ test("resolveItemKeyFilter yields an empty list when the intersection is empty",
     readConfig,
     keysFetchMock((url) => (url.includes("/collections/") ? ["ZZZZ9999"] : ["AAAA1111"])),
   );
-  assert.deepEqual(result, []);
+  assert.deepEqual(result?.itemKeys, []);
+  assert.deepEqual(result?.warnings, ["The tag and collection filters each match items, but no top-level item matches both."]);
+});
+
+test("resolveItemKeyFilter warns when a tag or collection matches no top-level item", async () => {
+  const empty = keysFetchMock(() => []);
+  const oneTag = await resolveItemKeyFilter(["nonexistent-tag"], undefined, readConfig, empty);
+  assert.deepEqual(oneTag?.itemKeys, []);
+  assert.equal(oneTag?.warnings.length, 1);
+  assert.match(oneTag!.warnings[0]!, /^No top-level item carries the tag "nonexistent-tag"\. Check the spelling/);
+
+  const twoTags = await resolveItemKeyFilter(["a", "b"], undefined, readConfig, empty);
+  assert.match(twoTags!.warnings[0]!, /all of the tags "a", "b"; repeated --tag flags must all match/);
+
+  const both = await resolveItemKeyFilter(["a"], ["COLL0001"], readConfig, empty);
+  assert.equal(both?.warnings.length, 2);
+  assert.match(both!.warnings[1]!, /^Collection "COLL0001" has no top-level items/);
 });

@@ -166,24 +166,61 @@ function assertUnpaginatedKeys(response: Response, itemKeys: string[], url: stri
   }
 }
 
+export interface ItemKeyFilter {
+  itemKeys: string[];
+  /** Why the filter matched nothing, when it did; empty otherwise. */
+  warnings: string[];
+}
+
+const quoteList = (values: string[]): string => values.map((value) => `"${value}"`).join(", ");
+
 /**
  * Resolve `--tag` / `--collection-key` filters to the top-level itemKeys that
  * satisfy BOTH (intersection when both are present). Returns undefined when
  * neither filter is given, so callers can distinguish "no filter" from
- * "filter matched nothing".
+ * "filter matched nothing". A filter that matches nothing carries a warning:
+ * Zotero answers a misspelled tag with an empty list, not an error, so without
+ * one an agent reads "0 results" as "the library has nothing on this".
  */
 export async function resolveItemKeyFilter(
   tags: string[] | undefined,
   collectionKeys: string[] | undefined,
   readConfig: ZoteroCredentials,
   fetchImpl: FetchLike = fetch,
-): Promise<string[] | undefined> {
+): Promise<ItemKeyFilter | undefined> {
   const tagItemKeys = tags ? await fetchTopLevelItemKeysByTags(tags, readConfig, fetchImpl) : undefined;
   const collectionItemKeys = collectionKeys
     ? await fetchTopLevelItemKeysByCollections(collectionKeys, readConfig, fetchImpl)
     : undefined;
-  if (tagItemKeys === undefined) return collectionItemKeys;
-  if (collectionItemKeys === undefined) return tagItemKeys;
-  const collectionSet = new Set(collectionItemKeys);
-  return tagItemKeys.filter((key) => collectionSet.has(key));
+  if (tagItemKeys === undefined && collectionItemKeys === undefined) return undefined;
+
+  const warnings: string[] = [];
+  if (tagItemKeys !== undefined && tagItemKeys.length === 0) {
+    const names = normalizeTagFilters(tags!);
+    warnings.push(
+      names.length === 1
+        ? `No top-level item carries the tag ${quoteList(names)}. Check the spelling: Zotero matches tags exactly ` +
+            "apart from case, and tags on attachments or notes do not count."
+        : `No top-level item carries all of the tags ${quoteList(names)}; repeated --tag flags must all match. ` +
+            "Check the spelling of each.",
+    );
+  }
+  if (collectionItemKeys !== undefined && collectionItemKeys.length === 0) {
+    const keys = normalizeCollectionFilters(collectionKeys!);
+    warnings.push(
+      `${keys.length === 1 ? "Collection" : "Collections"} ${quoteList(keys)} ` +
+        `${keys.length === 1 ? "has" : "have"} no top-level items; items in subcollections are not included.`,
+    );
+  }
+  let itemKeys: string[];
+  if (tagItemKeys === undefined) itemKeys = collectionItemKeys!;
+  else if (collectionItemKeys === undefined) itemKeys = tagItemKeys;
+  else {
+    const collectionSet = new Set(collectionItemKeys);
+    itemKeys = tagItemKeys.filter((key) => collectionSet.has(key));
+    if (itemKeys.length === 0 && warnings.length === 0) {
+      warnings.push("The tag and collection filters each match items, but no top-level item matches both.");
+    }
+  }
+  return { itemKeys, warnings };
 }
