@@ -51,7 +51,7 @@ Chinese trad/simp folding: keyword `search`, `search-in`, and `metadata` match a
 
 Paraphrase by default and cite in **Pandoc source form** using the returned `itemKey` with `pageStart` / `pageEnd` as the locator. Reach for a verbatim quote only when the exact wording matters (a distinctive phrase, primary-source quotation, or a definition) — quoting indiscriminately turns the document into a transcript.
 
-`pageStart` / `pageEnd` count pages of the PDF file, not the numbers printed on them. They agree for most journal articles, but books and scans with front matter run ahead: printed p. 96 can come back as `pageStart: 98`. Before citing a book or scan, find the printed number in the `passage` or an `expand` slice (running heads and folios usually survive extraction) and cite that; when none is visible, treat `pageStart` as approximate.
+`pageStart` / `pageEnd` are positions in the PDF file, counted from 1, not the page numbers printed in the paper or book. A journal article printed as pp. 1360–1380 comes back as pages 1–21, and a book's front matter shifts every page (printed p. 96 can come back as `pageStart: 98`).
 
 - Paraphrase + locator: `[@itemKey, p. 23]`
 - Page range: `[@itemKey, p. 23-25]`
