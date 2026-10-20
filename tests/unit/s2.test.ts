@@ -455,9 +455,23 @@ test("Semantic Scholar answers an unknown paper id with PAPER_NOT_FOUND", async 
     await assert.rejects(call, (error: unknown) => {
       assert.ok(error instanceof SemanticScholarError);
       assert.equal(error.code, "PAPER_NOT_FOUND");
-      assert.match(error.message, /^Paper with id DOI:10\.1000\/nope not found\. /);
+      assert.match(error.message, /^Paper with id DOI:10\.1000\/nope not found\. Check the identifier/);
       assert.match(error.message, /zotagent s2 "<title>"/);
       return true;
     });
   }
+});
+
+test("PAPER_NOT_FOUND keeps one period after S2's reason and stays off text search", async () => {
+  const notFound = (body: unknown): typeof fetch => async () =>
+    new Response(JSON.stringify(body), { status: 404, headers: { "Content-Type": "application/json" } });
+
+  await assert.rejects(
+    () => getSemanticScholarPaper("DOI:10.1000/nope", { semanticScholarApiKey: "k" }, notFound({ error: "Paper not found." })),
+    (error: unknown) => error instanceof SemanticScholarError && /^Paper not found\. Check/.test(error.message),
+  );
+  await assert.rejects(
+    () => searchSemanticScholar("state capacity", { limit: 1 }, { semanticScholarApiKey: "k" }, notFound({ error: "Not Found" })),
+    (error: unknown) => !(error instanceof SemanticScholarError),
+  );
 });

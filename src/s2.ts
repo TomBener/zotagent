@@ -234,26 +234,28 @@ export function parseRetryAfterMs(headerValue: string | null): number {
 
 // Single entry point for every Semantic Scholar GET, so the 429 handling is
 // uniform across search, single-paper, and citation-graph calls. Each attempt
-// gets its own timeout budget; a 404 becomes PAPER_NOT_FOUND, and other
-// failures keep readJsonResponse's plain Error wording.
+// gets its own timeout budget. On the endpoints addressed by a paper id
+// (`byPaperId`), a 404 becomes PAPER_NOT_FOUND; other failures keep
+// readJsonResponse's plain Error wording.
 async function fetchSemanticScholarJson<T>(
   url: string,
   config: AppConfig,
   fetchImpl: FetchLike,
+  byPaperId = false,
 ): Promise<T> {
   for (let attempt = 0; ; attempt++) {
     const response = await fetchWithTimeout(fetchImpl, url, {
       headers: getSemanticScholarHeaders(config),
     }, REQUEST_TIMEOUT_MS);
-    if (response.status === 404) {
-      // Only the paper endpoints take an identifier, and S2 answers an
-      // identifier it does not know with 404 and {"error": "Paper with id … not
-      // found"}: the most common failure of s2-refs / s2-citations / add.
+    if (byPaperId && response.status === 404) {
+      // S2 answers an identifier it does not know with 404 and {"error":
+      // "Paper with id … not found"}: the most common failure of s2-refs /
+      // s2-citations / add --s2-paper-id.
       const body = await response.text().catch(() => "");
       let reason = "";
       try {
         const parsed = JSON.parse(body) as { error?: unknown };
-        if (typeof parsed.error === "string") reason = parsed.error;
+        if (typeof parsed.error === "string") reason = parsed.error.trim().replace(/\.+$/u, "");
       } catch {
         // Not JSON; fall back to the generic wording below.
       }
@@ -393,7 +395,7 @@ async function fetchPaper(
   url.searchParams.set("fields", PAPER_FIELDS);
 
   return mapPaper(
-    await fetchSemanticScholarJson<SemanticScholarPaperApiRow>(url.toString(), config, fetchImpl),
+    await fetchSemanticScholarJson<SemanticScholarPaperApiRow>(url.toString(), config, fetchImpl, true),
   );
 }
 
@@ -511,6 +513,7 @@ async function fetchPaperLinks(
     url.toString(),
     config,
     fetchImpl,
+    true,
   );
   const rows = Array.isArray(data.data) ? data.data : [];
   const results: SemanticScholarLinkedPaperRow[] = [];
