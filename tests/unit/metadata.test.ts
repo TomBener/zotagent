@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { searchMetadata } from "../../src/metadata.js";
+import { MetadataQueryError, searchMetadata } from "../../src/metadata.js";
 
 function createFixturePaths(root: string): {
   attachmentsRoot: string;
@@ -428,11 +428,13 @@ test("searchMetadata field-filter flags AND across fields and allow empty query"
   assert.ok(queryPlusFilter.results[0]?.matchedFields.includes("title"));
   assert.ok(queryPlusFilter.results[0]?.matchedFields.includes("author"));
 
-  // Empty query and empty filters rejected.
-  await assert.rejects(
-    () => searchMetadata("", 10, overrides, {}),
-    /requires a query or at least one field filter/,
-  );
+  // Empty query and empty filters rejected, as are filters with nothing to match.
+  for (const options of [{}, { filters: { title: "<>" } }]) {
+    await assert.rejects(
+      () => searchMetadata("", 10, overrides, options),
+      (error) => error instanceof MetadataQueryError && /at least one letter or digit/.test(error.message),
+    );
+  }
 });
 
 test("searchMetadata filters locally by Zotero item keys", async () => {

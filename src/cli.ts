@@ -19,7 +19,7 @@ import {
 import { emitError, emitOk } from "./json.js";
 import { JsonInputError } from "./json-input.js";
 import { KeywordQuerySyntaxError } from "./keyword-db.js";
-import { searchMetadata } from "./metadata.js";
+import { MetadataQueryError, searchMetadata } from "./metadata.js";
 import { openQmdClient } from "./qmd.js";
 import { listRecentItems, type RecentSort } from "./recent.js";
 import {
@@ -127,6 +127,12 @@ function parseArgs(argv: string[]): ParsedArgs {
     i++;
   }
   return { positionals, flags };
+}
+
+// The words after the subcommand, trimmed: a blank query ("  ") counts as
+// missing instead of reaching a search that cannot use it.
+function positionalText(positionals: string[]): string {
+  return positionals.slice(1).join(" ").trim();
 }
 
 function getStringFlag(flags: Record<string, FlagValue>, ...keys: string[]): string | undefined {
@@ -599,7 +605,7 @@ async function main(): Promise<void> {
       }
 
       case "s2": {
-        const query = parsed.positionals.slice(1).join(" ");
+        const query = positionalText(parsed.positionals);
         if (!query) {
           emitError("MISSING_ARGUMENT", 'Missing Semantic Scholar search text. Use: zotagent s2 "<text>"');
           return;
@@ -726,13 +732,19 @@ async function main(): Promise<void> {
       }
 
       case "search": {
-        const query = parsed.positionals.slice(1).join(" ");
+        const query = positionalText(parsed.positionals);
         if (!query) {
           emitError("MISSING_ARGUMENT", 'Missing search text. Use: zotagent search "<text>"');
           return;
         }
         const semantic = getBooleanFlag(parsed.flags, "semantic");
         const keyword = getBooleanFlag(parsed.flags, "keyword");
+        // Keyword search rejects punctuation-only text itself; the vector
+        // search would embed it and return arbitrary documents as hits.
+        if (semantic && !/[\p{L}\p{N}]/u.test(query)) {
+          emitError("INVALID_ARGUMENT", `The search text ${JSON.stringify(query)} has no words to search for, only punctuation.`);
+          return;
+        }
         if (semantic && keyword) {
           emitError("UNEXPECTED_ARGUMENT", '`--keyword` cannot be combined with `--semantic`.');
           return;
@@ -804,7 +816,7 @@ async function main(): Promise<void> {
       }
 
       case "search-in": {
-        const query = parsed.positionals.slice(1).join(" ");
+        const query = positionalText(parsed.positionals);
         if (!query) {
           emitError("MISSING_ARGUMENT", 'Missing search text. Use: zotagent search-in "<text>" --key <key>');
           return;
@@ -850,7 +862,7 @@ async function main(): Promise<void> {
           );
           return;
         }
-        const query = parsed.positionals.slice(1).join(" ");
+        const query = positionalText(parsed.positionals);
         const filterFlagFields: MetadataField[] = ["author", "year", "title", "journal", "publisher"];
         const filters: Partial<Record<MetadataField, string>> = {};
         for (const field of filterFlagFields) {
@@ -858,7 +870,7 @@ async function main(): Promise<void> {
             emitError("INVALID_ARGUMENT", `\`--${field}\` requires a value.`);
             return;
           }
-          const value = getStringFlag(parsed.flags, field);
+          const value = getStringFlag(parsed.flags, field)?.trim();
           if (value) filters[field] = value;
         }
         const tagInput = parseTagFilters(parsed.flags);
@@ -1087,7 +1099,7 @@ async function main(): Promise<void> {
         return;
     }
   } catch (error) {
-    if (error instanceof KeywordQuerySyntaxError) {
+    if (error instanceof KeywordQuerySyntaxError || error instanceof MetadataQueryError) {
       emitError(
         "INVALID_ARGUMENT",
         error.message,

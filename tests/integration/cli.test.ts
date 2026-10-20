@@ -429,6 +429,50 @@ test("sync names the unreadable ZOTAGENT_SYNC_ENABLED value that disabled it", (
   assert.match(result.stdout, /ZOTAGENT_SYNC_ENABLED is 'maybe', which cannot be read as true or false/);
 });
 
+// A regression in the query checks would otherwise run a real search against
+// the developer's config and index.
+function isolatedEnv(): NodeJS.ProcessEnv {
+  const home = mkdtempSync(join(tmpdir(), "zotagent-cli-isolated-"));
+  return {
+    ...process.env,
+    HOME: home,
+    ZOTAGENT_BIBLIOGRAPHY_JSON_PATH: join(home, "bibliography.json"),
+    ZOTAGENT_ATTACHMENTS_ROOT: join(home, "attachments"),
+    ZOTAGENT_DATA_DIR: join(home, "data"),
+  };
+}
+
+test("blank query text counts as missing for every query command", () => {
+  const env = isolatedEnv();
+  for (const args of [["search", "  "], ["search", " ", "--semantic"], ["search-in", " ", "--key", "ITEM0001"], ["metadata", " "], ["s2", "  "]]) {
+    const result = runCli(args, env);
+    assert.equal(result.status, 1, args.join(" "));
+    assert.match(result.stdout, /"code": "MISSING_ARGUMENT"/, args.join(" "));
+  }
+  const blankFilter = runCli(["metadata", "--title", "  "], env);
+  assert.match(blankFilter.stdout, /"code": "MISSING_ARGUMENT"/);
+});
+
+test("punctuation-only semantic and metadata queries are invalid arguments", () => {
+  const semantic = runCli(["search", "?!", "--semantic"], isolatedEnv());
+  assert.equal(semantic.status, 1);
+  assert.match(semantic.stdout, /"code": "INVALID_ARGUMENT"/);
+  assert.match(semantic.stdout, /has no words to search for, only punctuation/);
+
+  const root = mkdtempSync(join(tmpdir(), "zotagent-cli-metadata-punct-"));
+  const bibliographyJsonPath = join(root, "bibliography.json");
+  writeFileSync(bibliographyJsonPath, "[]", "utf-8");
+  const metadata = runCli(["metadata", "--title", "<>"], {
+    ...process.env,
+    HOME: root,
+    ZOTAGENT_BIBLIOGRAPHY_JSON_PATH: bibliographyJsonPath,
+    ZOTAGENT_ATTACHMENTS_ROOT: root,
+    ZOTAGENT_DATA_DIR: join(root, "data"),
+  });
+  assert.equal(metadata.status, 1);
+  assert.match(metadata.stdout, /"code": "INVALID_ARGUMENT"/);
+});
+
 test("add requires doi or title", () => {
   const result = runCli(["add"]);
 

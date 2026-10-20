@@ -5,6 +5,8 @@ import { getReadyEntries, readCatalogFile } from "./state.js";
 import type { BibliographyRecord, MetadataField, MetadataSearchResultRow } from "./types.js";
 import { compactHomePath } from "./utils.js";
 
+export class MetadataQueryError extends Error {}
+
 const FIELD_ORDER: MetadataField[] = ["title", "author", "journal", "publisher", "abstract", "year"];
 const FIELD_WEIGHTS: Record<MetadataField, number> = {
   title: 6,
@@ -107,7 +109,9 @@ export async function searchMetadata(
   const hasFilters = filterEntries.length > 0 || itemKeyFilter !== undefined;
 
   if (!hasQuery && !hasFilters) {
-    throw new Error("Metadata search requires a query or at least one field filter.");
+    throw new MetadataQueryError(
+      "Metadata search needs a query or field filter with at least one letter or digit to match.",
+    );
   }
 
   const selectedFields = new Set(options.fields ?? FIELD_ORDER);
