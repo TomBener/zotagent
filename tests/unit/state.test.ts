@@ -89,3 +89,16 @@ test("readCatalogFile on a missing file returns the empty catalog", () => {
 
   assert.deepEqual(read, { version: 1, generatedAt: "", entries: [] });
 });
+
+test("readCatalogFile reads titles written with Zotero rich-text markup as clean", () => {
+  const indexDir = tempIndexDir();
+  const catalogPath = join(indexDir, "catalog.json");
+  // A catalog written before titles were cleaned at load time.
+  writeCatalogFile(catalogPath, {
+    version: 1,
+    generatedAt: "2026-01-01T00:00:00.000Z",
+    entries: [{ ...sampleEntry("DOC1"), title: "Victorious in defeat: Chiang Kai-<span class=\"nocase\">shek</span>" }],
+  });
+
+  assert.equal(readCatalogFile(catalogPath).entries[0]?.title, "Victorious in defeat: Chiang Kai-shek");
+});

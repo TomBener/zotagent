@@ -1,13 +1,17 @@
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 
+import { stripRichText } from "./catalog.js";
 import type { CatalogCounts, CatalogEntry, CatalogFile } from "./types.js";
 import { compactHomePath, ensureParentDir, exists, normalizePathForLookup } from "./utils.js";
 
 // Stored filePaths are home-relative (`~/…`, see compactCatalogEntry);
-// expand them to this machine's home on read.
+// expand them to this machine's home on read. Titles lose Zotero's rich-text
+// markup here as loadCatalog drops it from the bibliography, so a catalog
+// written before that reads clean, and sync sees no title change to re-index.
 function hydrateCatalogEntry(entry: CatalogEntry): CatalogEntry {
   return {
     ...entry,
+    title: stripRichText(entry.title),
     filePath: normalizePathForLookup(entry.filePath),
   };
 }

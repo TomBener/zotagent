@@ -518,7 +518,7 @@ test("runSync skips unchanged ready pdfs and refreshes qmd contexts", async () =
   assert.match(logBody, /paper\.pdf: reused existing indexed output/);
 });
 
-test("runSync cleans rich-text markup out of a stored title without re-extracting", async () => {
+test("runSync reads a stored title with rich-text markup as clean and keeps the extracted artifacts", async () => {
   const root = mkdtempSync(join(tmpdir(), "zotagent-sync-richtext-"));
   const attachmentsRoot = join(root, "attachments");
   const dataDir = join(root, "data");
@@ -640,7 +640,8 @@ test("runSync cleans rich-text markup out of a stored title without re-extractin
     fakeFactory,
   );
 
-  // The title change alone re-indexes the entry; the PDF is not re-extracted.
+  // The stored title reads clean, so the entry counts as unchanged: nothing is
+  // re-extracted, and the rewritten catalog and qmd context carry the clean title.
   assert.equal(result.stats.skippedAttachments, 1);
   assert.equal(result.stats.updatedAttachments, 0);
   assert.deepEqual(contexts, ["Chiang Kai-shek\nA Author"]);
