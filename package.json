@@ -23,12 +23,12 @@
   },
   "dependencies": {
     "@mozilla/readability": "0.6.0",
-    "@opendataloader/pdf": "2.5.12",
+    "@opendataloader/pdf": "2.5.22",
     "@tobilu/qmd": "2.8.3",
-    "better-sqlite3": "13.0.3",
+    "better-sqlite3": "13.2.0",
     "js-tiktoken": "1.0.21",
     "jszip": "3.10.2",
-    "linkedom": "0.18.13",
+    "linkedom": "0.18.15",
     "opencc-js": "1.4.2"
   },
   "devDependencies": {
@@ -38,7 +38,7 @@
     "typescript": "5.9.3"
   },
   "allowScripts": {
-    "better-sqlite3@13.0.3": true,
+    "better-sqlite3@13.2.0": true,
     "esbuild@0.28.1": true,
     "fsevents@2.3.3": true,
     "node-llama-cpp@3.20.0": true,
