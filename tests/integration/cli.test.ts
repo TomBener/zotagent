@@ -467,6 +467,28 @@ test("search on an empty index fails with INDEX_EMPTY, without sync advice when 
   assert.doesNotMatch(disabled.stdout, /Run `zotagent sync`/);
 });
 
+test("search-in on a sync-disabled host without a keyword index fails with INDEX_EMPTY", async () => {
+  const fixture = await createMultiIndexedFixture();
+  const result = runCli(
+    [
+      "search-in",
+      "Unique",
+      "--key",
+      fixture.citationKey,
+      "--bibliography",
+      fixture.bibliographyPath,
+      "--attachments-root",
+      fixture.attachmentsRoot,
+      "--data-dir",
+      fixture.dataDir,
+    ],
+    { ...isolatedEnv(), ZOTAGENT_SYNC_ENABLED: "false" },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /"code": "INDEX_EMPTY"/);
+  assert.match(result.stdout, /re-copy the index directory/);
+});
+
 test("punctuation-only semantic and metadata queries are invalid arguments", () => {
   const semantic = runCli(["search", "?!", "--semantic"], isolatedEnv());
   assert.equal(semantic.status, 1);
@@ -1102,7 +1124,7 @@ test("search-in searches across all attachments when one key maps to multiple PD
     fixture.dataDir,
     "--limit",
     "10",
-  ]);
+  ], isolatedEnv()); // the fixture has no keyword index, which only a host with sync enabled builds
 
   assert.equal(result.status, 0);
   const parsed = JSON.parse(result.stdout) as {

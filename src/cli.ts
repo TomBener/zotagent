@@ -853,7 +853,7 @@ async function main(): Promise<void> {
           emitOk(data);
           return;
         } catch (error) {
-          if (error instanceof KeywordQuerySyntaxError) {
+          if (error instanceof KeywordQuerySyntaxError || error instanceof IndexEmptyError) {
             throw error;
           }
           emitDocumentLookupError("SEARCH_IN", error);

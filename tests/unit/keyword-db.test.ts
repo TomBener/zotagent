@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import Database from "better-sqlite3";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -887,4 +888,53 @@ test("updateIndex still deletes rows when a manifest goes missing", async () => 
   } finally {
     await client.close();
   }
+});
+
+test("a sync-disabled host searches an index another version built, without migrating it", async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), "zotagent-keyword-readonly-"));
+  const paths = getDataPaths(dataDir);
+  mkdirSync(paths.indexDir, { recursive: true });
+  const docKey = "c".repeat(40);
+  // The FTS shape before contentless_delete, which ensureSchema drops.
+  const setup = new Database(paths.keywordDbPath);
+  setup.exec("CREATE TABLE keyword_doc_lookup (docId INTEGER PRIMARY KEY, docKey TEXT NOT NULL UNIQUE)");
+  setup.exec("CREATE VIRTUAL TABLE keyword_block_fts USING fts5(text, tokenize='porter unicode61')");
+  setup.prepare("INSERT INTO keyword_doc_lookup (docId, docKey) VALUES (1, ?)").run(docKey);
+  setup.prepare("INSERT INTO keyword_block_fts (rowid, text) VALUES (?, ?)").run(1 << 24, "population ageing in china");
+  setup.close();
+  const schema = (db: Database.Database) => db.prepare("SELECT name, sql FROM sqlite_master ORDER BY name").all();
+  const before = new Database(paths.keywordDbPath, { readonly: true });
+  const schemaBefore = schema(before);
+  before.close();
+
+  const index = await openKeywordIndex({ ...createConfig(dataDir), syncEnabled: false });
+  try {
+    const results = await index.searchDocs("ageing", 10);
+    assert.deepEqual(results.map((row) => [row.docKey, row.blockIndex]), [[docKey, 0]]);
+    await assert.rejects(index.rebuildIndex([]), /read-only/);
+    await assert.rejects(index.vacuum(), /read-only/);
+  } finally {
+    await index.close();
+  }
+
+  const after = new Database(paths.keywordDbPath, { readonly: true });
+  try {
+    assert.deepEqual(schema(after), schemaBefore);
+    assert.deepEqual(after.prepare("SELECT docKey FROM keyword_doc_lookup").all(), [{ docKey }]);
+  } finally {
+    after.close();
+  }
+});
+
+test("a sync-disabled host opening a missing keyword index creates nothing", async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), "zotagent-keyword-readonly-missing-"));
+  const index = await openKeywordIndex({ ...createConfig(dataDir), syncEnabled: false });
+  try {
+    assert.equal(await index.isEmpty(), true);
+    assert.deepEqual(await index.searchDocs("ageing", 10), []);
+    assert.deepEqual(await index.searchBlocks("ageing", 10), []);
+  } finally {
+    await index.close();
+  }
+  assert.equal(existsSync(getDataPaths(dataDir).indexDir), false);
 });

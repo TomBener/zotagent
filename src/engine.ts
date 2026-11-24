@@ -578,6 +578,16 @@ export class IndexEmptyError extends Error {
   readonly code = "INDEX_EMPTY";
 }
 
+// A host with sync disabled only reads the index the syncing host
+// maintains, so a missing or empty keyword index there is a copy to repair,
+// not one to rebuild locally.
+function readOnlyKeywordIndexEmptyError(config: AppConfig): IndexEmptyError {
+  return new IndexEmptyError(
+    `The keyword index in ${compactHomePath(config.dataDir)} is missing or empty. Sync is disabled on this host, ` +
+      "so the index has to come from the host that runs sync: re-copy the index directory onto this device.",
+  );
+}
+
 /** Semantic search refused because this host's embedding model computes
  *  different vectors than the ones the index holds: every score would be
  *  noise. */
@@ -781,6 +791,7 @@ export async function searchLiterature(
       const ftsOptions = itemKeyFilter ? { docKeys: readyEntries.map((entry) => entry.docKey) } : undefined;
       let results = await keywordIndex.searchDocs(query, candidateLimit, ftsOptions);
       if (results.length === 0 && allReadyEntries.length > 0 && (await keywordIndex.isEmpty())) {
+        if (config.syncEnabled === false) throw readOnlyKeywordIndexEmptyError(config);
         await keywordIndex.rebuildIndex(allReadyEntries);
         results = await keywordIndex.searchDocs(query, candidateLimit, ftsOptions);
       }
@@ -833,6 +844,7 @@ export async function searchWithinDocuments(
   try {
     let blockResults = await keywordIndex.searchBlocks(query, limit, ftsOptions);
     if (blockResults.length === 0 && readyEntries.length > 0 && (await keywordIndex.isEmpty())) {
+      if (config.syncEnabled === false) throw readOnlyKeywordIndexEmptyError(config);
       await keywordIndex.rebuildIndex(readyEntries);
       blockResults = await keywordIndex.searchBlocks(query, limit, ftsOptions);
     }

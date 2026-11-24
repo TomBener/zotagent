@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -952,6 +952,70 @@ test("searchLiterature keyword mode bootstraps a missing keyword index from exis
   assert.equal(result.results.length, 1);
   assert.equal(result.results[0]!.itemKey, "ITEMB000");
   assert.match(result.results[0]!.passage, /ageing in china/i);
+});
+
+test("search and search-in on a sync-disabled host refuse a missing keyword index instead of building one", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zotagent-keyword-readonly-"));
+  const dataDir = join(root, "data");
+  const indexDir = join(dataDir, "index");
+  const docKey = "b".repeat(40);
+  writeManifest(join(dataDir, "manifests", docKey + MANIFEST_EXT), {
+    docKey,
+    itemKey: "ITEMB000",
+    title: "Ageing in China",
+    authors: ["A"],
+    filePath: "/tmp/readonly.pdf",
+    blocks: [
+      {
+        blockIndex: 0,
+        blockType: "paragraph",
+        sectionPath: ["Body"],
+        text: "Population ageing in China is reshaping care arrangements.",
+        charStart: 0,
+        charEnd: 58,
+        lineStart: 1,
+        lineEnd: 1,
+        isReferenceLike: false,
+      },
+    ],
+  });
+  mkdirSync(indexDir, { recursive: true });
+  writeCatalogFile(join(indexDir, "catalog.json"), {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    entries: [
+      {
+        docKey,
+        itemKey: "ITEMB000",
+        title: "Ageing in China",
+        authors: ["A"],
+        filePath: "/tmp/readonly.pdf",
+        fileExt: "pdf",
+        exists: true,
+        supported: true,
+        extractStatus: "ready",
+        size: 1,
+        mtimeMs: 1,
+        sourceHash: "hash-readonly",
+        lastIndexedAt: new Date().toISOString(),
+      },
+    ],
+  });
+  const overrides = { bibliographyJsonPath: join(root, "bibliography.json"), attachmentsRoot: root, dataDir };
+  const refusesToRebuild = (error: unknown) =>
+    (error as { code?: string }).code === "INDEX_EMPTY" &&
+    /keyword index .* is missing or empty\. Sync is disabled on this host/.test((error as Error).message);
+
+  const previous = process.env.ZOTAGENT_SYNC_ENABLED;
+  try {
+    process.env.ZOTAGENT_SYNC_ENABLED = "false";
+    await assert.rejects(searchLiterature("ageing", 10, overrides), refusesToRebuild);
+    await assert.rejects(searchWithinDocuments("ageing", { key: "ITEMB000" }, 10, overrides), refusesToRebuild);
+  } finally {
+    if (previous === undefined) delete process.env.ZOTAGENT_SYNC_ENABLED;
+    else process.env.ZOTAGENT_SYNC_ENABLED = previous;
+  }
+  assert.equal(existsSync(join(indexDir, "keyword.sqlite")), false);
 });
 
 test("searchLiterature keyword mode maps stemmed hits to the matching block", async () => {

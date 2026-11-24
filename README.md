@@ -94,7 +94,7 @@ Any field can also come from an environment variable such as `ZOTAGENT_DATA_DIR`
 
 ### Sharing the index across machines
 
-Point `dataDir` on every machine at the same synced folder, run `sync` only on the machine that holds all the attachment files, and set `"syncEnabled": false` on the others (or `ZOTAGENT_SYNC_ENABLED=false`). There, `sync` stops with `SYNC_DISABLED` before touching anything; without the guard, a stray `sync` would see every attachment as missing and wipe the shared index. A value that cannot be read as true or false also disables sync. Lookups (`search`, `search-in`, `metadata`, `blocks`, `expand`, `fulltext`) keep working.
+Point `dataDir` on every machine at the same synced folder, run `sync` only on the machine that holds all the attachment files, and set `"syncEnabled": false` on the others (or `ZOTAGENT_SYNC_ENABLED=false`). There, `sync` stops with `SYNC_DISABLED` before touching anything; without the guard, a stray `sync` would see every attachment as missing and wipe the shared index. A value that cannot be read as true or false also disables sync. Lookups (`search`, `search-in`, `metadata`, `blocks`, `expand`, `fulltext`) keep working, and keyword `search` and `search-in` leave the keyword index as it is: a missing or empty one fails with `INDEX_EMPTY` instead of being rebuilt there.
 
 `search --semantic` also needs the same embedding model file on every machine. QMD caches it under `~/.cache/qmd/models/`, and a machine holding a different revision fails with `SEMANTIC_INDEX_MISMATCH` rather than returning random results. Copy the file from the syncing machine and compare with `shasum -a 256`.
 

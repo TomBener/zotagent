@@ -183,7 +183,8 @@ Search
       with SEMANTIC_INDEX_MISMATCH when this host's embedding model computes different vectors
       than the ones the index was built with; every host sharing a dataDir needs the same file.
       Text with no letters or digits fails with INVALID_ARGUMENT, and a data dir with no indexed
-      documents fails with INDEX_EMPTY.
+      documents fails with INDEX_EMPTY. On a host with sync disabled, keyword search never changes
+      the keyword index: a missing or empty one fails search and search-in with INDEX_EMPTY.
         --limit <n>                 Return up to n search results. Default: 10 (max 100) for search, 20 for
                                     metadata. --semantic draws on about 40 candidate documents, so it
                                     can return fewer.

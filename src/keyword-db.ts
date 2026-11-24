@@ -512,6 +512,11 @@ function matchRows(
 
 export async function openKeywordIndex(config: AppConfig): Promise<KeywordIndexClient> {
   const paths = getDataPaths(config.dataDir);
+  // A host with sync disabled searches an index another machine maintains,
+  // so it opens it read-only: no directory or file created, no journal mode
+  // set, and no schema migration — which would drop an index another
+  // zotagent version built.
+  if (config.syncEnabled === false) return openReadOnlyKeywordIndex(paths.keywordDbPath);
   ensureDir(paths.indexDir);
   const reader: ArtifactReader = openFsArtifactStore({
     normalizedDir: paths.normalizedDir,
@@ -544,6 +549,14 @@ export async function openKeywordIndex(config: AppConfig): Promise<KeywordIndexC
       db.exec("VACUUM");
     },
 
+    ...keywordReadMethods(db),
+  };
+}
+
+type KeywordReadMethods = Pick<KeywordIndexClient, "isEmpty" | "searchDocs" | "searchBlocks" | "close">;
+
+function keywordReadMethods(db: Database.Database): KeywordReadMethods {
+  return {
     isEmpty: async () => {
       const row = db.prepare("SELECT 1 FROM keyword_doc_lookup LIMIT 1").get();
       return row === undefined;
@@ -608,5 +621,30 @@ export async function openKeywordIndex(config: AppConfig): Promise<KeywordIndexC
     close: async () => {
       db.close();
     },
+  };
+}
+
+function hasKeywordTables(db: Database.Database): boolean {
+  const rows = db.prepare(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('keyword_doc_lookup', 'keyword_block_fts')",
+  ).all();
+  return rows.length === 2;
+}
+
+function openReadOnlyKeywordIndex(path: string): KeywordIndexClient {
+  const refuse = async (): Promise<never> => {
+    throw new Error("The keyword index is read-only on a host with sync disabled.");
+  };
+  const writes = { rebuildIndex: refuse, updateIndex: refuse, vacuum: refuse };
+  const db = existsSync(path) ? new Database(path, { readonly: true, fileMustExist: true }) : undefined;
+  if (db && hasKeywordTables(db)) return { ...writes, ...keywordReadMethods(db) };
+  db?.close();
+  // Nothing to read: the caller sees an empty index and reports it.
+  return {
+    ...writes,
+    isEmpty: async () => true,
+    searchDocs: async () => [],
+    searchBlocks: async () => [],
+    close: async () => {},
   };
 }
