@@ -16,7 +16,8 @@ tests, commits, and reviews — one name per concept.
 - **Normalized markdown** — the plain-markdown rendering of an attachment's
   text, the substrate for keyword and semantic indexing.
 - **Manifest** — the block-level structure of one attachment: text blocks with
-  section paths, page numbers, and char/line offsets. Carries the
+  section paths, PDF page positions (counted from 1, not printed page
+  numbers), and char/line offsets. Carries the
   `verticalText` marker for PDFs.
 - **Artifact Store** — the module that owns artifacts: the docKey→file
   mapping, staged pair publishes (publish-or-restore), the reuse verdict,
@@ -108,4 +109,4 @@ tests, commits, and reviews — one name per concept.
 - **Keyword index** — the FTS5 sqlite index over manifest blocks.
 - **Semantic index** — the qmd vector store over normalized markdown.
 - **Passage** — the reflowed, token-capped text around a search hit, anchored
-  to a char offset and (where available) page numbers.
+  to a char offset and (where available) PDF page positions.

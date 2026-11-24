@@ -62,9 +62,12 @@ Ordered by leverage. Each was confirmed against the code at `9b80ba6`.
   Partially acknowledged in the code comment at `sync.ts:795-801`; the fix is
   to abort or reuse the previous exclusion set on genuine fetch errors. Effort S.
   *Done 2026-09-28 (c771cee): a failed lookup of either tag stops the sync
-  before anything is touched (`ZOTERO_TAG_LOOKUP_FAILED`).*
+  before anything is touched (`ZOTERO_TAG_LOOKUP_FAILED`). Relaxed the same
+  day (810d449): sync now falls back to the list saved by the last successful
+  lookup and stops only when there is none.*
 - **DEPS-01/DEBT-03** — `@types/better-sqlite3` sits in `dependencies`
   (package.json:28); move to `devDependencies`. Trivial.
+  *Done: it now sits in `devDependencies`.*
 - **SECURITY-03** — planned as 007.
 - **PERF-02** — `metadata` re-normalizes every record field per query
   (`src/metadata.ts:127-147` → `normalizeExactText`, `src/exact.ts:69-76`);
@@ -100,8 +103,8 @@ Ordered by leverage. Each was confirmed against the code at `9b80ba6`.
 - **DIRECTION-02** — MCP server wrapper: every command already emits a stable
   JSON envelope (`src/json.ts` `emitOk`/`emitError`), making tool exposure
   disproportionately cheap. Effort M (coarse).
-- **DIRECTION-03** — `sync --watch` / auto-index-after-add: SKILL.md:210
-  documents the "not searchable until next sync" friction, and the incremental
+- **DIRECTION-03** — `sync --watch` / auto-index-after-add: SKILL.md's "Index freshness"
+  section documents the "not searchable until next sync" friction, and the incremental
   index machinery already exists and is tested. Effort M (coarse).
 
 ## Findings considered and rejected
